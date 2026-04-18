@@ -81,6 +81,7 @@ jobs:
           ./gradlew assembleStable --stacktrace
 
       - name: Upload stable release artifacts
+        id: upload_artifact
         uses: actions/upload-artifact@v4
         with:
           name: keyboard-stable-apks
@@ -88,3 +89,12 @@ jobs:
             build/outputs/apk/stable/**/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish download link
+        shell: bash
+        run: |
+          {
+            echo "## Stable APK"
+            echo
+            echo "[Download artifact](${{ steps.upload_artifact.outputs.artifact-url }})"
+          } >> "$GITHUB_STEP_SUMMARY"
