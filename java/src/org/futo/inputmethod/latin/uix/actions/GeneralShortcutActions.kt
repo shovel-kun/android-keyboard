@@ -39,3 +39,12 @@ val PasteAction = Action(
     },
     windowImpl = null,
 )
+
+val WrapSelectedTextAction = Action(
+    icon = R.drawable.wrap_selection,
+    name = R.string.action_wrap_selection_title,
+    simplePressImpl = { manager, _ ->
+        manager.wrapSelection("||", "||")
+    },
+    windowImpl = null,
+)

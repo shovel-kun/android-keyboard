@@ -248,7 +248,15 @@ object ClipboardThumbCache {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ClipboardEntryView(modifier: Modifier, clipboardEntry: ClipboardEntry, onPaste: (ClipboardEntry) -> Unit, onRemove: (ClipboardEntry) -> Unit, onPin: (ClipboardEntry) -> Unit, bitmapOverride: ImageBitmap? = null) {
+fun ClipboardEntryView(
+    modifier: Modifier,
+    clipboardEntry: ClipboardEntry,
+    onPaste: (ClipboardEntry) -> Unit,
+    onRemove: (ClipboardEntry) -> Unit,
+    onPin: (ClipboardEntry) -> Unit,
+    onWrapAndPaste: (ClipboardEntry) -> Unit = {},
+    bitmapOverride: ImageBitmap? = null
+) {
     val context = LocalContext.current
 
     val bitmap = remember(clipboardEntry) {
@@ -267,7 +275,6 @@ fun ClipboardEntryView(modifier: Modifier, clipboardEntry: ClipboardEntry, onPas
     }
 
     val shape = RoundedCornerShape(8.dp)
-
     val color = if(clipboardEntry.pinned) {
         MaterialTheme.colorScheme.primaryContainer
     } else {
@@ -361,6 +368,19 @@ fun ClipboardEntryView(modifier: Modifier, clipboardEntry: ClipboardEntry, onPas
 
                 Spacer(modifier = Modifier.weight(1.0f))
 
+                if(clipboardEntry.text != null) {
+                    IconButton(onClick = {
+                        onWrapAndPaste(clipboardEntry)
+                    }, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            painterResource(id = R.drawable.wrap_selection),
+                            contentDescription = stringResource(R.string.action_wrap_selection_title),
+                            tint = contentColorFor(color),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
                 IconButton(onClick = {
                     onRemove(clipboardEntry)
                 }, modifier = Modifier.size(32.dp)) {
@@ -405,7 +425,7 @@ fun ClipboardEntryViewPreview() {
             )
         }
         items(sampleText.size) {
-            ClipboardEntryView(modifier = Modifier, clipboardEntry = ClipboardEntry(0L, it % 2 == 0, sampleText[it], null, listOf()), onPin = {}, onPaste = {}, onRemove = {})
+            ClipboardEntryView(modifier = Modifier, clipboardEntry = ClipboardEntry(0L, it % 2 == 0, sampleText[it], null, listOf()), onPin = {}, onPaste = {}, onRemove = {}, onWrapAndPaste = {})
         }
 
         item {
@@ -1306,7 +1326,17 @@ val ClipboardHistoryAction = Action(
                                     }, onPin = {
                                         clipboardHistoryManager.onTogglePin(it)
                                         manager.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
-                                    })
+                                }, onWrapAndPaste = { clipEntry ->
+                                    if (clipEntry.uri != null) {
+                                        manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
+                                    } else if (clipEntry.text != null) {
+                                        // This button wraps and inserts the chosen clipboard entry;
+                                        // it does not wrap the editor's current selection.
+                                        manager.typeText("||${clipEntry.text}||")
+                                    }
+                                    clipboardHistoryManager.onPaste(clipEntry)
+                                    manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
+                                })
                             }
                         }
                     }

@@ -6,6 +6,7 @@
     <string name="action_cut_title">Cut to Clipboard</string>
     <string name="action_copy_title">Copy to Clipboard</string>
     <string name="action_paste_title">Paste from Clipboard</string>
+    <string name="action_wrap_selection_title">Wrap Selection</string>
     <string name="action_undo_title">Undo</string>
     <string name="action_redo_title">Redo</string>
     <string name="action_text_editor_title">Text Editor</string>

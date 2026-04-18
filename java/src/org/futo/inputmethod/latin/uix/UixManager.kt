@@ -521,6 +521,26 @@ class UixActionKeyboardManager(val uixManager: UixManager, val latinIME: LatinIM
         uixManager.dismissQuickClips()
     }
 
+    override fun wrapSelection(prefix: String, suffix: String) {
+        val inputConnection = latinIME.getBaseInputConnection() ?: return
+        val selectedText = inputConnection.getSelectedText(0) ?: ""
+
+        if (selectedText.isEmpty()) {
+            // Intentional fallback for this action: when there is no explicit selection,
+            // select the whole field and wrap that content instead.
+            sendKeyEvent(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON)
+            getLifecycleScope().launch {
+                kotlinx.coroutines.delay(50)
+                val newSelection = inputConnection.getSelectedText(0) ?: ""
+                if (newSelection.isNotEmpty()) {
+                    inputConnection.commitText("$prefix$newSelection$suffix", 1)
+                }
+            }
+        } else {
+            inputConnection.commitText("$prefix$selectedText$suffix", 1)
+        }
+    }
+
     override fun getSizingCalculator(): KeyboardSizingCalculator =
         latinIME.sizingCalculator
 
@@ -1707,7 +1727,6 @@ class UixManager(private val latinIME: LatinIME) {
             }
         }
     }
-
     fun setPreedit(preedit: FloatingPreEdit?) {
         floatingPreedit.value = preedit
     }
@@ -1715,5 +1734,3 @@ class UixManager(private val latinIME: LatinIME) {
     val extraTopTouchHeight: Int
         get() = if(floatingPreeditShown) floatingPreeditHeight.value else 0
 }
-
-

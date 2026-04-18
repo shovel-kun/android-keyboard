@@ -35,6 +35,7 @@ val AllActionsMap = mapOf(
     "cut" to CutAction,
     "copy" to CopyAction,
     "select_all" to SelectAllAction,
+    "wrap_selection" to WrapSelectedTextAction,
     "more" to MoreActionsAction,
     "bugs" to BugViewerAction,
     "keyboard_modes" to KeyboardModeAction,

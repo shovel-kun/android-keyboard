@@ -105,6 +105,7 @@ interface KeyboardManagerForAction {
 
     fun copyToClipboard(cut: Boolean = false)
     fun pasteFromClipboard()
+    fun wrapSelection(prefix: String, suffix: String)
 
     // Returns null if the current IME is not of this kind.
     // TODO: In the future make an IMEActionInterface for correctness
