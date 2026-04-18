@@ -1,0 +1,90 @@
+name: Build Stable Release
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-stable-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-stable-release:
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+      CRASHREPORTING_FILE: ${{ secrets.CRASHREPORTING_FILE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: recursive
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-requests ninja-build
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Prepare signing and crash reporting properties
+        shell: bash
+        run: |
+          if [[ -n "${KEYSTORE_FILE}" && -n "${KEYSTORE_PASSWORD}" && -n "${KEY_PASSWORD}" && -n "${KEYSTORE_ALIAS}" ]]; then
+            echo "${KEYSTORE_FILE}" | base64 --decode > key.jks
+            {
+              echo "storePassword=${KEYSTORE_PASSWORD}"
+              echo "keyPassword=${KEY_PASSWORD}"
+              echo "keyAlias=${KEYSTORE_ALIAS}"
+              echo "storeFile=key.jks"
+            } > keystore.properties
+          else
+            echo "Signing secrets not configured; Gradle will fall back to the debug keystore."
+          fi
+
+          if [[ -n "${CRASHREPORTING_FILE}" ]]; then
+            echo "${CRASHREPORTING_FILE}" | base64 --decode > crashreporting.properties
+          else
+            echo "Crash reporting secret not configured; release build will keep crash reporting disabled."
+          fi
+
+      - name: Build stable APKs
+        run: |
+          ./gradlew assembleStable --stacktrace
+
+      - name: Upload stable release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyboard-stable-apks
+          path: |
+            build/outputs/apk/stable/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
