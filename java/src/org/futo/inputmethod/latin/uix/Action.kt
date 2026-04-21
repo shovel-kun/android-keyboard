@@ -147,6 +147,11 @@ abstract class ActionWindow {
         }
     }
 
+    @Composable
+    open fun WindowToolbarControls(rowScope: RowScope) {
+        with(rowScope) { }
+    }
+
     open fun close(): CloseResult {
         return CloseResult.Default
     }

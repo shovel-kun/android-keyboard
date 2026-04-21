@@ -14,9 +14,13 @@ import androidx.core.graphics.scale
 import androidx.core.graphics.createBitmap
 import kotlin.math.min
 
+private const val ClipboardThumbnailVersion = "v2"
+private const val ClipboardThumbnailMaxSidePx = 768
+private const val ClipboardThumbnailJpegQuality = 90
+
 object ClipboardUtil {
     fun thumbnailForName(name: String): String
-            = "$name.thumb.jpg"
+            = "$name.thumb.$ClipboardThumbnailVersion.jpg"
 
     fun thumbnailFor(imageFile: File): File
             = File(imageFile.parent, thumbnailForName(imageFile.name))
@@ -71,7 +75,7 @@ object ClipboardUtil {
             }
 
             FileOutputStream(thumbFile).use { out ->
-                finalBmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                finalBmp.compress(Bitmap.CompressFormat.JPEG, ClipboardThumbnailJpegQuality, out)
             }
 
             return thumbFile

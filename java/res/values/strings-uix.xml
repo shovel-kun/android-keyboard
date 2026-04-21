@@ -94,6 +94,10 @@
     <string name="action_clipboard_manager_settings_save_images">Save copied images</string>
     <string name="action_clipboard_manager_settings_save_screenshots">Save recent screenshots</string>
     <string name="action_clipboard_manager_settings_save_screenshots_subtitle">You\'ll need to grant permission to access your screenshots</string>
+    <string name="action_clipboard_manager_settings_link_previews">Fetch link previews</string>
+    <string name="action_clipboard_manager_settings_link_previews_subtitle">When enabled, supported X and Pixiv links may contact third-party preview services</string>
+    <string name="action_clipboard_manager_settings_file_budget">Storage budget for unpinned image previews</string>
+    <string name="action_clipboard_manager_settings_file_budget_subtitle">Applies to saved copied images and link preview images</string>
     <string name="action_clipboard_manager_settings_hours_to_keep_clips">Hours to keep unpinned clips</string>
     <string name="action_clipboard_manager_settings_maximum_clips">Number of unpinned clips to keep</string>
     <string name="action_clipboard_manager_settings_save_sensitive_clips">Save sensitive clips</string>
@@ -101,6 +105,10 @@
     <string name="action_clipboard_manager_settings_list_layout">Use vertical list layout instead of grid</string>
     <string name="action_clipboard_manager_settings_show_pinned_above_others">Keep pinned clips on top</string>
     <string name="action_clipboard_manager_settings_skip_delete_confirmation">Skip confirmation when deleting unpinned clips</string>
+    <string name="action_clipboard_manager_embed_mode_show_embed">Show embed</string>
+    <string name="action_clipboard_manager_embed_mode_show_embed_blurred">Show embed with blurred image</string>
+    <string name="action_clipboard_manager_embed_mode_show_raw_clipboard">Show raw clipboard</string>
+    <string name="action_clipboard_manager_loading_preview">Loading preview</string>
 
     <string name="action_clipboard_manager_settings_show_quick_clips">Show recently copied text in suggestion bar</string>
 

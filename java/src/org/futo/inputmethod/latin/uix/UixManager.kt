@@ -843,7 +843,8 @@ class UixManager(private val latinIME: LatinIME) {
                         onBack = { closeActionWindow(true) },
                         canExpand = currWindowAction.value!!.canShowKeyboard,
                         onExpand = { toggleExpandAction() },
-                        windowTitleBar = { windowImpl.WindowTitleBar(this) }
+                        windowTitleBar = { windowImpl.WindowTitleBar(this) },
+                        windowToolbarControls = { windowImpl.WindowToolbarControls(this) }
                     )
                 }
 
@@ -877,6 +878,9 @@ class UixManager(private val latinIME: LatinIME) {
                         words = suggestedWordsOrNull,
                         showClose = currWindowActionWindow.value?.showCloseButton == true,
                         showCollapse = currWindowActionWindow.value?.positionIsUserManagable == true,
+                        windowToolbarControls = currWindowActionWindow.value?.let { window ->
+                            { window.WindowToolbarControls(this) }
+                        },
                         suggestionStripListener = suggestionStripListener
                     )
                 }

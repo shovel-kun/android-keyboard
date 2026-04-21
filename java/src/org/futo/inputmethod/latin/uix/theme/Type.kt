@@ -84,4 +84,12 @@ data object Typography {
         //lineHeight = 9.52.sp
         lineHeight = 14.sp
     )
+
+    val Smallest = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 9.sp,
+        //lineHeight = 9.52.sp
+        lineHeight = 9.sp
+    )
 }

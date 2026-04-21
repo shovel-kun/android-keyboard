@@ -9,11 +9,15 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.collection.LruCache
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,27 +35,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.contentColorFor
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
@@ -60,8 +65,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -75,6 +78,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -144,7 +148,7 @@ val ClipboardHistoryTimeToKeep = SettingsKey(
 
 val ClipboardHistoryUnpinnedFileMbToKeep = SettingsKey(
     intPreferencesKey("clipboard_history_unpinned_file_mb_to_keep"),
-    40
+    150
 )
 
 val ClipboardHistorySaveSensitive = SettingsKey(
@@ -187,6 +191,72 @@ val ClipboardLastBackup = SettingsKey(
     0
 )
 
+val ClipboardLinkPreviewsEnabled = SettingsKey(
+    booleanPreferencesKey("clipboard_link_previews_enabled"),
+    false
+)
+
+val ClipboardEmbedDisplayModeSetting = SettingsKey(
+    intPreferencesKey("clipboard_embed_display_mode"),
+    ClipboardEmbedDisplayMode.ShowEmbed.storedValue
+)
+
+enum class ClipboardEmbedDisplayMode(
+    val storedValue: Int,
+    @DrawableRes val icon: Int,
+    @StringRes val contentDescription: Int
+) {
+    ShowEmbed(
+        storedValue = 0,
+        icon = R.drawable.image,
+        contentDescription = R.string.action_clipboard_manager_embed_mode_show_embed
+    ),
+    ShowEmbedBlurred(
+        storedValue = 1,
+        icon = R.drawable.blur,
+        contentDescription = R.string.action_clipboard_manager_embed_mode_show_embed_blurred
+    ),
+    ShowRawClipboard(
+        storedValue = 2,
+        icon = R.drawable.clipboard,
+        contentDescription = R.string.action_clipboard_manager_embed_mode_show_raw_clipboard
+    );
+
+    fun next(): ClipboardEmbedDisplayMode = when (this) {
+        ShowEmbed -> ShowEmbedBlurred
+        ShowEmbedBlurred -> ShowRawClipboard
+        ShowRawClipboard -> ShowEmbed
+    }
+
+    companion object {
+        fun fromStoredValue(value: Int): ClipboardEmbedDisplayMode =
+            values().firstOrNull { it.storedValue == value } ?: ShowEmbed
+    }
+}
+
+private data class ClipboardPreviewState(
+    val linkPreviewsEnabled: Boolean,
+    val embedDisplayMode: ClipboardEmbedDisplayMode
+) {
+    val showsEmbed: Boolean
+        get() = embedDisplayMode != ClipboardEmbedDisplayMode.ShowRawClipboard
+
+    val shouldFetchPreviews: Boolean
+        get() = linkPreviewsEnabled && showsEmbed
+}
+
+private fun previewState(
+    linkPreviewsEnabled: Boolean,
+    storedEmbedDisplayMode: Int
+): ClipboardPreviewState = ClipboardPreviewState(
+    linkPreviewsEnabled = linkPreviewsEnabled,
+    embedDisplayMode = if(linkPreviewsEnabled) {
+        ClipboardEmbedDisplayMode.fromStoredValue(storedEmbedDisplayMode)
+    } else {
+        ClipboardEmbedDisplayMode.ShowRawClipboard
+    }
+)
+
 
 object UriSerializer : KSerializer<Uri> {
     override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("Uri", PrimitiveKind.STRING)
@@ -213,13 +283,27 @@ data class ClipboardEntry(
 
     val backingFile: String? = null,
     val sizeMb: Float? = null,
+    val previewText: String? = null,
+    val previewImageFile: String? = null,
 )
 
 fun ClipboardEntry.getFile(context: Context): File? =
     backingFile?.let { File(context.clipboardDir, it) }
 
+fun ClipboardEntry.getPreviewFile(context: Context): File? =
+    previewImageFile?.let { File(context.clipboardDir, it) }
+
 fun ClipboardEntry.fileSizeMb(context: Context): Float? =
     sizeMb ?: getFile(context)?.let {
+        if(it.isFile) {
+            it.length() / (1024f * 1024f)
+        } else {
+            null
+        }
+    }
+
+fun ClipboardEntry.retainedFileSizeMb(context: Context): Float? =
+    fileSizeMb(context) ?: getPreviewFile(context)?.let {
         if(it.isFile) {
             it.length() / (1024f * 1024f)
         } else {
@@ -235,6 +319,14 @@ internal fun sanitizeClipboardText(text: String, maxLength: Int = 64): String {
     return result
 }
 
+internal fun wrapDisplayTextAnywhere(text: String): String =
+    buildString(text.length * 2) {
+        text.forEachIndexed { index, char ->
+            append(char)
+            if(index != text.lastIndex) append('\u200B')
+        }
+    }
+
 object ClipboardThumbCache {
     private val cache = LruCache<String, ImageBitmap>(20)
 
@@ -246,6 +338,33 @@ object ClipboardThumbCache {
     }
 }
 
+private fun decodeClipboardBitmap(imageFile: File): ImageBitmap? {
+    val thumbnail = ClipboardUtil.thumbnailFor(imageFile)
+    return when {
+        thumbnail.exists() -> ClipboardThumbCache.getOrPut(thumbnail.name) {
+            BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()
+        }
+        imageFile.exists() -> ClipboardThumbCache.getOrPut(imageFile.name) {
+            BitmapFactory.decodeFile(imageFile.absolutePath)?.asImageBitmap()
+        }
+        else -> null
+    }
+}
+
+@Composable
+private fun rememberClipboardBitmap(
+    imageFile: File?,
+    bitmapOverride: ImageBitmap?
+): ImageBitmap? {
+    if(bitmapOverride != null || imageFile == null) return bitmapOverride
+
+    return produceState<ImageBitmap?>(initialValue = null, imageFile) {
+        value = withContext(Dispatchers.IO) {
+            decodeClipboardBitmap(imageFile)
+        }
+    }.value
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ClipboardEntryView(
@@ -255,24 +374,22 @@ fun ClipboardEntryView(
     onRemove: (ClipboardEntry) -> Unit,
     onPin: (ClipboardEntry) -> Unit,
     onWrapAndPaste: (ClipboardEntry) -> Unit = {},
+    previewLoading: Boolean = false,
+    embedDisplayMode: ClipboardEmbedDisplayMode = ClipboardEmbedDisplayMode.ShowEmbed,
     bitmapOverride: ImageBitmap? = null
 ) {
     val context = LocalContext.current
+    val showEmbed = embedDisplayMode != ClipboardEmbedDisplayMode.ShowRawClipboard
+    val shouldBlurPreviewImage = embedDisplayMode == ClipboardEmbedDisplayMode.ShowEmbedBlurred
 
-    val bitmap = remember(clipboardEntry) {
-        if(clipboardEntry.text == null && clipboardEntry.backingFile != null) {
-            val thumbnail = ClipboardUtil.thumbnailFor(File(context.clipboardDir, clipboardEntry.backingFile))
-            if (thumbnail.exists() || bitmapOverride != null) {
-                bitmapOverride ?: ClipboardThumbCache.getOrPut(thumbnail.name) {
-                    BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()
-                }
-            } else {
-                null
-            }
-        } else {
-            null
+    val imageFile = remember(clipboardEntry, embedDisplayMode) {
+        when {
+            clipboardEntry.text == null -> clipboardEntry.getFile(context)
+            showEmbed -> clipboardEntry.getPreviewFile(context)
+            else -> null
         }
     }
+    val bitmap = rememberClipboardBitmap(imageFile, bitmapOverride)
 
     val shape = RoundedCornerShape(8.dp)
     val color = if(clipboardEntry.pinned) {
@@ -283,62 +400,10 @@ fun ClipboardEntryView(
 
     val mainModifier = modifier
         .padding(2.dp)
-        .combinedClickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = ripple(),
-            enabled = true,
-            onClick = { onPaste(clipboardEntry) },
-            onLongClick = { onPin(clipboardEntry) }
-        ).let {
-            if(bitmap != null) {
-                val maxHeight = 120.dp
-                it
-                    .requiredHeightIn(max = maxHeight)
-                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
-                    .requiredHeightIn(max = maxHeight)
-                    .clip(RoundedCornerShape(8.dp))
-                    .drawBehind {
-                        val canvasWidth = size.width
-                        val canvasHeight = size.height
-                        val bitmapWidth = bitmap.width.toFloat()
-                        val bitmapHeight = bitmap.height.toFloat()
-
-                        val scale = maxOf(
-                            canvasWidth / bitmapWidth,
-                            canvasHeight / bitmapHeight
-                        )
-
-                        val scaledWidth = bitmapWidth * scale
-                        val scaledHeight = bitmapHeight * scale
-
-                        val offsetX = (canvasWidth - scaledWidth) / 2
-                        val offsetY = (canvasHeight - scaledHeight) / 2
-
-                        drawImage(
-                            bitmap,
-                            srcOffset = IntOffset.Zero,
-                            srcSize = IntSize(bitmap.width, bitmap.height),
-                            dstOffset = IntOffset(offsetX.toInt(), offsetY.toInt()),
-                            dstSize = IntSize(scaledWidth.toInt(), scaledHeight.toInt())
-                        )
-
-                        val height = 32.dp.toPx()
-                        val brush = Brush.linearGradient(
-                            0.0f to color,
-                            1.0f to Color.Transparent,
-                            start = Offset.Zero,
-                            end = Offset(0.0f, height * 2.0f)
-                        )
-
-                        drawRect(brush)
-                    }
-            } else {
-                it
-            }
-        }
+        .combinedClickable(onClick = { onPaste(clipboardEntry) }, onLongClick = { onPin(clipboardEntry) })
 
     Surface(
-        color = if(bitmap != null) Color.Transparent else color,
+        color = color,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = mainModifier,
         shape = shape,
@@ -394,8 +459,86 @@ fun ClipboardEntryView(
             }
 
             if(clipboardEntry.text != null) {
-                val text = remember(clipboardEntry.text) { sanitizeClipboardText(clipboardEntry.text) }
-                Text(text, modifier = Modifier.padding(8.dp, 2.dp), style = Typography.SmallMl)
+                val text = remember(
+                    clipboardEntry.previewText,
+                    clipboardEntry.previewImageFile,
+                    clipboardEntry.text,
+                    previewLoading,
+                    embedDisplayMode
+                ) {
+                    when {
+                        !showEmbed -> sanitizeClipboardText(clipboardEntry.text, 160)
+                        previewLoading -> null
+                        clipboardEntry.previewText != null -> sanitizeClipboardText(clipboardEntry.previewText, 160)
+                        clipboardEntry.previewImageFile != null -> null
+                        else -> sanitizeClipboardText(clipboardEntry.text, 160)
+                    }
+                }
+                if(text != null) {
+                    Text(text, modifier = Modifier.padding(8.dp, 0.dp), style = Typography.SmallMl)
+                }
+            }
+
+            if(showEmbed && previewLoading && bitmap == null && clipboardEntry.text != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                        .padding(horizontal = 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(color),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Text(
+                            text = stringResource(R.string.action_clipboard_manager_loading_preview),
+                            style = Typography.Small,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if(bitmap != null) {
+                val aspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(aspectRatio)
+                        .requiredHeightIn(max = 220.dp)
+                        .padding(horizontal = 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(color)
+                        .then(
+                            if(shouldBlurPreviewImage && clipboardEntry.text != null && clipboardEntry.previewImageFile != null) {
+                                Modifier.blur(24.dp)
+                            } else {
+                                Modifier
+                            }
+                        )
+                )
+            }
+
+            if(showEmbed && clipboardEntry.text != null && (clipboardEntry.previewText != null || clipboardEntry.previewImageFile != null || previewLoading)) {
+                val originalLink = remember(clipboardEntry.text) {
+                    wrapDisplayTextAnywhere(sanitizeClipboardText(clipboardEntry.text, 160))
+                }
+                Text(
+                    text = originalLink,
+                    modifier = Modifier.padding(8.dp, 6.dp, 8.dp, 0.dp),
+                    style = Typography.Smallest,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -410,6 +553,33 @@ fun ClipboardEntryView(
 @Composable
 fun ClipboardEntryViewPreview() {
     val sampleText = listOf("This is an entry", "Copying text a lot", "hunter2", "https://www.example.com/forum/viewpost/1234573193.html?parameter=1234")
+    val twitterPreviewEntries = listOf(
+        ClipboardEntry(
+            timestamp = 0L,
+            pinned = true,
+            text = "https://x.com/futo/status/1912345678901234567",
+            uri = null,
+            mimeTypes = listOf(),
+            previewText = "Shipping this keyboard-side preview path was the easy part. The harder part is keeping it robust when copied links come in messy real-world forms."
+        ),
+        ClipboardEntry(
+            timestamp = 0L,
+            pinned = false,
+            text = "https://fxtwitter.com/futo/status/1912345678901234567",
+            uri = null,
+            mimeTypes = listOf(),
+            previewText = "A tweet with photos should show the snippet first and the image below it.",
+            previewImageFile = "[preview]"
+        ),
+        ClipboardEntry(
+            timestamp = 0L,
+            pinned = false,
+            text = "https://fixupx.com/futo/status/1912345678901234567",
+            uri = null,
+            mimeTypes = listOf(),
+            previewImageFile = "[preview]"
+        )
+    )
     LazyVerticalStaggeredGrid(
         modifier = Modifier.fillMaxWidth(),
         columns = StaggeredGridCells.Adaptive(160.dp),
@@ -426,6 +596,22 @@ fun ClipboardEntryViewPreview() {
         }
         items(sampleText.size) {
             ClipboardEntryView(modifier = Modifier, clipboardEntry = ClipboardEntry(0L, it % 2 == 0, sampleText[it], null, listOf()), onPin = {}, onPaste = {}, onRemove = {}, onWrapAndPaste = {})
+        }
+
+        items(twitterPreviewEntries.size) {
+            ClipboardEntryView(
+                modifier = Modifier,
+                clipboardEntry = twitterPreviewEntries[it],
+                onPin = {},
+                onPaste = {},
+                onRemove = {},
+                onWrapAndPaste = {},
+                bitmapOverride = when (it) {
+                    1 -> ClipboardUtil.generateTestPatternBitmap()
+                    2 -> ClipboardUtil.generateCheckerboardBitmap()
+                    else -> null
+                }
+            )
         }
 
         item {
@@ -479,10 +665,14 @@ val Context.clipboardDir get() = File(filesDir, "clipboardfiles")
 
 @OptIn(ExperimentalCoroutinesApi::class)
 private val ClipboardIOContext = Dispatchers.IO.limitedParallelism(1)
+@OptIn(ExperimentalCoroutinesApi::class)
+private val ClipboardPreviewFetchContext = Dispatchers.IO.limitedParallelism(3)
 
 class ClipboardHistoryManager(val context: Context, val coroutineScope: LifecycleCoroutineScope) : PersistentActionState {
     var clipboardIOFailureReason = ""
     val clipboardIOFailure = mutableStateOf(false)
+    val previewLoadingByText = mutableStateMapOf<String, Boolean>()
+    private var scheduledPreviewSaveJob: Job? = null
 
     companion object {
         val onClipboardImportedFlow = MutableSharedFlow<File>()
@@ -660,6 +850,7 @@ class ClipboardHistoryManager(val context: Context, val coroutineScope: Lifecycl
                     )
                     clipboardHistory.add(newEntry)
 
+                    fetchPreviewForEntry(text)
                     saveClipboard()
                 }else if (uri != null && canSaveImages) {
                     onImageAdded(mimeTypes, uri, timestamp)
@@ -695,6 +886,7 @@ class ClipboardHistoryManager(val context: Context, val coroutineScope: Lifecycl
             clipboardLoaded = true
         }
 
+        refreshMissingLinkPreviews()
         saveClipboard()
     }
 
@@ -732,27 +924,53 @@ class ClipboardHistoryManager(val context: Context, val coroutineScope: Lifecycl
             it.backingFile != null && it.getFile(context).let { it == null || !it.isFile }
         }
 
+        for(i in clipboardHistory.indices) {
+            val entry = clipboardHistory[i]
+            if(entry.previewImageFile != null && entry.getPreviewFile(context)?.isFile != true) {
+                clipboardHistory[i] = entry.copy(previewImageFile = null)
+            }
+        }
+
         // Limit size
-        val removalCandidates = clipboardHistory.filter { it.backingFile != null && !it.pinned }
+        val removalCandidates = clipboardHistory.filter {
+            !it.pinned && (it.backingFile != null || it.previewImageFile != null)
+        }
             .sortedBy { -it.timestamp }
         val removalItems = mutableListOf<ClipboardEntry>()
+        val previewRemovalItems = mutableListOf<ClipboardEntry>()
 
         var quotaUsed = 0.0f
         for(candidate in removalCandidates) {
-            val size = candidate.fileSizeMb(context)
+            val size = candidate.retainedFileSizeMb(context)
             if(size != null) {
                 quotaUsed += size
-                if(quotaUsed > megabytesToKeep) removalItems.add(candidate)
+                if(quotaUsed > megabytesToKeep) {
+                    if(candidate.backingFile != null) {
+                        removalItems.add(candidate)
+                    } else if(candidate.previewImageFile != null) {
+                        previewRemovalItems.add(candidate)
+                    }
+                }
             } else {
-                removalItems.add(candidate)
+                if(candidate.backingFile != null) {
+                    removalItems.add(candidate)
+                } else if(candidate.previewImageFile != null) {
+                    previewRemovalItems.add(candidate)
+                }
             }
         }
 
         removalItems.forEach { clipboardHistory.remove(it) }
+        previewRemovalItems.forEach { candidate ->
+            val index = clipboardHistory.indexOf(candidate)
+            if(index != -1) {
+                clipboardHistory[index] = clipboardHistory[index].copy(previewImageFile = null)
+            }
+        }
 
         // Remove unreferenced files
         val stillReferenced = clipboardHistory
-            .mapNotNull { it.backingFile }
+            .flatMap { listOfNotNull(it.backingFile, it.previewImageFile) }
             .flatMap { listOf(it, ClipboardUtil.thumbnailForName(it)) }
             .toHashSet()
 
@@ -876,6 +1094,20 @@ class ClipboardHistoryManager(val context: Context, val coroutineScope: Lifecycl
     private fun decodeFile(file: File): List<ClipboardEntry> =
         decodeData(AtomicFile(file).readFully())
 
+    private fun currentPreviewState(): ClipboardPreviewState =
+        previewState(
+            linkPreviewsEnabled = context.getSetting(ClipboardLinkPreviewsEnabled),
+            storedEmbedDisplayMode = context.getSetting(ClipboardEmbedDisplayModeSetting)
+        )
+
+    private fun queuePreviewSave(delayMillis: Long = 350L) {
+        scheduledPreviewSaveJob?.cancel()
+        scheduledPreviewSaveJob = coroutineScope.launch {
+            delay(delayMillis)
+            saveClipboard()
+        }
+    }
+
     private fun reportError(during: String, e: Exception) {
         BugViewerState.pushBug(BugInfo("ClipboardHistoryManager", """
 Clipboard IO error during $during
@@ -941,12 +1173,76 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             clipboardLoaded = true
             clipboardIOFailureReason = ""
             clipboardIOFailure.value = false
+            refreshMissingLinkPreviews()
         } catch (e: Exception) {
             e.printStackTrace()
             clipboardIOFailureReason = "Exception: ${e.message}"
             clipboardIOFailure.value = true
 
             reportError("loadClipboard", e)
+        }
+    }
+
+    fun refreshMissingLinkPreviews() {
+        if(!currentPreviewState().shouldFetchPreviews) return
+        clipboardHistory.toList().forEach { entry ->
+            val text = entry.text ?: return@forEach
+            if(entry.previewText == null && entry.previewImageFile == null) {
+                fetchPreviewForEntry(text)
+            }
+        }
+    }
+
+    private fun fetchPreviewForEntry(text: String) {
+        if(!currentPreviewState().shouldFetchPreviews) return
+        if(!ClipboardLinkPreviewFetcher.supportsPreview(text)) return
+        if(previewLoadingByText[text] == true) return
+        val keepLoadingUntilImage = ClipboardLinkPreviewFetcher.prefersImagePreview(text)
+
+        coroutineScope.launch {
+            previewLoadingByText[text] = true
+            try {
+                val maxAttempts = if(keepLoadingUntilImage) 3 else 1
+                var attempt = 0
+
+                while (attempt < maxAttempts) {
+                    val preview = withContext(ClipboardPreviewFetchContext) {
+                        ClipboardLinkPreviewFetcher.fetch(context, text)
+                    }
+
+                    if(preview != null) {
+                        val updated = withContext(Dispatchers.Main) {
+                            val index = clipboardHistory.indexOfFirst { it.text == text }
+                            if(index == -1) return@withContext false
+
+                            val current = clipboardHistory[index]
+                            if(current.previewText == preview.snippet && current.previewImageFile == preview.imageFile) {
+                                return@withContext false
+                            }
+
+                            clipboardHistory[index] = current.copy(
+                                previewText = preview.snippet,
+                                previewImageFile = preview.imageFile
+                            )
+                            true
+                        }
+
+                        if(updated) {
+                            queuePreviewSave()
+                        }
+
+                        break
+                    }
+
+                    attempt++
+                    if(attempt < maxAttempts) {
+                        delay(1500L * attempt)
+                    }
+                }
+
+            } finally {
+                previewLoadingByText.remove(text)
+            }
         }
     }
 
@@ -1049,6 +1345,37 @@ val ClipboardHistoryAction = Action(
             }
 
             @Composable
+            override fun WindowToolbarControls(rowScope: RowScope) {
+                with(rowScope) {
+                    if(!unlocked) return@with
+
+                    val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
+                    val linkPreviewsEnabled = useDataStore(ClipboardLinkPreviewsEnabled, blocking = true)
+                    val storedEmbedDisplayMode = useDataStore(ClipboardEmbedDisplayModeSetting, blocking = true)
+                    val previewState = previewState(
+                        linkPreviewsEnabled = linkPreviewsEnabled.value,
+                        storedEmbedDisplayMode = storedEmbedDisplayMode.value
+                    )
+                    if(
+                        !clipboardHistory.value ||
+                        clipboardHistoryManager.clipboardIOFailure.value ||
+                        !previewState.linkPreviewsEnabled
+                    ) return@with
+
+                    val currentMode = previewState.embedDisplayMode
+
+                    IconButton(onClick = {
+                        storedEmbedDisplayMode.setValue(currentMode.next().storedValue)
+                    }) {
+                        Icon(
+                            painter = painterResource(id = currentMode.icon),
+                            contentDescription = stringResource(currentMode.contentDescription)
+                        )
+                    }
+                }
+            }
+
+            @Composable
             override fun WindowTitleBar(rowScope: RowScope) = with(rowScope) {
                 if(searching.value) {
                     ActionHeaderSearch(searchText, Modifier.weight(1.0f),
@@ -1135,6 +1462,29 @@ val ClipboardHistoryAction = Action(
                 val context = LocalContext.current
                 val resources = LocalResources.current
                 val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
+                val linkPreviewsEnabled = useDataStore(ClipboardLinkPreviewsEnabled, blocking = true)
+                val storedEmbedDisplayMode = useDataStore(ClipboardEmbedDisplayModeSetting, blocking = true)
+                val previewState = previewState(
+                    linkPreviewsEnabled = linkPreviewsEnabled.value,
+                    storedEmbedDisplayMode = storedEmbedDisplayMode.value
+                )
+
+                LaunchedEffect(
+                    unlocked,
+                    clipboardHistory.value,
+                    clipboardHistoryManager.clipboardIOFailure.value,
+                    previewState
+                ) {
+                    if(
+                        unlocked &&
+                        clipboardHistory.value &&
+                        !clipboardHistoryManager.clipboardIOFailure.value &&
+                        previewState.shouldFetchPreviews
+                    ) {
+                        clipboardHistoryManager.refreshMissingLinkPreviews()
+                    }
+                }
+
                 if(!unlocked) {
                     ScrollableList {
                         PaymentSurface(isPrimary = true) {
@@ -1275,6 +1625,9 @@ val ClipboardHistoryAction = Action(
                                 val entry = clipboardList[i]
                                 ClipboardEntryView(
                                     modifier = Modifier.animateItem(),
+                                    previewLoading = previewState.showsEmbed &&
+                                        entry.text?.let { clipboardHistoryManager.previewLoadingByText[it] == true } == true,
+                                    embedDisplayMode = previewState.embedDisplayMode,
                                     clipboardEntry = entry, onPaste = {
                                         if(it.text != null) {
                                             manager.typeText(it.text)
@@ -1326,17 +1679,17 @@ val ClipboardHistoryAction = Action(
                                     }, onPin = {
                                         clipboardHistoryManager.onTogglePin(it)
                                         manager.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
-                                }, onWrapAndPaste = { clipEntry ->
-                                    if (clipEntry.uri != null) {
-                                        manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
-                                    } else if (clipEntry.text != null) {
-                                        // This button wraps and inserts the chosen clipboard entry;
-                                        // it does not wrap the editor's current selection.
-                                        manager.typeText("||${clipEntry.text}||")
-                                    }
-                                    clipboardHistoryManager.onPaste(clipEntry)
-                                    manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
-                                })
+                                    }, onWrapAndPaste = { clipEntry ->
+                                        if (clipEntry.uri != null) {
+                                            manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
+                                        } else if (clipEntry.text != null) {
+                                            // This button wraps and inserts the chosen clipboard entry;
+                                            // it does not wrap the editor's current selection.
+                                            manager.typeText("||${clipEntry.text}||")
+                                        }
+                                        clipboardHistoryManager.onPaste(clipEntry)
+                                        manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
+                                    })
                             }
                         }
                     }
@@ -1364,6 +1717,29 @@ val ClipboardHistoryAction = Action(
                 title = R.string.action_clipboard_manager_settings_save_images,
                 setting = ClipboardSaveImages
             ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
+
+            userSettingToggleDataStore(
+                title = R.string.action_clipboard_manager_settings_link_previews,
+                subtitle = R.string.action_clipboard_manager_settings_link_previews_subtitle,
+                setting = ClipboardLinkPreviewsEnabled
+            ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
+
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_file_budget,
+                subtitle = R.string.action_clipboard_manager_settings_file_budget_subtitle,
+                component = {
+                    SettingSlider(
+                        title = stringResource(R.string.action_clipboard_manager_settings_file_budget),
+                        setting = ClipboardHistoryUnpinnedFileMbToKeep,
+                        range = 0.0f..512.0f,
+                        hardRange = 0.0f..Float.POSITIVE_INFINITY,
+                        transform = { it.toInt() },
+                        indicator = { "$it MB" },
+                        subtitle = stringResource(R.string.action_clipboard_manager_settings_file_budget_subtitle)
+                    )
+                },
+                visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }
+            ),
 
             UserSetting(
                 name = R.string.action_clipboard_manager_settings_save_screenshots,

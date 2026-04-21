@@ -937,6 +937,7 @@ fun ActionBar(
 @Composable
 fun ActionWindowBar(
     windowTitleBar: @Composable RowScope.() -> Unit,
+    windowToolbarControls: (@Composable RowScope.() -> Unit)? = null,
     canExpand: Boolean,
     onBack: () -> Unit,
     onExpand: () -> Unit
@@ -969,6 +970,8 @@ fun ActionWindowBar(
                         )
                     }
                 }
+
+                windowToolbarControls?.invoke(this)
             }
         }
     }
@@ -1001,6 +1004,7 @@ fun CollapsibleSuggestionsBar(
     onCollapse: () -> Unit,
     showClose: Boolean,
     showCollapse: Boolean,
+    windowToolbarControls: (@Composable RowScope.() -> Unit)? = null,
     words: SuggestedWords?,
     suggestionStripListener: SuggestionStripViewListener,
 ) {
@@ -1048,6 +1052,8 @@ fun CollapsibleSuggestionsBar(
                 } else {
                     Spacer(Modifier.width(42.dp))
                 }
+
+                windowToolbarControls?.invoke(this)
             }
         }
 
