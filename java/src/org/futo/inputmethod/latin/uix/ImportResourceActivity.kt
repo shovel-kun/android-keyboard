@@ -54,6 +54,8 @@ import org.futo.inputmethod.latin.SubtypesSetting
 import org.futo.inputmethod.latin.localeFromString
 import org.futo.inputmethod.latin.uix.actions.BugInfo
 import org.futo.inputmethod.latin.uix.actions.BugViewerState
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupMetadata
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardImportMode
 import org.futo.inputmethod.latin.uix.settings.NavigationItem
 import org.futo.inputmethod.latin.uix.settings.NavigationItemStyle
 import org.futo.inputmethod.latin.uix.settings.ScreenTitle
@@ -159,6 +161,74 @@ fun SettingsImportScreen(
                 navigate = {
                     onCancel()
                 }
+            )
+        }
+    }
+}
+
+@Composable
+fun ClipboardBackupImportScreen(
+    metadata: ClipboardBackupMetadata,
+    onApply: (ClipboardImportMode) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val importing = remember { mutableStateOf(false) }
+    ScrollableList {
+        ScreenTitle(
+            title = stringResource(
+                R.string.resource_importer_import_title,
+                stringResource(R.string.file_kind_clipboard_backup)
+            )
+        )
+
+        if(importing.value) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            Text(
+                stringResource(R.string.action_clipboard_manager_settings_import_clipboard_importing_text),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(16.dp, 8.dp)
+            )
+        } else {
+            if(metadata.isNewer) {
+                Tip("⚠\uFE0F " + stringResource(R.string.action_clipboard_manager_settings_import_clipboard_newer_version))
+            }
+            Text(
+                stringResource(R.string.resource_importer_file_info, metadata.dateExported.toString()),
+                modifier = Modifier.padding(16.dp, 8.dp)
+            )
+            Text(
+                stringResource(R.string.action_clipboard_manager_settings_import_clipboard_text),
+                modifier = Modifier.padding(16.dp, 8.dp)
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            NavigationItem(
+                title = stringResource(R.string.action_clipboard_manager_settings_import_clipboard_merge),
+                subtitle = stringResource(R.string.action_clipboard_manager_settings_import_clipboard_merge_subtitle),
+                style = NavigationItemStyle.MiscNoArrow,
+                navigate = {
+                    onApply(ClipboardImportMode.Merge)
+                    importing.value = true
+                }
+            )
+            NavigationItem(
+                title = stringResource(R.string.action_clipboard_manager_settings_import_clipboard_replace),
+                subtitle = stringResource(R.string.action_clipboard_manager_settings_import_clipboard_replace_subtitle),
+                style = NavigationItemStyle.MiscNoArrow,
+                navigate = {
+                    onApply(ClipboardImportMode.Replace)
+                    importing.value = true
+                }
+            )
+            NavigationItem(
+                title = stringResource(R.string.resource_importer_cancel_button),
+                style = NavigationItemStyle.MiscNoArrow,
+                navigate = onCancel
             )
         }
     }
@@ -635,6 +705,7 @@ suspend fun removeImportedUserDictFile(context: Context, value: Pair<File, Strin
 sealed class ItemBeingImported {
     data class LanguageResource(val v: FileKindAndInfo) : ItemBeingImported()
     data class SettingsBackup(val v: SettingsExporter.CfgFileMetadata) : ItemBeingImported()
+    data class ClipboardBackup(val v: ClipboardBackupMetadata) : ItemBeingImported()
     data class UserDictFile(val v: DetectedUserDictFile) : ItemBeingImported()
     data class CustomTheme(val v: ZipThemes.ThemeMetadataResult) : ItemBeingImported()
 }
@@ -850,6 +921,30 @@ class ImportResourceActivity : ComponentActivity() {
                 }
             )
         }
+        is ItemBeingImported.ClipboardBackup -> {
+            ClipboardBackupImportScreen(
+                metadata = item.v,
+                onApply = { mode ->
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) {
+                            contentResolver.openInputStream(uri!!)!!.use {
+                                SettingsExporter.loadClipboardBackup(
+                                    this@ImportResourceActivity,
+                                    it,
+                                    mode
+                                )
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            finish()
+                        }
+                    }
+                },
+                onCancel = {
+                    finish()
+                }
+            )
+        }
         is ItemBeingImported.UserDictFile -> {
             val pseudoKind = FileKindAndInfo(FileKind.Dictionary, name = item.v.name, locale = item.v.locale.toString())
             ImportScreen(
@@ -930,6 +1025,9 @@ class ImportResourceActivity : ComponentActivity() {
         if(chineseDictionary != null) return ItemBeingImported.LanguageResource(FileKindAndInfo(
             FileKind.Dictionary, name=chineseDictionary, locale="zh", forceLocale = "zh"
         ))
+
+        val clipboardBackup = getInputStream()?.use { SettingsExporter.getClipboardBackupMetadata(it) }
+        if(clipboardBackup != null) return ItemBeingImported.ClipboardBackup(clipboardBackup)
 
         val settingsBackup = getInputStream()?.use { SettingsExporter.getCfgFileMetadata(it) }
         if(settingsBackup != null) return ItemBeingImported.SettingsBackup(settingsBackup)

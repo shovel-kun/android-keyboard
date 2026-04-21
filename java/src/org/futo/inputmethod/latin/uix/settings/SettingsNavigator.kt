@@ -18,8 +18,10 @@ import org.futo.inputmethod.latin.toLocale
 import org.futo.inputmethod.latin.uix.ErrorDialog
 import org.futo.inputmethod.latin.uix.InfoDialog
 import org.futo.inputmethod.latin.uix.LocalNavController
+import org.futo.inputmethod.latin.uix.SettingsExporter.ClipboardExportingMenu
 import org.futo.inputmethod.latin.uix.SettingsExporter.ExportingMenu
 import org.futo.inputmethod.latin.uix.actions.AllActions
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardHistoryScreen
 import org.futo.inputmethod.latin.uix.settings.pages.ActionEditorScreen
 import org.futo.inputmethod.latin.uix.settings.pages.ActionsScreen
 import org.futo.inputmethod.latin.uix.settings.pages.AdvancedParametersScreen
@@ -156,6 +158,7 @@ fun SettingsNavigator(
             }
             composable("home") { HomeScreen(navController) }
             composable("search") { SearchScreen(navController) }
+            composable("clipboardHistory") { ClipboardHistoryScreen(navController) }
             composable("languages") { LanguagesScreen(navController) }
             composable("addLanguage") { SelectLanguageScreen(navController) }
             composable("pdict") {
@@ -181,6 +184,7 @@ fun SettingsNavigator(
             composable("paid") { PaymentThankYouScreen { navController.navigateUp() } }
             composable("credits") { CreditsScreen(navController) }
             composable("exportingcfg") { ExportingMenu(navController) }
+            composable("exportingClipboard") { ClipboardExportingMenu(navController) }
             dialog("update") {
                 UpdateDialog(navController = navController)
             }

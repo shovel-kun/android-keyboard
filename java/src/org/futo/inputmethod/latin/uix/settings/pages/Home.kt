@@ -77,6 +77,13 @@ val HomeScreenLite = UserSettingsMenu(
         ),
 
         userSettingNavigationItem(
+            title = R.string.typing_settings_enable_clipboard_history,
+            style = NavigationItemStyle.HomePrimary,
+            navigateTo = "clipboardHistory",
+            icon = R.drawable.clipboard_manager
+        ),
+
+        userSettingNavigationItem(
             title = R.string.prediction_settings_title,
             style = NavigationItemStyle.HomeTertiary,
             navigateTo = PredictiveTextMenu.navPath,

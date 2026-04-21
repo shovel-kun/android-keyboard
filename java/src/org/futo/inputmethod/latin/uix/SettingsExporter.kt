@@ -40,10 +40,22 @@ import org.futo.inputmethod.engine.general.mozcUserProfileDir
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.utils.readAllBytesCompat
 import org.futo.inputmethod.latin.uix.PreferenceUtils.getDefaultSharedPreferences
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupCurrentVersion
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupFilesDirectoryName
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupManifest
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupManifestFileName
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupMetadata
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardFileName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardHistoryManager.Companion.onClipboardImportedFlow
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardImportMode
+import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardBackupMetadata
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardFile
+import org.futo.inputmethod.latin.uix.actions.clipboard.decodeClipboardEntries
+import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardEntries
+import org.futo.inputmethod.latin.uix.actions.clipboard.mergeClipboardEntries
+import org.futo.inputmethod.latin.uix.actions.clipboard.reconcileClipboardEntriesWithStorage
+import org.futo.inputmethod.latin.uix.actions.clipboard.referencedClipboardFileNames
 import org.futo.inputmethod.latin.uix.settings.ScreenTitle
 import org.futo.inputmethod.latin.uix.settings.ScrollableList
 import org.futo.inputmethod.latin.uix.settings.SettingsActivity
@@ -66,6 +78,8 @@ import java.util.zip.ZipOutputStream
 
 const val IMPORT_SETTINGS_REQUEST = 1801146881
 const val EXPORT_SETTINGS_REQUEST = 69835032
+const val IMPORT_CLIPBOARD_BACKUP_REQUEST = 1901146881
+const val EXPORT_CLIPBOARD_BACKUP_REQUEST = 79835032
 
 @Serializable
 data class PersonalWord(
@@ -79,6 +93,12 @@ data class PersonalWord(
 
 @Suppress("HardCodedStringLiteral")
 object SettingsExporter {
+    private data class ExtractedClipboardBackup(
+        val manifest: ClipboardBackupManifest,
+        val entries: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry>,
+        val filesDir: File
+    )
+
     @Suppress("HardCodedStringLiteral")
     @Throws(Exception::class)
     private fun writeSharedPrefs(
@@ -186,6 +206,11 @@ object SettingsExporter {
     private const val sharedPreferencesFileName = "sharedPreferences.json"
     private const val clipboardFileName = ClipboardFileName
     private const val personalDictFileName = "userdictionary.json"
+
+    private fun clipboardBackupManifest(): ClipboardBackupManifest = ClipboardBackupManifest(
+        version = ClipboardBackupCurrentVersion,
+        createdAtEpochMs = System.currentTimeMillis()
+    )
 
     suspend fun exportSettings(
         context: Context,
@@ -303,6 +328,38 @@ object SettingsExporter {
         ZipThemes.customThemesDir(context).listFiles()?.forEach { themeFile ->
             zipOut.putNextEntry(ZipEntry("themes/${themeFile.name}"))
             themeFile.inputStream().use { it.copyTo(zipOut) }
+            zipOut.closeEntry()
+        }
+    }
+
+    suspend fun exportClipboardBackup(
+        context: Context,
+        outputStream: OutputStream
+    ) = ZipOutputStream(outputStream).use { zipOut ->
+        zipOut.setLevel(1)
+
+        val manifest = clipboardBackupManifest()
+        val clipboardEntries = if(context.clipboardFile.exists()) {
+            runCatching { context.clipboardFile.decodeClipboardEntries() }.getOrElse { emptyList() }
+        } else {
+            emptyList()
+        }
+        val referencedFiles = referencedClipboardFileNames(clipboardEntries)
+
+        zipOut.putNextEntry(ZipEntry(ClipboardBackupManifestFileName))
+        zipOut.write(Json.encodeToString(manifest).encodeUtf8().toByteArray())
+        zipOut.closeEntry()
+
+        zipOut.putNextEntry(ZipEntry(clipboardFileName))
+        zipOut.write(encodeClipboardEntries(clipboardEntries).encodeUtf8().toByteArray())
+        zipOut.closeEntry()
+
+        referencedFiles.forEach { fileName ->
+            val file = File(context.clipboardDir, fileName)
+            if(!file.isFile) return@forEach
+
+            zipOut.putNextEntry(ZipEntry("$ClipboardBackupFilesDirectoryName/$fileName"))
+            file.inputStream().use { it.copyTo(zipOut) }
             zipOut.closeEntry()
         }
     }
@@ -464,6 +521,144 @@ object SettingsExporter {
         GlobalIMEMessage.tryEmit(IMEMessage.ReloadResources)
     }
 
+    suspend fun loadClipboardBackup(
+        context: Context,
+        inputStream: InputStream,
+        mode: ClipboardImportMode
+    ) {
+        val tempRoot = File(context.cacheDir, "clipboard_backup_import_${System.currentTimeMillis()}")
+        try {
+            val extracted = extractClipboardBackup(inputStream, tempRoot)
+            when (mode) {
+                ClipboardImportMode.Merge -> mergeClipboardBackup(context, extracted)
+                ClipboardImportMode.Replace -> replaceClipboardBackup(context, extracted)
+            }
+
+            onClipboardImportedFlow.emit(context.clipboardFile)
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    private fun extractClipboardBackup(
+        inputStream: InputStream,
+        tempRoot: File
+    ): ExtractedClipboardBackup = ZipInputStream(inputStream).use { zipIn ->
+        val tempFilesDir = File(tempRoot, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
+        val tempClipboardFile = File(tempRoot, clipboardFileName)
+        var manifest: ClipboardBackupManifest? = null
+        var entry = zipIn.nextEntry
+
+        while (entry != null) {
+            when {
+                entry.name == ClipboardBackupManifestFileName -> {
+                    manifest = Json.decodeFromString(
+                        zipIn.readAllBytesCompat().toByteString().utf8()
+                    )
+                }
+
+                entry.name == clipboardFileName -> {
+                    tempClipboardFile.parentFile?.mkdirs()
+                    tempClipboardFile.outputStream().use { zipIn.copyTo(it) }
+                }
+
+                entry.name.startsWith("$ClipboardBackupFilesDirectoryName/") -> {
+                    val relativePath = entry.name.removePrefix("$ClipboardBackupFilesDirectoryName/")
+                    require(relativePath.isNotBlank() && !relativePath.contains('/')) {
+                        "Unsupported clipboard backup file path: ${entry.name}"
+                    }
+
+                    File(tempFilesDir, relativePath).outputStream().use { zipIn.copyTo(it) }
+                }
+            }
+
+            zipIn.closeEntry()
+            entry = zipIn.nextEntry
+        }
+
+        val extractedManifest = manifest ?: throw IllegalArgumentException("Clipboard backup manifest missing")
+        val entries = if(tempClipboardFile.isFile) {
+            tempClipboardFile.decodeClipboardEntries()
+        } else {
+            emptyList()
+        }
+
+        ExtractedClipboardBackup(
+            manifest = extractedManifest,
+            entries = entries,
+            filesDir = tempFilesDir
+        )
+    }
+
+    private fun replaceClipboardBackup(
+        context: Context,
+        extracted: ExtractedClipboardBackup
+    ) {
+        val clipboardFile = context.clipboardFile
+        val clipboardFileBak = File(context.filesDir, "$ClipboardFileName.bak")
+        val clipboardFileSwap = File(context.filesDir, "$ClipboardFileName.swap")
+
+        listOf(clipboardFile, clipboardFileBak, clipboardFileSwap).forEach {
+            if(it.exists()) it.delete()
+        }
+        context.clipboardDir.deleteRecursively()
+        context.clipboardDir.mkdirs()
+
+        copyImportedClipboardFiles(extracted.filesDir, context.clipboardDir)
+        val reconciled = reconcileClipboardImportResult(
+            clipboardDir = context.clipboardDir,
+            entries = extracted.entries
+        )
+        clipboardFile.writeText(encodeClipboardEntries(reconciled))
+    }
+
+    private fun mergeClipboardBackup(
+        context: Context,
+        extracted: ExtractedClipboardBackup
+    ) {
+        context.clipboardDir.mkdirs()
+        copyImportedClipboardFiles(extracted.filesDir, context.clipboardDir)
+
+        val currentEntries = if(context.clipboardFile.exists()) {
+            runCatching { context.clipboardFile.decodeClipboardEntries() }.getOrElse { emptyList() }
+        } else {
+            emptyList()
+        }
+        val mergedEntries = mergeClipboardEntries(currentEntries, extracted.entries)
+        val reconciled = reconcileClipboardImportResult(
+            clipboardDir = context.clipboardDir,
+            entries = mergedEntries
+        )
+        context.clipboardFile.writeText(encodeClipboardEntries(reconciled))
+    }
+
+    private fun copyImportedClipboardFiles(sourceDir: File, destinationDir: File) {
+        sourceDir.listFiles()?.forEach { file ->
+            if(!file.isFile) return@forEach
+
+            val destination = File(destinationDir, file.name)
+            if(!destination.exists()) {
+                file.copyTo(destination, overwrite = false)
+            }
+        }
+    }
+
+    private fun reconcileClipboardImportResult(
+        clipboardDir: File,
+        entries: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry>
+    ): List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry> {
+        val reconciledEntries = reconcileClipboardEntriesWithStorage(entries, clipboardDir)
+        val stillReferenced = referencedClipboardFileNames(reconciledEntries)
+
+        clipboardDir.listFiles()?.forEach { file ->
+            if(file.name !in stillReferenced) {
+                file.delete()
+            }
+        }
+
+        return reconciledEntries
+    }
+
     fun triggerExportSettings(context: Context) {
         val date = Date()
         val formatter = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", context.resources.configuration.locale)
@@ -479,12 +674,35 @@ object SettingsExporter {
         activity.startActivityForResult(intent, EXPORT_SETTINGS_REQUEST)
     }
 
+    fun triggerExportClipboardBackup(context: Context) {
+        val date = Date()
+        val formatter = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", context.resources.configuration.locale)
+        val formattedDate = formatter.format(date)
+        val defaultFileName = "FUTOKeyboardClipboard_${formattedDate}.backup"
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/octet-stream"
+            putExtra(Intent.EXTRA_TITLE, defaultFileName)
+        }
+
+        val activity: SettingsActivity = findSettingsActivity(context)
+        activity.startActivityForResult(intent, EXPORT_CLIPBOARD_BACKUP_REQUEST)
+    }
+
     fun triggerImportSettings(context: Context) {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/octet-stream"
         }
         (context as Activity).startActivityForResult(intent, IMPORT_SETTINGS_REQUEST)
+    }
+
+    fun triggerImportClipboardBackup(context: Context) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/octet-stream"
+        }
+        (context as Activity).startActivityForResult(intent, IMPORT_CLIPBOARD_BACKUP_REQUEST)
     }
 
     data class CfgFileMetadata(
@@ -508,6 +726,27 @@ object SettingsExporter {
                             dateExported = Date(date),
                             isNewer = version > currentVersion
                         )
+                    }
+                    zipIn.closeEntry()
+                    entry = zipIn.nextEntry
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun getClipboardBackupMetadata(inputStream: InputStream): ClipboardBackupMetadata? {
+        return try {
+            ZipInputStream(inputStream).use { zipIn ->
+                var entry = zipIn.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory && entry.name == ClipboardBackupManifestFileName) {
+                        val manifest = Json.decodeFromString<ClipboardBackupManifest>(
+                            zipIn.readAllBytesCompat().toByteString().utf8()
+                        )
+                        return clipboardBackupMetadata(manifest)
                     }
                     zipIn.closeEntry()
                     entry = zipIn.nextEntry
@@ -551,6 +790,44 @@ object SettingsExporter {
                 }
                 Text(
                     stringResource(R.string.settings_export_configuration_exporting_text),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp, 8.dp)
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun ClipboardExportingMenu(navController: NavHostController = rememberNavController()) {
+        val context = LocalContext.current
+        val activity = remember { findSettingsActivity(context) }
+        val triggered = remember { mutableStateOf(false) }
+
+        LaunchedEffect(Unit) {
+            activity.clipboardExportInProgress.value = 1
+            triggerExportClipboardBackup(context)
+            triggered.value = true
+        }
+
+        LaunchedEffect(activity.clipboardExportInProgress.value, triggered.value) {
+            if(activity.clipboardExportInProgress.value == 0 && triggered.value) {
+                navController.navigateUp()
+            }
+        }
+        BackHandler(activity.clipboardExportInProgress.value == 2) { }
+        ScrollableList {
+            ScreenTitle(stringResource(R.string.action_clipboard_manager_settings_export_clipboard))
+
+            if(activity.clipboardExportInProgress.value == 2) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                }
+                Text(
+                    stringResource(R.string.action_clipboard_manager_settings_export_clipboard_exporting_text),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(16.dp, 8.dp)
                 )

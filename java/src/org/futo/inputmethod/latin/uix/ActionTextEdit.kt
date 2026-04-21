@@ -31,6 +31,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -350,6 +351,7 @@ fun SettingsTextEdit(
     placeholder: String? = null,
     textSize: TextUnit = 16.sp,
     icon: (@Composable () -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null,
     autocorrect: Boolean = true,
     autofocus: Boolean = false,
     forceQwerty: Boolean = false,
@@ -370,15 +372,23 @@ fun SettingsTextEdit(
                 Spacer(modifier = Modifier.width(8.dp))
             }
 
-            GenericEditTextCompose(
-                text = text,
-                multiline = multiline,
-                textSize = textSize,
-                placeholder = placeholder,
-                autocorrect = autocorrect,
-                autofocus = autofocus,
-                forceQwerty = forceQwerty
-            )
+            Box(modifier = Modifier.weight(1f)) {
+                GenericEditTextCompose(
+                    text = text,
+                    multiline = multiline,
+                    textSize = textSize,
+                    placeholder = placeholder,
+                    autocorrect = autocorrect,
+                    autofocus = autofocus,
+                    forceQwerty = forceQwerty,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            trailingContent?.let {
+                Spacer(modifier = Modifier.width(4.dp))
+                it.invoke()
+            }
         }
     }
 }

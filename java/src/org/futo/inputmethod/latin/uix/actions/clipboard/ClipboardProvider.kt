@@ -7,6 +7,7 @@ import android.content.UriMatcher
 import android.database.Cursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import androidx.core.net.toUri
 import org.futo.inputmethod.latin.BuildConfig
 import java.io.File
 import java.util.UUID
@@ -50,6 +51,21 @@ object ClipboardProviderState {
 
         return request.mimeType
     }
+}
+
+fun createClipboardContentUri(
+    file: File,
+    mimeType: String,
+    expirationMillis: Long = 5L * 60L * 1000L
+): Uri {
+    val request = ClipboardProviderState.addRequest(
+        ClipboardPasteRequest(
+            file = file,
+            mimeType = mimeType,
+            expiration = System.currentTimeMillis() + expirationMillis
+        )
+    )
+    return "content://${CLIPBOARD_AUTHORITY}/clip/$request".toUri()
 }
 
 

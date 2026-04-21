@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import org.futo.inputmethod.accessibility.AccessibilityUtils
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.common.Constants
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardIncognitoMode
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardQuickClipsEnabled
 import org.futo.inputmethod.latin.uix.theme.Typography
 
@@ -287,6 +288,7 @@ object QuickClip {
     fun getCurrentState(context: Context): QuickClipState? {
         if(Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
         if(context.getSetting(ClipboardQuickClipsEnabled) == false) return null
+        if(context.getSetting(ClipboardIncognitoMode)) return null
 
         val clipboardManager =
             context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

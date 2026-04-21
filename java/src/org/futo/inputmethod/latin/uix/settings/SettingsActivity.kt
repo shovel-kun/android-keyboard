@@ -36,7 +36,9 @@ import kotlinx.coroutines.withContext
 import org.futo.inputmethod.latin.uix.BasicThemeProvider
 import org.futo.inputmethod.latin.uix.DynamicThemeProvider
 import org.futo.inputmethod.latin.uix.DynamicThemeProviderOwner
+import org.futo.inputmethod.latin.uix.EXPORT_CLIPBOARD_BACKUP_REQUEST
 import org.futo.inputmethod.latin.uix.EXPORT_SETTINGS_REQUEST
+import org.futo.inputmethod.latin.uix.IMPORT_CLIPBOARD_BACKUP_REQUEST
 import org.futo.inputmethod.latin.uix.IMPORT_SETTINGS_REQUEST
 import org.futo.inputmethod.latin.uix.ImportResourceActivity
 import org.futo.inputmethod.latin.uix.SettingsExporter
@@ -260,6 +262,7 @@ class SettingsActivity : ComponentActivity(), DynamicThemeProviderOwner {
     }
 
     val exportInProgress = mutableStateOf(0)
+    val clipboardExportInProgress = mutableStateOf(0)
     @Deprecated("This method has been deprecated in favor of using the Activity Result API\n      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt\n      contracts for common intents available in\n      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for\n      testing, and allow receiving results in separate, testable classes independent from your\n      activity. Use\n      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)}\n      with the appropriate {@link ActivityResultContract} and handling the result in the\n      {@link ActivityResultCallback#onActivityResult(Object) callback}.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -267,11 +270,17 @@ class SettingsActivity : ComponentActivity(), DynamicThemeProviderOwner {
         if(resultCode != Activity.RESULT_OK){
             if(requestCode == EXPORT_SETTINGS_REQUEST) {
                 exportInProgress.value = 0
+            } else if(requestCode == EXPORT_CLIPBOARD_BACKUP_REQUEST) {
+                clipboardExportInProgress.value = 0
             }
             return
         }
 
-        if(requestCode == IMPORT_GGUF_MODEL_REQUEST || requestCode == IMPORT_SETTINGS_REQUEST) {
+        if(
+            requestCode == IMPORT_GGUF_MODEL_REQUEST ||
+            requestCode == IMPORT_SETTINGS_REQUEST ||
+            requestCode == IMPORT_CLIPBOARD_BACKUP_REQUEST
+        ) {
             data?.data?.also { uri ->
                 val intent = Intent()
                 intent.setClass(this, ImportResourceActivity::class.java)
@@ -300,6 +309,18 @@ class SettingsActivity : ComponentActivity(), DynamicThemeProviderOwner {
                     }
                 }
                 exportInProgress.value = 0
+            }
+        } else if(requestCode == EXPORT_CLIPBOARD_BACKUP_REQUEST) {
+            lifecycleScope.launch {
+                clipboardExportInProgress.value = 2
+                withContext(Dispatchers.IO) {
+                    data?.data?.let { uri ->
+                        contentResolver.openOutputStream(uri)!!
+                    }?.use {
+                        SettingsExporter.exportClipboardBackup(this@SettingsActivity, it)
+                    }
+                }
+                clipboardExportInProgress.value = 0
             }
         }
     }
