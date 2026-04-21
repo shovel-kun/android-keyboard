@@ -4,7 +4,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.media.MediaPlayer
+import android.widget.MediaController
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -66,8 +69,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.net.toUri
 import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
+import java.io.File
 
 internal enum class ClipboardHistoryFilter(
     val labelRes: Int,
@@ -128,32 +134,25 @@ internal fun copyTextClip(context: Context, entry: ClipboardEntry) {
     Toast.makeText(context, context.getString(R.string.clipboard_history_copied_text), Toast.LENGTH_SHORT).show()
 }
 
-internal fun shareClipboardImage(
+internal fun shareClipboardMedia(
     context: Context,
     entry: ClipboardEntry,
     previewState: ClipboardPreviewState
 ) {
-    val sharingPreviewImage = entry.backingFile == null &&
+    val sharingPreviewMedia = entry.backingFile == null &&
         previewState.showsEmbed &&
         entry.previewImageFile != null
     val targetFile = when {
         entry.backingFile != null -> entry.getFile(context)
-        sharingPreviewImage -> entry.getPreviewFile(context)
+        sharingPreviewMedia -> entry.getPreviewFile(context)
         else -> null
     }?.takeIf { it.isFile } ?: return
 
     val mimeType = when {
-        sharingPreviewImage -> null
+        sharingPreviewMedia -> null
         else -> entry.mimeTypes.firstOrNull()
-    } ?: when(targetFile.extension.lowercase()) {
-        "png" -> "image/png"
-        "jpg", "jpeg" -> "image/jpeg"
-        "webp" -> "image/webp"
-        "gif" -> "image/gif"
-        "bmp" -> "image/bmp"
-        "avif" -> "image/avif"
-        else -> "image/*"
-    }
+    } ?: targetFile.guessedClipboardMimeType()
+        ?: if(targetFile.isClipboardVideoFile()) "video/*" else "image/*"
 
     val uri = createClipboardContentUri(
         file = targetFile,
@@ -438,15 +437,16 @@ internal fun ClipboardHistoryImagePreviewDialog(
     onShare: () -> Unit
 ) {
     val context = LocalContext.current
-    val imageFile = remember(entry, previewState, context) {
+    val mediaFile = remember(entry, previewState, context) {
         when {
             entry.text == null -> entry.getFile(context)
             previewState.showsEmbed -> entry.getPreviewFile(context)
             else -> null
         }
     }
+    val isVideo = remember(mediaFile) { mediaFile?.isClipboardVideoFile() == true }
     val bitmap = rememberClipboardBitmap(
-        imageFile = imageFile,
+        imageFile = mediaFile?.takeUnless { isVideo },
         bitmapOverride = null,
         preferThumbnail = false
     )
@@ -494,6 +494,7 @@ internal fun ClipboardHistoryImagePreviewDialog(
                     contentAlignment = Alignment.Center
                 ) {
                     when {
+                        mediaFile != null && isVideo -> ClipboardHistoryVideoPreview(mediaFile)
                         bitmap != null -> ClipboardHistoryZoomablePreviewImage(bitmap)
                         previewLoading -> Text(
                             text = stringResource(R.string.action_clipboard_manager_loading_preview),
@@ -515,6 +516,34 @@ internal fun ClipboardHistoryImagePreviewDialog(
             }
         }
     }
+}
+
+@Composable
+private fun ClipboardHistoryVideoPreview(mediaFile: File) {
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { viewContext ->
+            VideoView(viewContext).apply {
+                val mediaController = MediaController(viewContext)
+                mediaController.setAnchorView(this)
+                setMediaController(mediaController)
+                setVideoURI(mediaFile.toUri())
+                setOnPreparedListener { player: MediaPlayer ->
+                    player.isLooping = true
+                    start()
+                }
+            }
+        },
+        update = { videoView ->
+            if(videoView.tag != mediaFile.absolutePath) {
+                videoView.tag = mediaFile.absolutePath
+                videoView.setVideoURI(mediaFile.toUri())
+                videoView.start()
+            } else if(!videoView.isPlaying) {
+                videoView.start()
+            }
+        }
+    )
 }
 
 @Composable

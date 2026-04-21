@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.LinearGradient
+import android.media.MediaMetadataRetriever
 import android.graphics.Paint
 import android.graphics.Shader
 import androidx.compose.ui.graphics.ImageBitmap
@@ -25,15 +26,24 @@ object ClipboardUtil {
     fun thumbnailFor(imageFile: File): File
             = File(imageFile.parent, thumbnailForName(imageFile.name))
 
-    fun generateThumbnail(imageFile: File): File? {
-        val thumbFile = thumbnailFor(imageFile)
+    fun generateThumbnail(mediaFile: File, mimeType: String? = mediaFile.guessedClipboardMimeType()): File? {
+        val thumbFile = thumbnailFor(mediaFile)
         if (thumbFile.exists()) return thumbFile
 
+        return when {
+            mimeType?.startsWith("video/") == true || mediaFile.isClipboardVideoFile() ->
+                generateVideoThumbnail(mediaFile, thumbFile)
+            else ->
+                generateImageThumbnail(mediaFile, thumbFile)
+        }
+    }
+
+    private fun generateImageThumbnail(mediaFile: File, thumbFile: File): File? {
         var bitmap: Bitmap? = null
         var croppedBitmap: Bitmap? = null
         try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(imageFile.absolutePath, options)
+            BitmapFactory.decodeFile(mediaFile.absolutePath, options)
 
             val (w, h) = options.outWidth to options.outHeight
             if (w <= 0 || h <= 0) return null
@@ -49,7 +59,7 @@ object ClipboardUtil {
             options.inJustDecodeBounds = false
             options.inSampleSize = sample
 
-            bitmap = BitmapFactory.decodeFile(imageFile.absolutePath, options) ?: return null
+            bitmap = BitmapFactory.decodeFile(mediaFile.absolutePath, options) ?: return null
 
             val scaledCropX = cropX / sample
             val scaledCropY = cropY / sample
@@ -89,6 +99,40 @@ object ClipboardUtil {
             bitmap?.recycle()
         }
     }
+
+
+    private fun generateVideoThumbnail(mediaFile: File, thumbFile: File): File? {
+        var bitmap: Bitmap? = null
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(mediaFile.absolutePath)
+            bitmap = retriever.getFrameAtTime(-1) ?: retriever.frameAtTime ?: return null
+
+            val maxSide = ClipboardThumbnailMaxSidePx
+            val finalBmp = if (bitmap.width > maxSide || bitmap.height > maxSide) {
+                val scale = maxSide.toFloat() / max(bitmap.width, bitmap.height)
+                bitmap.scale(
+                    (bitmap.width * scale).toInt().coerceAtLeast(1),
+                    (bitmap.height * scale).toInt().coerceAtLeast(1)
+                )
+            } else {
+                bitmap
+            }
+
+            FileOutputStream(thumbFile).use { out ->
+                finalBmp.compress(Bitmap.CompressFormat.JPEG, ClipboardThumbnailJpegQuality, out)
+            }
+
+            return thumbFile
+        } catch (e: Exception) {
+            thumbFile.delete()
+            return null
+        } finally {
+            runCatching { retriever.release() }
+            bitmap?.recycle()
+        }
+    }
+
 
     fun generateCheckerboardBitmap(
         width: Int = 256,

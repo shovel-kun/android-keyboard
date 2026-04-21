@@ -29,6 +29,7 @@ import org.futo.inputmethod.latin.uix.getSetting
 import org.futo.inputmethod.latin.uix.getSettingBlocking
 import org.futo.inputmethod.latin.uix.getUnlockedSetting
 import org.futo.inputmethod.latin.uix.isDirectBootUnlocked
+import android.webkit.MimeTypeMap
 import java.io.File
 import java.security.MessageDigest
 
@@ -36,6 +37,7 @@ import java.security.MessageDigest
 private val ClipboardIOContext = Dispatchers.IO.limitedParallelism(1)
 @OptIn(ExperimentalCoroutinesApi::class)
 private val ClipboardPreviewFetchContext = Dispatchers.IO.limitedParallelism(3)
+private const val ClipboardStoredMediaMaxBytes = 50L * 1024L * 1024L
 
 private data class ClipboardPreviewFetchRequest(
     val text: String,
@@ -112,7 +114,7 @@ class ClipboardHistoryManager(
 
             when {
                 text != null -> importTextEntry(timestamp, text, mimeTypes)
-                uri != null -> importImageEntry(timestamp, uri, mimeTypes)
+                uri != null -> importMediaEntry(timestamp, uri, mimeTypes)
             }
         }
     }
@@ -165,11 +167,11 @@ class ClipboardHistoryManager(
         saveClipboard()
     }
 
-    private fun importImageEntry(timestamp: Long, uri: android.net.Uri, mimeTypes: List<String>) {
+    private fun importMediaEntry(timestamp: Long, uri: android.net.Uri, mimeTypes: List<String>) {
         try {
-            val targetMime = mimeTypes.firstOrNull { it == "image/png" }
-                ?: mimeTypes.firstOrNull { it == "image/jpeg" || it == "image/jpg" }
-                ?: mimeTypes.firstOrNull { it == "image/webp" }
+            val targetMime = mimeTypes.firstOrNull {
+                it.startsWith("image/") || it.startsWith("video/")
+            }
                 ?: return
 
             val resolver = context.contentResolver
@@ -179,11 +181,11 @@ class ClipboardHistoryManager(
             var totalBytes = 0L
             var bytesRead: Int
 
-            val tempFile = File(context.cacheDir, "temp_img")
+            val tempFile = File(context.cacheDir, "temp_media")
             tempFile.outputStream().use { out ->
                 while (stream.read(buffer).also { bytesRead = it } != -1) {
                     totalBytes += bytesRead
-                    if(totalBytes > 10 * 1024 * 1024) {
+                    if(totalBytes > ClipboardStoredMediaMaxBytes) {
                         tempFile.delete()
                         return
                     }
@@ -194,18 +196,17 @@ class ClipboardHistoryManager(
             stream.close()
 
             val md5Hex = md.digest().joinToString("") { "%02x".format(it) }
-            val extension = when (targetMime) {
-                "image/png" -> "png"
-                "image/jpeg", "image/jpg" -> "jpg"
-                "image/webp" -> "webp"
-                else -> "img"
-            }
+            val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(targetMime)
+                ?: uri.lastPathSegment?.substringAfterLast('.', "")
+                    ?.substringBefore('?')
+                    ?.takeIf { it.isNotBlank() }
+                ?: "bin"
 
             context.clipboardDir.mkdirs()
             val finalFile = File(context.clipboardDir, "$md5Hex.$extension")
             if(!finalFile.exists()) {
                 tempFile.renameTo(finalFile)
-                ClipboardUtil.generateThumbnail(finalFile)
+                ClipboardUtil.generateThumbnail(finalFile, targetMime)
             } else {
                 tempFile.delete()
             }
@@ -532,12 +533,12 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     }
                     lastFetchedPreview = preview ?: lastFetchedPreview
 
-                    if(preview != null && (preview.snippet != null || preview.imageFile != null)) {
+                    if(preview != null && (preview.snippet != null || preview.mediaFile != null)) {
                         val attemptedAt = System.currentTimeMillis()
                         val updated = updateLatestTextEntry(request.text) { current ->
                             current.copy(
                                 previewText = preview.snippet,
-                                previewImageFile = preview.imageFile,
+                                previewImageFile = preview.mediaFile,
                                 previewMetadata = preview.metadata,
                                 previewFetchStatus = ClipboardPreviewFetchStatus.Success,
                                 previewFetchLastAttemptAt = attemptedAt

@@ -58,7 +58,7 @@
     <string name="action_clipboard_manager_pin_item">Pin item</string>
     <string name="action_clipboard_manager_remove_item">Remove item</string>
     <string name="action_clipboard_manager_remove_item_confirm_dialog">Confirm remove:\n\"%s\"</string>
-    <string name="action_clipboard_manager_remove_item_confirm_dialog_image">Confirm remove image</string>
+    <string name="action_clipboard_manager_remove_item_confirm_dialog_image">Confirm remove media</string>
     <!-- Must be fairly short -->
     <string name="action_clipboard_manager_cancel_action_button">Cancel</string>
     <string name="action_clipboard_manager_disable_text">There are no items to clear. Disable clipboard history?</string>
@@ -90,12 +90,12 @@
     <string name="action_clipboard_manager_enable_clipboard_history_button">Enable Clipboard History</string>
     <string name="action_clipboard_manager_incognito_title">Clipboard History Hidden</string>
     <string name="action_clipboard_manager_incognito_text">Clipboard Incognito mode is enabled. Saved history stays on this device, but it is hidden here and new clipboard items are not saved. Disable Incognito mode in Clipboard Manager settings to view your history again.</string>
-    <!-- This message is shown when we're typing in a text field does not support image insertion ("app" refers to the external app that is providing the text field) -->
-    <string name="action_clipboard_manager_error_app_image_insertion_unsupported">App does not support image insertion</string>
+    <!-- This message is shown when we're typing in a text field does not support rich media insertion ("app" refers to the external app that is providing the text field) -->
+    <string name="action_clipboard_manager_error_app_image_insertion_unsupported">App does not support media insertion</string>
     <string name="action_clipboard_manager_settings_title">Clipboard Manager Settings</string>
     <string name="action_clipboard_manager_settings_incognito_mode">Incognito clipboard mode</string>
     <string name="action_clipboard_manager_settings_incognito_mode_subtitle">Hide saved history and stop saving new clipboard items until disabled</string>
-    <string name="action_clipboard_manager_settings_save_images">Save copied images</string>
+    <string name="action_clipboard_manager_settings_save_images">Save copied media</string>
     <string name="action_clipboard_manager_settings_save_screenshots">Save recent screenshots</string>
     <string name="action_clipboard_manager_settings_save_screenshots_subtitle">You\'ll need to grant permission to access your screenshots</string>
     <string name="action_clipboard_manager_settings_link_previews">Fetch link previews</string>
@@ -126,7 +126,7 @@
     <string name="action_clipboard_manager_retry_preview">Retry preview</string>
     <string name="clipboard_history_filter_all">All</string>
     <string name="clipboard_history_filter_text">Text</string>
-    <string name="clipboard_history_filter_images">Images</string>
+    <string name="clipboard_history_filter_images">Media</string>
     <string name="clipboard_history_filter_pinned">Pinned</string>
     <string name="clipboard_history_search_placeholder">Search clipboard history</string>
     <string name="clipboard_history_clear_search">Clear search</string>
@@ -148,13 +148,13 @@
     <string name="clipboard_history_action_delete">Delete</string>
     <string name="clipboard_history_selected_count">%1$d selected</string>
     <string name="clipboard_history_selection_scope">%1$d selected of %2$d visible</string>
-    <string name="clipboard_history_preview_title">Image Preview</string>
-    <string name="clipboard_history_image_preview_unavailable">Image preview unavailable</string>
-    <string name="clipboard_history_share_image">Share image</string>
+    <string name="clipboard_history_preview_title">Media Preview</string>
+    <string name="clipboard_history_image_preview_unavailable">Media preview unavailable</string>
+    <string name="clipboard_history_share_image">Share media</string>
     <string name="clipboard_history_copy_text">Copy text</string>
     <string name="clipboard_history_copied_text">Copied to clipboard</string>
     <string name="clipboard_history_open_settings">Open Clipboard Settings</string>
-    <string name="clipboard_history_empty">Saved text and image clips will appear here.</string>
+    <string name="clipboard_history_empty">Saved text and media clips will appear here.</string>
     <string name="clipboard_history_no_results_title">No Matching Clips</string>
     <string name="clipboard_history_no_results_text">Try a different search or filter.</string>
     <string name="clipboard_history_remove_selected_confirm_dialog">Remove %1$d selected clips?</string>

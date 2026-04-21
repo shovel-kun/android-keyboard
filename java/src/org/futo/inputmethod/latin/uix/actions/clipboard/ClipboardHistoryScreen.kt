@@ -374,7 +374,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             onDismiss = { previewEntryKey = null },
             onTogglePin = { manager.onTogglePin(entry) },
             onDelete = { requestDelete(listOf(entry)) },
-            onShare = { shareClipboardImage(context, entry, uiState.previewState) }
+            onShare = { shareClipboardMedia(context, entry, uiState.previewState) }
         )
     }
 

@@ -10,6 +10,7 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import java.io.File
+import java.util.Locale
 
 object UriSerializer : KSerializer<Uri> {
     override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("Uri", PrimitiveKind.STRING)
@@ -103,6 +104,49 @@ val DefaultClipboardEntry = ClipboardEntry(
     mimeTypes = listOf()
 )
 
+private val ClipboardVideoExtensions = setOf("mp4", "webm", "mkv", "m4v", "3gp", "mov")
+private val ClipboardGifExtensions = setOf("gif")
+private val ClipboardImageExtensions = setOf("png", "jpg", "jpeg", "webp", "bmp", "avif") + ClipboardGifExtensions
+
+private fun String.fileExtensionLowercase(): String =
+    substringAfterLast('.', "").substringBefore('?').lowercase(Locale.ROOT)
+
+fun String.guessedClipboardMimeType(): String? = when (fileExtensionLowercase()) {
+    "png" -> "image/png"
+    "jpg", "jpeg" -> "image/jpeg"
+    "webp" -> "image/webp"
+    "gif" -> "image/gif"
+    "bmp" -> "image/bmp"
+    "avif" -> "image/avif"
+    "mp4", "m4v" -> "video/mp4"
+    "webm" -> "video/webm"
+    "mkv" -> "video/x-matroska"
+    "3gp" -> "video/3gpp"
+    "mov" -> "video/quicktime"
+    else -> null
+}
+
+fun String.isClipboardVideoFileName(): Boolean =
+    fileExtensionLowercase() in ClipboardVideoExtensions
+
+fun String.isClipboardGifFileName(): Boolean =
+    fileExtensionLowercase() in ClipboardGifExtensions
+
+fun String.isClipboardImageFileName(): Boolean =
+    fileExtensionLowercase() in ClipboardImageExtensions
+
+fun File.guessedClipboardMimeType(): String? =
+    name.guessedClipboardMimeType()
+
+fun File.isClipboardVideoFile(): Boolean =
+    name.isClipboardVideoFileName()
+
+fun File.isClipboardGifFile(): Boolean =
+    name.isClipboardGifFileName()
+
+fun File.isClipboardImageFile(): Boolean =
+    name.isClipboardImageFileName()
+
 fun ClipboardEntry.getFile(context: Context): File? =
     backingFile?.let { File(context.clipboardDir, it) }
 
@@ -192,7 +236,12 @@ fun String.toFNV1aHash(): Long {
 
 private fun ClipboardEntry.searchTokens(): Set<String> = buildSet {
     when {
-        backingFile != null -> addAll(setOf("image", "images", "photo", "picture"))
+        backingFile != null && backingFile.isClipboardVideoFileName() ->
+            addAll(setOf("media", "video", "videos", "clip"))
+        backingFile != null && backingFile.isClipboardGifFileName() ->
+            addAll(setOf("media", "gif", "gifs", "image", "images"))
+        backingFile != null ->
+            addAll(setOf("media", "image", "images", "photo", "picture"))
         text != null -> addAll(setOf("text", "link"))
     }
 
