@@ -2,6 +2,12 @@
 
 The goal is to make a good modern keyboard that stays offline and doesn't spy on you. This keyboard is a fork of [LatinIME, The Android Open-Source Keyboard](https://android.googlesource.com/platform/packages/inputmethods/LatinIME), with significant changes made to it.
 
+## WTF? (Why The Fork?)
+
+- A full clipboard history overhaul with a proper manager UI, better persistence, pinned items, image support, and clipboard backup/import/export flows.
+- Clipboard link previews for supported X/Twitter and Pixiv links, including inline preview media/text handling instead of just storing the raw URL.
+- A `Wrap selection` clipboard shortcut for faster text editing from the keyboard action surface.
+
 Check out the [FUTO Keyboard website](https://keyboard.futo.org/) for downloads and more information.
 
 The code is licensed under the [FUTO Source First License 1.1](LICENSE.md).
@@ -14,7 +20,7 @@ The source code is hosted on our [internal GitLab](https://gitlab.futo.org/keybo
 
 Due to custom license, pull requests to this repository require signing a [CLA](https://cla.futo.org/) which you can do after opening a PR. Contributions to the [layouts repo](https://github.com/futo-org/futo-keyboard-layouts) don't require CLA as they're Apache-2.0
 
-If you want to help translate the app, please do so via our Pontoon instance: https://i18n-keyboard.futo.org/
+If you want to help translate the app, please do so via our Pontoon instance: <https://i18n-keyboard.futo.org/>
 
 ## Layouts
 
@@ -23,16 +29,19 @@ If you want to contribute layouts, check out the [layouts repo](https://github.c
 ## Building
 
 When cloning the repository, you must perform a recursive clone to fetch all dependencies:
+
 ```
 git clone --recursive https://gitlab.futo.org/keyboard/latinime.git
 ```
 
 If you forgot to specify recursive clone, use this to fetch submodules:
+
 ```
 git submodule update --init --recursive
 ```
 
 You can then open the project in Android Studio and build it that way, or use gradle commands:
+
 ```
 ./gradlew assembleUnstableDebug
 ./gradlew assembleStableRelease
