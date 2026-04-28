@@ -19,9 +19,31 @@ import java.security.MessageDigest
 
 data class ClipboardLinkPreview(
     val snippet: String?,
-    val mediaFile: String?,
+    val mediaFiles: List<ClipboardPreviewMedia>,
     val metadata: ClipboardPreviewMetadata?
 )
+
+data class ClipboardLinkPreviewManifest(
+    val snippet: String?,
+    val mediaItems: List<ClipboardLinkPreviewMedia>,
+    val metadata: ClipboardPreviewMetadata?
+)
+
+data class ClipboardLinkPreviewMedia(
+    val url: String,
+    val sourceIndex: Int,
+    val mimeType: String? = null
+)
+
+sealed interface ClipboardPreviewMediaCacheResult {
+    data class Saved(
+        val fileName: String,
+        val mimeType: String?
+    ) : ClipboardPreviewMediaCacheResult
+
+    data object Failed : ClipboardPreviewMediaCacheResult
+    data object SkippedTooLarge : ClipboardPreviewMediaCacheResult
+}
 
 private val LinkPreviewJson = Json {
     ignoreUnknownKeys = true
@@ -67,26 +89,67 @@ object ClipboardLinkPreviewFetcher {
     fun prefersImagePreview(rawText: String): Boolean =
         extractPreviewRequest(rawText) is PixivArtworkUrl
 
-    fun fetch(context: Context, rawText: String): ClipboardLinkPreview? {
+    fun fetchManifest(rawText: String): ClipboardLinkPreviewManifest? {
         val request = extractPreviewRequest(rawText) ?: return null
-        val preview = try {
+        return try {
             when (request) {
                 is TwitterStatusUrl -> fetchTwitterPreview(request)
                 is PixivArtworkUrl -> fetchPixivPreview(request)
             }
         } catch (_: Exception) {
             null
-        } ?: return null
+        }?.let {
+            ClipboardLinkPreviewManifest(
+                snippet = it.snippet,
+                mediaItems = it.mediaItems,
+                metadata = it.metadata
+            )
+        }
+    }
 
-        val mediaFile = preview.mediaUrl?.let { cachePreviewMedia(context, it) }
-        if (preview.snippet == null && mediaFile == null && preview.metadata == null) return null
+    fun fetch(context: Context, rawText: String): ClipboardLinkPreview? {
+        val preview = fetchManifest(rawText) ?: return null
+
+        val mediaFiles = preview.mediaItems.mapNotNull { media ->
+            when (val result = cachePreviewMedia(context, media.url, context.clipboardDir)) {
+                is ClipboardPreviewMediaCacheResult.Saved -> {
+                    ClipboardPreviewMedia(
+                        fileName = result.fileName,
+                        sourceUrl = media.url,
+                        sourceIndex = media.sourceIndex,
+                        mimeType = result.mimeType ?: media.mimeType
+                    )
+                }
+                ClipboardPreviewMediaCacheResult.Failed,
+                ClipboardPreviewMediaCacheResult.SkippedTooLarge -> null
+            }
+        }
+        if (preview.snippet == null && mediaFiles.isEmpty() && preview.metadata == null) return null
 
         return ClipboardLinkPreview(
             snippet = preview.snippet,
-            mediaFile = mediaFile,
+            mediaFiles = mediaFiles,
             metadata = preview.metadata
         )
     }
+
+    internal fun parseTwitterApiPreviewMediaUrlsForTest(responseText: String): List<String> =
+        parseTwitterApiPreview(
+            LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
+            TwitterStatusUrl(handle = "futo", id = "123")
+        )?.mediaItems?.map { it.url }.orEmpty()
+
+    internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: Int? = null): List<String> =
+        parsePixivPreviewData(
+            LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
+            PixivArtworkUrl(id = "123", pageIndex = pageIndex, language = "en")
+        )?.mediaItems?.map { it.url }.orEmpty()
+
+    internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String> =
+        parseTwitterHtmlPreview(
+            html = html,
+            statusUrl = TwitterStatusUrl(handle = "futo", id = "123")
+        )?.mediaItems?.map { it.url }.orEmpty()
 
     private fun fetchTwitterPreview(statusUrl: TwitterStatusUrl): RemotePreviewData? {
         return requestTwitterPreview(statusUrl)
@@ -101,11 +164,13 @@ object ClipboardLinkPreviewFetcher {
         val snippet = (rawBodyText ?: title ?: description)?.let { sanitizeClipboardText(it, 160) }
 
         val media = tweet.objectValue("media")
-        val mediaUrl = media?.arrayValue("photos")?.firstObject()?.stringValue("url")?.toOriginalSizedImageUrl()
-            ?: media?.objectValue("mosaic")?.objectValue("formats")?.stringValue("jpeg")
-            ?: media?.firstTwitterVideoUrl()
-            ?: media?.arrayValue("videos")?.firstObject()?.stringValue("thumbnail_url")
-            ?: card?.objectValue("image")?.stringValue("url")
+        val mediaItems = media.twitterMediaItems()
+            .ifEmpty {
+                listOfNotNull(
+                    media?.objectValue("mosaic")?.objectValue("formats")?.stringValue("jpeg"),
+                    card?.objectValue("image")?.stringValue("url")
+                ).mapIndexed { index, url -> ClipboardLinkPreviewMedia(url = url, sourceIndex = index) }
+            }
 
         val author = tweet.objectValue("author")
         val metadata = ClipboardPreviewMetadata(
@@ -119,7 +184,7 @@ object ClipboardLinkPreviewFetcher {
             authorId = author?.stringValue("id"),
             createdAt = tweet.stringValue("created_at"),
             imageCount = media?.arrayValue("photos")?.size,
-            selectedImageIndex = 0.takeIf { mediaUrl != null },
+            selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() },
             stats = ClipboardPreviewStats(
                 likeCount = tweet.longValue("likes"),
                 bookmarkCount = tweet.longValue("bookmarks"),
@@ -135,17 +200,30 @@ object ClipboardLinkPreviewFetcher {
 
         return RemotePreviewData(
             snippet = snippet,
-            mediaUrl = mediaUrl,
+            mediaItems = mediaItems,
             metadata = metadata
         )
     }
 
     private fun fetchPixivPreview(artworkUrl: PixivArtworkUrl): RemotePreviewData? {
         val response = requestPixivPreview(artworkUrl) ?: return null
+        return parsePixivPreviewData(response, artworkUrl)
+    }
+
+    private fun parsePixivPreviewData(
+        response: JsonObject,
+        artworkUrl: PixivArtworkUrl
+    ): RemotePreviewData? {
         val imageUrls = response.stringArrayValue("image_proxy_urls")
-        val mediaUrl = imageUrls
-            .getOrNull(artworkUrl.pageIndex ?: 0)
-            ?: imageUrls.firstOrNull()
+        val mediaItems = imageUrls
+            .prioritizeIndex(artworkUrl.pageIndex ?: 0)
+            .map { (sourceIndex, url) ->
+                ClipboardLinkPreviewMedia(
+                    url = url,
+                    sourceIndex = sourceIndex,
+                    mimeType = url.guessedClipboardMimeType()
+                )
+            }
         val description = response.stringValue("description")?.stripSimpleHtml()?.takeIf { it.isNotBlank() }
         val metadata = ClipboardPreviewMetadata(
             provider = ClipboardPreviewProvider.PIXIV,
@@ -174,7 +252,7 @@ object ClipboardLinkPreviewFetcher {
 
         return RemotePreviewData(
             snippet = null,
-            mediaUrl = mediaUrl,
+            mediaItems = mediaItems,
             metadata = metadata
         )
     }
@@ -204,6 +282,13 @@ object ClipboardLinkPreviewFetcher {
             requestText(statusUrl.fixupxUrl(), MaxPreviewJsonBytes)
         }.getOrNull() ?: return null
 
+        return parseTwitterHtmlPreview(html, statusUrl)
+    }
+
+    private fun parseTwitterHtmlPreview(
+        html: String,
+        statusUrl: TwitterStatusUrl
+    ): RemotePreviewData? {
         val snippet = html.htmlMetaContent("og:description")
             ?.stripSimpleHtml()
             ?.takeIf { it.isNotBlank() }
@@ -242,7 +327,9 @@ object ClipboardLinkPreviewFetcher {
 
         return RemotePreviewData(
             snippet = snippet,
-            mediaUrl = mediaUrl,
+            mediaItems = listOfNotNull(mediaUrl).map {
+                ClipboardLinkPreviewMedia(url = it, sourceIndex = 0, mimeType = it.guessedClipboardMimeType())
+            },
             metadata = metadata
         )
     }
@@ -252,25 +339,38 @@ object ClipboardLinkPreviewFetcher {
         return requestJsonObject(requestUrl, MaxPreviewJsonBytes)
     }
 
-    private fun cachePreviewMedia(context: Context, mediaUrl: String): String? {
+    fun cachePreviewMedia(
+        context: Context,
+        mediaUrl: String,
+        destinationDir: File
+    ): ClipboardPreviewMediaCacheResult {
         val fileBaseName = "preview_${mediaUrl.md5Hex()}"
-        context.clipboardDir.mkdirs()
-        findCachedPreviewFile(context, fileBaseName)?.let { return it }
+        destinationDir.mkdirs()
+        findCachedPreviewFile(destinationDir, fileBaseName)?.let {
+            return ClipboardPreviewMediaCacheResult.Saved(
+                fileName = it.name,
+                mimeType = it.guessedClipboardMimeType()
+            )
+        }
 
         val tempFile = File(context.cacheDir, "${fileBaseName}.tmp")
         try {
             var outputFile: File? = null
+            var outputMimeType: String? = null
             withConnection(mediaUrl) { connection ->
                 val contentType = connection.contentType.orEmpty().normalizedMimeType()
                 val mimeType = contentType.takeIf {
                     it.startsWith("image/") || it.startsWith("video/")
                 } ?: mediaUrl.guessedClipboardMimeType()
-                if (mimeType == null) return null
+                if (mimeType == null) return ClipboardPreviewMediaCacheResult.Failed
 
                 val extension = mimeType.fileExtensionForMimeType() ?: mediaUrl.fileExtensionHint()
                 val fileName = "$fileBaseName.$extension"
-                outputFile = File(context.clipboardDir, fileName)
-                if (outputFile!!.exists()) return fileName
+                outputMimeType = mimeType
+                outputFile = File(destinationDir, fileName)
+                if (outputFile!!.exists()) {
+                    return ClipboardPreviewMediaCacheResult.Saved(fileName, mimeType)
+                }
 
                 connection.inputStream.use { input ->
                     tempFile.outputStream().use { output ->
@@ -282,21 +382,24 @@ object ClipboardLinkPreviewFetcher {
             }?.let { existingFileName ->
                 if (outputFile?.exists() == true) {
                     tempFile.delete()
-                    return existingFileName
+                    return ClipboardPreviewMediaCacheResult.Saved(existingFileName, outputMimeType)
                 }
             }
 
-            val finalFile = outputFile ?: return null
+            val finalFile = outputFile ?: return ClipboardPreviewMediaCacheResult.Failed
             if (!tempFile.renameTo(finalFile)) {
                 tempFile.copyTo(finalFile, overwrite = true)
                 tempFile.delete()
             }
 
             ClipboardUtil.generateThumbnail(finalFile)
-            return finalFile.name
+            return ClipboardPreviewMediaCacheResult.Saved(finalFile.name, outputMimeType)
+        } catch (_: IllegalStateException) {
+            tempFile.delete()
+            return ClipboardPreviewMediaCacheResult.SkippedTooLarge
         } catch (_: Exception) {
             tempFile.delete()
-            return null
+            return ClipboardPreviewMediaCacheResult.Failed
         }
     }
 
@@ -398,6 +501,15 @@ object ClipboardLinkPreviewFetcher {
     }
 }
 
+internal fun parseTwitterApiPreviewMediaUrlsForTest(responseText: String): List<String> =
+    ClipboardLinkPreviewFetcher.parseTwitterApiPreviewMediaUrlsForTest(responseText)
+
+internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: Int? = null): List<String> =
+    ClipboardLinkPreviewFetcher.parsePixivPreviewMediaUrlsForTest(responseText, pageIndex)
+
+internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String> =
+    ClipboardLinkPreviewFetcher.parseTwitterHtmlPreviewMediaUrlsForTest(html)
+
 private fun InputStream.readBytesCapped(limit: Int): ByteArray {
     val output = ByteArrayOutputStream(limit.coerceAtMost(8 * 1024))
     copyToCapped(output, limit)
@@ -421,13 +533,16 @@ private fun InputStream.readStringCapped(limit: Int): String =
     readBytesCapped(limit).toString(Charsets.UTF_8)
 
 private fun String.stripSimpleHtml(): String =
-    (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        Html.fromHtml(this, Html.FROM_HTML_MODE_LEGACY)
-    } else {
-        @Suppress("DEPRECATION")
-        Html.fromHtml(this)
-    })
-        .toString()
+    runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            Html.fromHtml(this, Html.FROM_HTML_MODE_LEGACY)
+        } else {
+            @Suppress("DEPRECATION")
+            Html.fromHtml(this)
+        }.toString()
+    }.getOrElse {
+        replace(Regex("<[^>]+>"), " ")
+    }
         .replace('\u00A0', ' ')
         .trim()
 
@@ -557,14 +672,13 @@ private fun String.fileExtensionForMimeType(): String? = when (normalizedMimeTyp
     else -> null
 }
 
-private fun findCachedPreviewFile(context: Context, fileBaseName: String): String? =
-    context.clipboardDir.listFiles()
+private fun findCachedPreviewFile(directory: File, fileBaseName: String): File? =
+    directory.listFiles()
         ?.firstOrNull { file ->
             file.isFile &&
                 file.name.startsWith("$fileBaseName.") &&
                 !file.name.contains(".thumb.")
         }
-        ?.name
 
 private fun String.md5Hex(): String =
     MessageDigest.getInstance("MD5").digest(toByteArray()).joinToString("") { "%02x".format(it) }
@@ -586,21 +700,60 @@ private data class PixivArtworkUrl(
 
 private data class RemotePreviewData(
     val snippet: String?,
-    val mediaUrl: String?,
+    val mediaItems: List<ClipboardLinkPreviewMedia>,
     val metadata: ClipboardPreviewMetadata?
 )
 
-private fun JsonObject.firstTwitterVideoUrl(): String? =
-    arrayValue("videos")?.firstNotNullOfOrNull { element ->
-        val video = element as? JsonObject ?: return@firstNotNullOfOrNull null
-        video.stringValue("url")
-            ?: video.stringValue("download_url")
-            ?: video.arrayValue("variants")?.firstNotNullOfOrNull { variant ->
-                (variant as? JsonObject)?.stringValue("url")
-            }
-            ?: video.arrayValue("variants")?.firstObject()?.stringValue("url")
-            ?: video.objectValue("variants")?.stringValue("url")
+private fun JsonObject?.twitterMediaItems(): List<ClipboardLinkPreviewMedia> {
+    if (this == null) return emptyList()
+
+    val photos = arrayValue("photos")
+        ?.mapIndexedNotNull { index, element ->
+            val url = (element as? JsonObject)
+                ?.stringValue("url")
+                ?.toOriginalSizedImageUrl()
+                ?: return@mapIndexedNotNull null
+            ClipboardLinkPreviewMedia(
+                url = url,
+                sourceIndex = index,
+                mimeType = url.guessedClipboardMimeType()
+            )
+        }
+        .orEmpty()
+
+    val videos = arrayValue("videos")
+        ?.mapIndexedNotNull { index, element ->
+            val video = element as? JsonObject ?: return@mapIndexedNotNull null
+            val url = video.stringValue("url")
+                ?: video.stringValue("download_url")
+                ?: video.arrayValue("variants")?.firstNotNullOfOrNull { variant ->
+                    (variant as? JsonObject)?.stringValue("url")
+                }
+                ?: video.arrayValue("variants")?.firstObject()?.stringValue("url")
+                ?: video.objectValue("variants")?.stringValue("url")
+                ?: video.stringValue("thumbnail_url")
+                ?: return@mapIndexedNotNull null
+            ClipboardLinkPreviewMedia(
+                url = url,
+                sourceIndex = photos.size + index,
+                mimeType = url.guessedClipboardMimeType()
+            )
+        }
+        .orEmpty()
+
+    return photos + videos
+}
+
+private fun List<String>.prioritizeIndex(index: Int): List<Pair<Int, String>> {
+    if (isEmpty()) return emptyList()
+    val safeIndex = index.takeIf { it in indices }
+    return buildList {
+        safeIndex?.let { add(it to this@prioritizeIndex[it]) }
+        this@prioritizeIndex.forEachIndexed { sourceIndex, url ->
+            if (sourceIndex != safeIndex) add(sourceIndex to url)
+        }
     }
+}
 
 private fun TwitterStatusUrl.canonicalUrl(): String = when (handle) {
     null -> "https://x.com/i/status/$id"

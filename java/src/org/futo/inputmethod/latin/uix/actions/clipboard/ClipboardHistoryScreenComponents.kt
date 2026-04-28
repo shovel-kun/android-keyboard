@@ -93,7 +93,7 @@ internal enum class ClipboardHistoryFilter(
     Images(
         labelRes = R.string.clipboard_history_filter_images,
         iconRes = R.drawable.image,
-        matches = { it.backingFile != null }
+        matches = { it.backingFile != null || it.previewMedia().isNotEmpty() }
     ),
     Pinned(
         labelRes = R.string.clipboard_history_filter_pinned,
@@ -141,7 +141,7 @@ internal fun shareClipboardMedia(
 ) {
     val sharingPreviewMedia = entry.backingFile == null &&
         previewState.showsEmbed &&
-        entry.previewImageFile != null
+        entry.previewMedia().isNotEmpty()
     val targetFile = when {
         entry.backingFile != null -> entry.getFile(context)
         sharingPreviewMedia -> entry.getPreviewFile(context)

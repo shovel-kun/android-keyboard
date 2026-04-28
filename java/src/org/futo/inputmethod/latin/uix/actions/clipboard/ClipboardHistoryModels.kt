@@ -75,6 +75,14 @@ enum class ClipboardPreviewFetchStatus {
 }
 
 @Serializable
+data class ClipboardPreviewMedia(
+    val fileName: String,
+    val sourceUrl: String? = null,
+    val sourceIndex: Int = 0,
+    val mimeType: String? = null
+)
+
+@Serializable
 data class ClipboardEntry(
     val timestamp: Long,
     val pinned: Boolean,
@@ -86,6 +94,7 @@ data class ClipboardEntry(
     val sizeMb: Float? = null,
     val previewText: String? = null,
     val previewImageFile: String? = null,
+    val previewMediaFiles: List<ClipboardPreviewMedia> = emptyList(),
     val previewMetadata: ClipboardPreviewMetadata? = null,
     val previewFetchStatus: ClipboardPreviewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted,
     val previewFetchLastAttemptAt: Long? = null,
@@ -151,10 +160,28 @@ fun ClipboardEntry.getFile(context: Context): File? =
     backingFile?.let { File(context.clipboardDir, it) }
 
 fun ClipboardEntry.getPreviewFile(context: Context): File? =
-    previewImageFile?.let { File(context.clipboardDir, it) }
+    previewMediaFileNames().firstOrNull()?.let { previewMediaFile(context, it) }
+
+fun ClipboardEntry.getPreviewFiles(context: Context): List<File> =
+    previewMediaFileNames().map { previewMediaFile(context, it) }
+
+private fun previewMediaFile(context: Context, fileName: String): File {
+    val clipboardFile = File(context.clipboardDir, fileName)
+    return if(clipboardFile.isFile) clipboardFile else File(context.clipboardArchiveDir, fileName)
+}
+
+fun ClipboardEntry.previewMedia(): List<ClipboardPreviewMedia> =
+    when {
+        previewMediaFiles.isNotEmpty() -> previewMediaFiles
+        previewImageFile != null -> listOf(ClipboardPreviewMedia(fileName = previewImageFile))
+        else -> emptyList()
+    }
+
+fun ClipboardEntry.previewMediaFileNames(): List<String> =
+    previewMedia().map { it.fileName }
 
 fun ClipboardEntry.hasRenderablePreview(): Boolean =
-    previewText != null || previewImageFile != null
+    previewText != null || previewMedia().isNotEmpty()
 
 fun ClipboardEntry.hasRetainedPreviewState(): Boolean =
     hasRenderablePreview() ||

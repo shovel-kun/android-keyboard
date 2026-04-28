@@ -300,11 +300,12 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         ) { entry ->
                             val isSelected = entry.selectionKey() in selectedKeys
                             val canPreview = uiState.previewState.showsEmbed &&
-                                (entry.backingFile != null || entry.previewImageFile != null)
+                                (entry.backingFile != null || entry.previewMedia().isNotEmpty())
 
                             ClipboardEntryView(
                                 modifier = Modifier.fillMaxWidth(),
                                 clipboardEntry = entry,
+                                previewMediaTotalCount = manager.expectedPreviewMediaCount(entry),
                                 previewLoading = uiState.previewState.showsEmbed &&
                                     entry.text?.let { manager.previewLoadingByText[it] == true } == true,
                                 embedDisplayMode = uiState.previewState.embedDisplayMode,
@@ -324,7 +325,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                                 showCopyAction = !selectionMode && entry.text != null && canPreview,
                                 showRetryPreviewAction = !selectionMode &&
                                     uiState.previewState.linkPreviewsEnabled &&
-                                    entry.shouldShowManualPreviewRetry() &&
+                                    manager.canRetryPreview(entry) &&
                                     entry.text?.let { manager.previewLoadingByText[it] != true } == true,
                                 showPinAction = !selectionMode,
                                 showRemoveAction = !selectionMode,

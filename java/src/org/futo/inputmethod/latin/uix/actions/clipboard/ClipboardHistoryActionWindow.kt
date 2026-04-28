@@ -239,6 +239,7 @@ internal fun ClipboardHistoryActionWindowContents(
                     ClipboardEntryView(
                         modifier = Modifier,
                         clipboardEntry = entry,
+                        previewMediaTotalCount = clipboardHistoryManager.expectedPreviewMediaCount(entry),
                         previewLoading = uiState.previewState.showsEmbed &&
                             entry.text?.let { clipboardHistoryManager.previewLoadingByText[it] == true } == true,
                         embedDisplayMode = uiState.previewState.embedDisplayMode,
@@ -302,7 +303,7 @@ internal fun ClipboardHistoryActionWindowContents(
                             manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
                         },
                         showRetryPreviewAction = uiState.previewState.linkPreviewsEnabled &&
-                            entry.shouldShowManualPreviewRetry() &&
+                            clipboardHistoryManager.canRetryPreview(entry) &&
                             entry.text?.let { clipboardHistoryManager.previewLoadingByText[it] != true } == true
                     )
                 }

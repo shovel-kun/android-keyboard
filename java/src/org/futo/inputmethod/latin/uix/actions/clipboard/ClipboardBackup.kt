@@ -31,13 +31,20 @@ data class ClipboardBackupMetadata(
 )
 
 fun decodeClipboardEntries(text: String): List<ClipboardEntry> =
-    ClipboardJson.decodeFromString(text)
+    ClipboardJson.decodeFromString<List<ClipboardEntry>>(text).map { it.withNormalizedPreviewMedia() }
 
 fun encodeClipboardEntries(entries: List<ClipboardEntry>): String =
-    ClipboardJson.encodeToString(entries)
+    ClipboardJson.encodeToString(entries.map { it.withNormalizedPreviewMedia() })
 
 fun File.decodeClipboardEntries(): List<ClipboardEntry> =
     decodeClipboardEntries(readText())
+
+private fun ClipboardEntry.withNormalizedPreviewMedia(): ClipboardEntry =
+    when {
+        previewMediaFiles.isNotEmpty() -> this
+        previewImageFile != null -> copy(previewMediaFiles = previewMedia())
+        else -> this
+    }
 
 fun clipboardBackupMetadata(manifest: ClipboardBackupManifest): ClipboardBackupMetadata =
     ClipboardBackupMetadata(
@@ -47,22 +54,30 @@ fun clipboardBackupMetadata(manifest: ClipboardBackupManifest): ClipboardBackupM
 
 fun referencedClipboardFileNames(entries: List<ClipboardEntry>): Set<String> =
     entries
-        .flatMap { listOfNotNull(it.backingFile, it.previewImageFile) }
+        .flatMap { listOfNotNull(it.backingFile) + it.previewMediaFileNames() }
         .flatMap { listOf(it, ClipboardUtil.thumbnailForName(it)) }
         .toSet()
 
-fun reconcileClipboardEntriesWithStorage(entries: List<ClipboardEntry>, clipboardDir: File): List<ClipboardEntry> {
+fun reconcileClipboardEntriesWithStorage(
+    entries: List<ClipboardEntry>,
+    clipboardDir: File,
+    archiveDir: File? = null
+): List<ClipboardEntry> {
     val deduplicated = LinkedHashSet<ClipboardEntry>()
 
     return entries.mapNotNull { entry ->
         if(entry.backingFile != null && File(clipboardDir, entry.backingFile).isFile != true) {
             null
-        } else if(entry.previewImageFile != null && File(clipboardDir, entry.previewImageFile).isFile != true) {
+        } else if(entry.previewMedia().any { !previewMediaFileExists(clipboardDir, archiveDir, it.fileName) }) {
+            val retainedPreviewMedia = entry.previewMedia()
+                .filter { previewMediaFileExists(clipboardDir, archiveDir, it.fileName) }
             entry.copy(
                 previewImageFile = null,
+                previewMediaFiles = retainedPreviewMedia,
                 previewFetchStatus = if(
                     entry.previewFetchStatus == ClipboardPreviewFetchStatus.Success &&
-                    entry.previewText == null
+                    entry.previewText == null &&
+                    retainedPreviewMedia.isEmpty()
                 ) {
                     ClipboardPreviewFetchStatus.NeverAttempted
                 } else {
@@ -74,6 +89,10 @@ fun reconcileClipboardEntriesWithStorage(entries: List<ClipboardEntry>, clipboar
         }
     }.filter { deduplicated.add(it) }
 }
+
+private fun previewMediaFileExists(clipboardDir: File, archiveDir: File?, fileName: String): Boolean =
+    File(clipboardDir, fileName).isFile == true ||
+        archiveDir?.let { File(it, fileName).isFile == true } == true
 
 fun mergeClipboardEntries(
     currentEntries: List<ClipboardEntry>,
@@ -154,6 +173,7 @@ private fun mergeDuplicateEntries(
         sizeMb = winner.sizeMb ?: loser.sizeMb,
         previewText = richerPreviewText(winner.previewText, loser.previewText),
         previewImageFile = winner.previewImageFile ?: loser.previewImageFile,
+        previewMediaFiles = richerPreviewMedia(winner.previewMedia(), loser.previewMedia()),
         previewMetadata = mergePreviewMetadata(winner.previewMetadata, loser.previewMetadata),
         previewFetchStatus = richerPreviewFetchStatus(
             winner.previewFetchStatus,
@@ -201,8 +221,14 @@ private fun comparePreviewFieldRichness(a: ClipboardEntry, b: ClipboardEntry): I
     previewFieldScore(a).compareTo(previewFieldScore(b))
 
 private fun previewFieldScore(entry: ClipboardEntry): Int =
-    entry.previewImageFile.presentScore() * 1000 +
+    entry.previewMedia().size.coerceAtMost(100) * 1000 +
         if(entry.previewText.isNullOrBlank()) 0 else 100 + entry.previewText.length.coerceAtMost(200)
+
+private fun richerPreviewMedia(
+    primary: List<ClipboardPreviewMedia>,
+    secondary: List<ClipboardPreviewMedia>
+): List<ClipboardPreviewMedia> =
+    if(primary.size >= secondary.size) primary else secondary
 
 private fun comparePreviewMetadata(
     a: ClipboardPreviewMetadata?,

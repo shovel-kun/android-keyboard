@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -94,6 +95,21 @@ internal fun rememberClipboardBitmap(
     }.value
 }
 
+@Composable
+private fun rememberClipboardBitmaps(
+    imageFiles: List<File>,
+    bitmapOverrides: List<ImageBitmap>?,
+    preferThumbnail: Boolean = true
+): List<ImageBitmap> {
+    if(bitmapOverrides != null) return bitmapOverrides
+
+    return produceState<List<ImageBitmap>>(initialValue = emptyList(), imageFiles, preferThumbnail) {
+        value = withContext(Dispatchers.IO) {
+            imageFiles.mapNotNull { decodeClipboardBitmap(it, preferThumbnail) }
+        }
+    }.value
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ClipboardEntryView(
@@ -116,20 +132,25 @@ fun ClipboardEntryView(
     previewLoading: Boolean = false,
     embedDisplayMode: ClipboardEmbedDisplayMode = ClipboardEmbedDisplayMode.ShowEmbed,
     bitmapOverride: ImageBitmap? = null,
+    bitmapOverrides: List<ImageBitmap>? = null,
+    previewMediaTotalCount: Int? = null,
     selectionMode: Boolean = false,
     isSelected: Boolean = false
 ) {
     val context = LocalContext.current
     val showEmbed = embedDisplayMode != ClipboardEmbedDisplayMode.ShowRawClipboard
     val shouldBlurPreviewImage = embedDisplayMode == ClipboardEmbedDisplayMode.ShowEmbedBlurred
-    val imageFile = remember(clipboardEntry, embedDisplayMode) {
+    val imageFiles = remember(clipboardEntry, embedDisplayMode) {
         when {
-            clipboardEntry.text == null -> clipboardEntry.getFile(context)
-            showEmbed -> clipboardEntry.getPreviewFile(context)
-            else -> null
+            clipboardEntry.text == null -> listOfNotNull(clipboardEntry.getFile(context))
+            showEmbed -> clipboardEntry.getPreviewFiles(context)
+            else -> emptyList()
         }
     }
-    val bitmap = rememberClipboardBitmap(imageFile, bitmapOverride)
+    val previewBitmaps = rememberClipboardBitmaps(
+        imageFiles = imageFiles,
+        bitmapOverrides = bitmapOverrides ?: bitmapOverride?.let { listOf(it) }
+    )
 
     val cardColor = if(clipboardEntry.pinned) {
         MaterialTheme.colorScheme.primaryContainer
@@ -186,17 +207,20 @@ fun ClipboardEntryView(
             )
 
             ClipboardEntryLoadingState(
-                visible = showEmbed && previewLoading && bitmap == null && clipboardEntry.text != null,
+                visible = showEmbed && previewLoading && previewBitmaps.isEmpty() && clipboardEntry.text != null,
                 containerColor = containerColor
             )
 
-            if(bitmap != null) {
-                ClipboardEntryPreviewImage(
-                    bitmap = bitmap,
+            if(previewBitmaps.isNotEmpty()) {
+                ClipboardEntryPreviewMedia(
+                    bitmaps = previewBitmaps,
+                    totalMediaCount = when {
+                        previewMediaTotalCount != null -> previewMediaTotalCount
+                        bitmapOverrides != null -> bitmapOverrides.size
+                        else -> imageFiles.size
+                    },
                     containerColor = containerColor,
-                    shouldBlurPreviewImage = shouldBlurPreviewImage &&
-                        clipboardEntry.text != null &&
-                        clipboardEntry.previewImageFile != null
+                    shouldBlurPreviewImage = shouldBlurPreviewImage && clipboardEntry.text != null
                 )
             }
 
@@ -388,6 +412,7 @@ private fun ClipboardEntryTextBlock(
     val text = if(clipboardEntry.text != null) {
         remember(
             clipboardEntry.previewText,
+            clipboardEntry.previewMediaFiles,
             clipboardEntry.previewImageFile,
             clipboardEntry.text,
             previewLoading,
@@ -397,7 +422,7 @@ private fun ClipboardEntryTextBlock(
                 !showEmbed -> sanitizeClipboardText(clipboardEntry.text, 160)
                 previewLoading -> null
                 clipboardEntry.previewText != null -> sanitizeClipboardText(clipboardEntry.previewText, 160)
-                clipboardEntry.previewImageFile != null -> null
+                clipboardEntry.previewMedia().isNotEmpty() -> null
                 else -> sanitizeClipboardText(clipboardEntry.text, 160)
             }
         }
@@ -448,6 +473,29 @@ private fun ClipboardEntryLoadingState(
 }
 
 @Composable
+private fun ClipboardEntryPreviewMedia(
+    bitmaps: List<ImageBitmap>,
+    totalMediaCount: Int,
+    containerColor: androidx.compose.ui.graphics.Color,
+    shouldBlurPreviewImage: Boolean
+) {
+    if(bitmaps.size == 1 && totalMediaCount <= 1) {
+        ClipboardEntryPreviewImage(
+            bitmap = bitmaps.first(),
+            containerColor = containerColor,
+            shouldBlurPreviewImage = shouldBlurPreviewImage
+        )
+    } else {
+        ClipboardEntryPreviewGrid(
+            bitmaps = bitmaps,
+            totalMediaCount = totalMediaCount.coerceAtLeast(bitmaps.size),
+            containerColor = containerColor,
+            shouldBlurPreviewImage = shouldBlurPreviewImage
+        )
+    }
+}
+
+@Composable
 private fun ClipboardEntryPreviewImage(
     bitmap: ImageBitmap,
     containerColor: androidx.compose.ui.graphics.Color,
@@ -489,13 +537,78 @@ private fun ClipboardEntryPreviewImage(
 }
 
 @Composable
+private fun ClipboardEntryPreviewGrid(
+    bitmaps: List<ImageBitmap>,
+    totalMediaCount: Int,
+    containerColor: androidx.compose.ui.graphics.Color,
+    shouldBlurPreviewImage: Boolean
+) {
+    val visibleBitmaps = bitmaps.take(4)
+    val rows = visibleBitmaps.chunked(2)
+    val overflowCount = totalMediaCount - 4
+    val imageModifier = if(shouldBlurPreviewImage) Modifier.blur(24.dp) else Modifier
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(containerColor)
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(6.dp)),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        rows.forEachIndexed { rowIndex, row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                row.forEachIndexed { columnIndex, bitmap ->
+                    val visibleIndex = rowIndex * 2 + columnIndex
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.35f))
+                    ) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .then(imageModifier)
+                        )
+                        if(visibleIndex == 3 && overflowCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.46f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "+$overflowCount",
+                                    style = Typography.SmallMl,
+                                    color = androidx.compose.ui.graphics.Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+                if(row.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ClipboardEntryOriginalLink(
     clipboardEntry: ClipboardEntry,
     showEmbed: Boolean,
     previewLoading: Boolean
 ) {
     if(!showEmbed || clipboardEntry.text == null) return
-    if(clipboardEntry.previewText == null && clipboardEntry.previewImageFile == null && !previewLoading) return
+    if(clipboardEntry.previewText == null && clipboardEntry.previewMedia().isEmpty() && !previewLoading) return
 
     val originalLink = remember(clipboardEntry.text) {
         wrapDisplayTextAnywhere(sanitizeClipboardText(clipboardEntry.text, 160))
@@ -533,7 +646,7 @@ fun ClipboardEntryViewPreview() {
             uri = null,
             mimeTypes = listOf(),
             previewText = "A tweet with photos should show the snippet first and the image below it.",
-            previewImageFile = "[preview]"
+            previewMediaFiles = listOf(ClipboardPreviewMedia("[preview]"))
         ),
         ClipboardEntry(
             timestamp = 0L,
@@ -541,8 +654,36 @@ fun ClipboardEntryViewPreview() {
             text = "https://fixupx.com/futo/status/1912345678901234567",
             uri = null,
             mimeTypes = listOf(),
-            previewImageFile = "[preview]"
+            previewMediaFiles = listOf(ClipboardPreviewMedia("[preview]"))
+        ),
+        ClipboardEntry(
+            timestamp = 0L,
+            pinned = false,
+            text = "https://www.pixiv.net/en/artworks/12345678",
+            uri = null,
+            mimeTypes = listOf(),
+            previewMediaFiles = List(6) { ClipboardPreviewMedia("[preview-$it]", sourceIndex = it) },
+            previewMetadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.PIXIV,
+                title = "Multi-page Pixiv preview",
+                imageCount = 6
+            )
         )
+    )
+
+    val previewBitmaps = listOf(
+        ClipboardUtil.generateTestPatternBitmap(),
+        ClipboardUtil.generateCheckerboardBitmap(),
+        ClipboardUtil.generateTestPatternBitmap(
+            gradientStart = android.graphics.Color.BLUE,
+            gradientEnd = android.graphics.Color.GREEN
+        ),
+        ClipboardUtil.generateCheckerboardBitmap(),
+        ClipboardUtil.generateTestPatternBitmap(
+            gradientStart = android.graphics.Color.RED,
+            gradientEnd = android.graphics.Color.YELLOW
+        ),
+        ClipboardUtil.generateCheckerboardBitmap()
     )
 
     androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid(
@@ -579,11 +720,24 @@ fun ClipboardEntryViewPreview() {
                 onPaste = {},
                 onRemove = {},
                 onWrapAndPaste = {},
-                bitmapOverride = when (it) {
-                    1 -> ClipboardUtil.generateTestPatternBitmap()
-                    2 -> ClipboardUtil.generateCheckerboardBitmap()
+                bitmapOverrides = when (it) {
+                    1 -> previewBitmaps.take(1)
+                    2 -> previewBitmaps.take(1)
+                    3 -> previewBitmaps
                     else -> null
                 }
+            )
+        }
+        item {
+            ClipboardEntryView(
+                modifier = Modifier,
+                clipboardEntry = twitterPreviewEntries.last(),
+                onPin = {},
+                onPaste = {},
+                onRemove = {},
+                onWrapAndPaste = {},
+                embedDisplayMode = ClipboardEmbedDisplayMode.ShowEmbedBlurred,
+                bitmapOverrides = previewBitmaps.take(4)
             )
         }
         item {
