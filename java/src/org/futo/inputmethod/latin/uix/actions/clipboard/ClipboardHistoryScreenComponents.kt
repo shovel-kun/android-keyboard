@@ -10,6 +10,9 @@ import android.widget.MediaController
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -90,6 +93,10 @@ import java.io.File
 
 private const val ClipboardHistoryPreviewZoomedThreshold = 1.01f
 private const val ClipboardHistoryPreviewEdgeEpsilonPx = 0.5f
+private const val ClipboardPreviewChromeEnterMillis = 220
+private const val ClipboardPreviewChromeExitMillis = 160
+private const val ClipboardPreviewChromeFadeInMillis = 160
+private const val ClipboardPreviewChromeFadeOutMillis = 120
 private val ClipboardHistoryPreviewEdgeSwipeThreshold = 48.dp
 internal val ClipboardPreviewFabThumbnailEndInset = 96.dp
 private val ClipboardMediaPreviewThumbnailSize = 64.dp
@@ -308,8 +315,22 @@ internal fun ClipboardPreviewOverlayDialog(
 
                     AnimatedVisibility(
                         visible = chromeVisible,
-                        enter = slideInVertically { -it } + fadeIn(),
-                        exit = slideOutVertically { -it } + fadeOut(),
+                        enter = slideInVertically(
+                            animationSpec = tween(
+                                durationMillis = ClipboardPreviewChromeEnterMillis,
+                                easing = LinearOutSlowInEasing
+                            )
+                        ) { -it } + fadeIn(
+                            animationSpec = tween(ClipboardPreviewChromeFadeInMillis)
+                        ),
+                        exit = slideOutVertically(
+                            animationSpec = tween(
+                                durationMillis = ClipboardPreviewChromeExitMillis,
+                                easing = FastOutLinearInEasing
+                            )
+                        ) { -it } + fadeOut(
+                            animationSpec = tween(ClipboardPreviewChromeFadeOutMillis)
+                        ),
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .fillMaxWidth()
@@ -325,8 +346,22 @@ internal fun ClipboardPreviewOverlayDialog(
 
                 AnimatedVisibility(
                     visible = chromeVisible,
-                    enter = slideInVertically { fabSlideDistancePx } + fadeIn(),
-                    exit = slideOutVertically { fabSlideDistancePx } + fadeOut(),
+                    enter = slideInVertically(
+                        animationSpec = tween(
+                            durationMillis = ClipboardPreviewChromeEnterMillis,
+                            easing = LinearOutSlowInEasing
+                        )
+                    ) { fabSlideDistancePx } + fadeIn(
+                        animationSpec = tween(ClipboardPreviewChromeFadeInMillis)
+                    ),
+                    exit = slideOutVertically(
+                        animationSpec = tween(
+                            durationMillis = ClipboardPreviewChromeExitMillis,
+                            easing = FastOutLinearInEasing
+                        )
+                    ) { fabSlideDistancePx } + fadeOut(
+                        animationSpec = tween(ClipboardPreviewChromeFadeOutMillis)
+                    ),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     ClipboardPreviewActionFabMenu(
@@ -1104,8 +1139,22 @@ internal fun ClipboardMediaPreviewPager(
 
         AnimatedVisibility(
             visible = chromeVisible && items.size > 1,
-            enter = slideInVertically { it } + fadeIn(),
-            exit = slideOutVertically { it } + fadeOut(),
+            enter = slideInVertically(
+                animationSpec = tween(
+                    durationMillis = ClipboardPreviewChromeEnterMillis,
+                    easing = LinearOutSlowInEasing
+                )
+            ) { it } + fadeIn(
+                animationSpec = tween(ClipboardPreviewChromeFadeInMillis)
+            ),
+            exit = slideOutVertically(
+                animationSpec = tween(
+                    durationMillis = ClipboardPreviewChromeExitMillis,
+                    easing = FastOutLinearInEasing
+                )
+            ) { it } + fadeOut(
+                animationSpec = tween(ClipboardPreviewChromeFadeOutMillis)
+            ),
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
