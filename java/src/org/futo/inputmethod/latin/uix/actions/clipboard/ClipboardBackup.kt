@@ -34,7 +34,7 @@ fun decodeClipboardEntries(text: String): List<ClipboardEntry> =
     ClipboardJson.decodeFromString<List<ClipboardEntry>>(text).map { it.withNormalizedPreviewMedia() }
 
 fun encodeClipboardEntries(entries: List<ClipboardEntry>): String =
-    ClipboardJson.encodeToString(entries.map { it.withNormalizedPreviewMedia() })
+    ClipboardJson.encodeToString(entries.map { it.withCurrentPreviewMediaEncoding() })
 
 fun File.decodeClipboardEntries(): List<ClipboardEntry> =
     decodeClipboardEntries(readText())
@@ -45,6 +45,9 @@ private fun ClipboardEntry.withNormalizedPreviewMedia(): ClipboardEntry =
         previewImageFile != null -> copy(previewMediaFiles = previewMedia())
         else -> this
     }
+
+private fun ClipboardEntry.withCurrentPreviewMediaEncoding(): ClipboardEntry =
+    withNormalizedPreviewMedia().copy(previewImageFile = null)
 
 fun clipboardBackupMetadata(manifest: ClipboardBackupManifest): ClipboardBackupMetadata =
     ClipboardBackupMetadata(
@@ -110,7 +113,7 @@ fun mergeClipboardEntries(
     return merged
 }
 
-private fun deduplicateClipboardEntries(entries: List<ClipboardEntry>): List<ClipboardEntry> {
+fun deduplicateClipboardEntries(entries: List<ClipboardEntry>): List<ClipboardEntry> {
     val deduplicated = mutableListOf<ClipboardEntry>()
     entries.forEach { entry ->
         mergeClipboardEntryInto(

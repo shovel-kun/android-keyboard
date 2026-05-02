@@ -54,12 +54,17 @@ import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardImportMode
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardBackupMetadata
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveFile
+import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveMetadataDir
+import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveMetadataFile
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardFile
-import org.futo.inputmethod.latin.uix.actions.clipboard.decodeClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.decodeClipboardEntries
+import org.futo.inputmethod.latin.uix.actions.clipboard.decodeLegacyClipboardArchives
+import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchive
 import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardEntries
+import org.futo.inputmethod.latin.uix.actions.clipboard.loadClipboardArchivesFromMetadataDir
+import org.futo.inputmethod.latin.uix.actions.clipboard.mergeStoredClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.mergeClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.mergeClipboardEntries
 import org.futo.inputmethod.latin.uix.actions.clipboard.reconcileClipboardArchivesWithStorage
@@ -272,9 +277,10 @@ object SettingsExporter {
             clipboardFile.inputStream().use { it.copyTo(zipOut) }
             zipOut.closeEntry()
         }
-        if (context.clipboardArchiveFile.exists()) {
+        val clipboardArchives = loadStoredClipboardArchives(context)
+        if (clipboardArchives.isNotEmpty()) {
             zipOut.putNextEntry(ZipEntry(ClipboardArchiveFileName))
-            context.clipboardArchiveFile.inputStream().use { it.copyTo(zipOut) }
+            zipOut.write(encodeClipboardArchives(clipboardArchives).encodeUtf8().toByteArray())
             zipOut.closeEntry()
         }
 
@@ -368,11 +374,7 @@ object SettingsExporter {
         } else {
             emptyList()
         }
-        val clipboardArchives = if(context.clipboardArchiveFile.exists()) {
-            runCatching { context.clipboardArchiveFile.decodeClipboardArchives() }.getOrElse { emptyList() }
-        } else {
-            emptyList()
-        }
+        val clipboardArchives = loadStoredClipboardArchives(context)
         val referencedFiles = referencedClipboardFileNames(clipboardEntries)
         val referencedArchiveFiles = referencedClipboardArchiveFileNames(clipboardArchives)
 
@@ -446,6 +448,7 @@ object SettingsExporter {
 
             context.clipboardDir.deleteRecursively()
             context.clipboardArchiveFile.delete()
+            context.clipboardArchiveMetadataDir.deleteRecursively()
             context.clipboardArchiveDir.deleteRecursively()
             ChineseIME.getRimeDir(context).deleteRecursively()
             mozcUserProfileDir(context).deleteRecursively()
@@ -483,9 +486,10 @@ object SettingsExporter {
                 }
 
                 entry.name == ClipboardArchiveFileName -> {
-                    context.clipboardArchiveFile.outputStream().use {
-                        zipIn.copyTo(it)
-                    }
+                    writeStoredClipboardArchives(
+                        context = context,
+                        archives = decodeLegacyClipboardArchives(zipIn.readAllBytesCompat().toByteString().utf8())
+                    )
                 }
 
                 entry.name.startsWith("ext/") -> {
@@ -665,7 +669,7 @@ object SettingsExporter {
             emptyList()
         }
         val archives = if(tempArchiveFile.isFile) {
-            decodeClipboardArchives(tempArchiveFile.readText())
+            decodeLegacyClipboardArchives(tempArchiveFile.readText())
         } else {
             emptyList()
         }
@@ -693,6 +697,7 @@ object SettingsExporter {
         context.clipboardDir.deleteRecursively()
         context.clipboardDir.mkdirs()
         context.clipboardArchiveFile.delete()
+        context.clipboardArchiveMetadataDir.deleteRecursively()
         context.clipboardArchiveDir.deleteRecursively()
         context.clipboardArchiveDir.mkdirs()
 
@@ -708,7 +713,7 @@ object SettingsExporter {
             archives = extracted.archives
         )
         clipboardFile.writeText(encodeClipboardEntries(reconciled))
-        context.clipboardArchiveFile.writeText(encodeClipboardArchives(reconciledArchives))
+        writeStoredClipboardArchives(context, reconciledArchives)
     }
 
     private fun mergeClipboardBackup(
@@ -725,11 +730,7 @@ object SettingsExporter {
         } else {
             emptyList()
         }
-        val currentArchives = if(context.clipboardArchiveFile.exists()) {
-            runCatching { context.clipboardArchiveFile.decodeClipboardArchives() }.getOrElse { emptyList() }
-        } else {
-            emptyList()
-        }
+        val currentArchives = loadStoredClipboardArchives(context)
         val mergedEntries = mergeClipboardEntries(currentEntries, extracted.entries)
         val mergedArchives = mergeClipboardArchives(currentArchives, extracted.archives)
         val reconciled = reconcileClipboardImportResult(
@@ -742,7 +743,35 @@ object SettingsExporter {
             archives = mergedArchives
         )
         context.clipboardFile.writeText(encodeClipboardEntries(reconciled))
-        context.clipboardArchiveFile.writeText(encodeClipboardArchives(reconciledArchives))
+        writeStoredClipboardArchives(context, reconciledArchives)
+    }
+
+    private fun loadStoredClipboardArchives(
+        context: Context
+    ): List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive> =
+        mergeStoredClipboardArchives(
+            legacyArchives = if(context.clipboardArchiveFile.exists()) {
+                runCatching { context.clipboardArchiveFile.decodeLegacyClipboardArchives() }.getOrElse { emptyList() }
+            } else {
+                emptyList()
+            },
+            metadataArchives = loadClipboardArchivesFromMetadataDir(context.clipboardArchiveMetadataDir)
+        )
+
+    private fun writeStoredClipboardArchives(
+        context: Context,
+        archives: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive>
+    ) {
+        context.clipboardArchiveMetadataDir.deleteRecursively()
+        context.clipboardArchiveMetadataDir.mkdirs()
+        archives.forEach { archive ->
+            context.clipboardArchiveMetadataDir
+                .clipboardArchiveMetadataFile(archive.key)
+                .writeText(encodeClipboardArchive(archive))
+        }
+        context.clipboardArchiveFile.delete()
+        File(context.filesDir, "$ClipboardArchiveFileName.bak").delete()
+        File(context.filesDir, "$ClipboardArchiveFileName.swap").delete()
     }
 
     private fun copyImportedClipboardFiles(sourceDir: File, destinationDir: File) {

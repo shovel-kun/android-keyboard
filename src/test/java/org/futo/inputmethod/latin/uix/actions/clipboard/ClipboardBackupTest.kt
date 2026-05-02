@@ -53,6 +53,26 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun encodeClipboardEntries_stripsLegacyPreviewImageFile() {
+        val encoded = encodeClipboardEntries(
+            listOf(
+                ClipboardEntry(
+                    timestamp = 123,
+                    pinned = false,
+                    text = "https://x.com/futo/status/123",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewImageFile = "legacy.jpg"
+                )
+            )
+        )
+        val decoded = decodeClipboardEntries(encoded).single()
+
+        assertFalse(encoded.contains("previewImageFile"))
+        assertEquals(listOf("legacy.jpg"), decoded.previewMediaFileNames())
+    }
+
+    @Test
     fun referencedClipboardFileNames_includesAllPreviewMediaAndThumbnails() {
         val names = referencedClipboardFileNames(
             listOf(
@@ -79,6 +99,20 @@ class ClipboardBackupTest {
             ),
             names
         )
+    }
+
+    @Test
+    fun lazyListKey_isUniqueForDuplicateTextEntries() {
+        val first = ClipboardEntry(
+            timestamp = 1L,
+            pinned = false,
+            text = "https://www.pixiv.net/en/artworks/107946644",
+            uri = null,
+            mimeTypes = listOf("text/plain")
+        )
+        val second = first.copy(timestamp = 2L)
+
+        assertFalse(first.lazyListKey(0) == second.lazyListKey(1))
     }
 
     @Test
@@ -142,6 +176,37 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun replaceFileWithBackup_allowsRepeatedSavesWithExistingBackup() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val target = File(dir, "clipboard_archives.json")
+            val backup = File(dir, "clipboard_archives.json.bak")
+            val swap = File(dir, "clipboard_archives.json.swap")
+
+            target.writeText("pending")
+            swap.writeText("saved")
+            replaceFileWithBackup(
+                swapFile = swap,
+                targetFile = target,
+                backupFile = backup
+            )
+
+            swap.writeText("saved-again")
+            replaceFileWithBackup(
+                swapFile = swap,
+                targetFile = target,
+                backupFile = backup
+            )
+
+            assertEquals("saved-again", target.readText())
+            assertEquals("saved", backup.readText())
+            assertFalse(swap.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun mergeClipboardEntries_preservesRicherPreviewMediaList() {
         val merged = mergeClipboardEntries(
             currentEntries = listOf(
@@ -171,6 +236,38 @@ class ClipboardBackupTest {
 
         assertEquals(listOf("one.jpg", "two.jpg"), merged.single().previewMediaFileNames())
         assertFalse(merged.single().pinned)
+    }
+
+    @Test
+    fun deduplicateClipboardEntries_mergesSameTextEntriesWithDifferentTimestamps() {
+        val deduplicated = deduplicateClipboardEntries(
+            listOf(
+                ClipboardEntry(
+                    timestamp = 1L,
+                    pinned = false,
+                    text = "https://www.pixiv.net/en/artworks/107946644",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMediaFiles = listOf(ClipboardPreviewMedia("one.jpg"))
+                ),
+                ClipboardEntry(
+                    timestamp = 2L,
+                    pinned = true,
+                    text = "https://www.pixiv.net/en/artworks/107946644",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMediaFiles = listOf(
+                        ClipboardPreviewMedia("one.jpg"),
+                        ClipboardPreviewMedia("two.jpg")
+                    )
+                )
+            )
+        )
+
+        assertEquals(1, deduplicated.size)
+        assertEquals(2L, deduplicated.single().timestamp)
+        assertTrue(deduplicated.single().pinned)
+        assertEquals(listOf("one.jpg", "two.jpg"), deduplicated.single().previewMediaFileNames())
     }
 
     @Test
@@ -229,6 +326,148 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun clipboardArchiveMetadataFileName_isStableAndFilesystemSafe() {
+        val first = clipboardArchiveMetadataFileName("pixiv:123")
+        val second = clipboardArchiveMetadataFileName("pixiv:123")
+        val other = clipboardArchiveMetadataFileName("pixiv:456")
+
+        assertEquals(first, second)
+        assertFalse(first == other)
+        assertTrue(first.endsWith(".json"))
+        assertFalse(first.contains(':'))
+        assertFalse(first.contains('/'))
+    }
+
+    @Test
+    fun loadClipboardArchivesFromMetadataDir_readsPerArchiveFilesWithoutAddingPlaceholders() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val first = sampleArchive(
+                media = listOf(
+                    ClipboardArchiveMedia(
+                        sourceUrl = "https://img.example/one.jpg",
+                        sourceIndex = 0,
+                        fileName = "one.jpg",
+                        status = ClipboardArchiveMediaStatus.Saved
+                    )
+                )
+            )
+            val second = sampleArchive(
+                media = emptyList()
+            ).copy(
+                key = "pixiv:456",
+                sourceId = "456"
+            )
+
+            dir.clipboardArchiveMetadataFile(second.key).writeText(encodeClipboardArchive(second))
+            dir.clipboardArchiveMetadataFile(first.key).writeText(encodeClipboardArchive(first))
+
+            assertEquals(
+                listOf(first.key, second.key),
+                loadClipboardArchivesFromMetadataDir(dir).map { it.key }
+            )
+            val loadedSecond = loadClipboardArchivesFromMetadataDir(dir).single { it.key == second.key }
+            assertTrue(loadedSecond.media.isEmpty())
+            assertFalse(loadedSecond.hasRetryableMedia())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun loadClipboardArchivesFromMetadataDir_recoversCorruptFileFromBackup() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val archive = sampleArchive(
+                media = listOf(
+                    ClipboardArchiveMedia(
+                        sourceUrl = "https://img.example/one.jpg",
+                        sourceIndex = 0,
+                        fileName = "one.jpg",
+                        status = ClipboardArchiveMediaStatus.Saved
+                    )
+                )
+            )
+            val archiveFile = dir.clipboardArchiveMetadataFile(archive.key)
+
+            archiveFile.writeText("{")
+            File(dir, "${archiveFile.name}.bak").writeText(encodeClipboardArchive(archive))
+
+            assertEquals(
+                listOf(archive),
+                loadClipboardArchivesFromMetadataDir(dir)
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun mergeStoredClipboardArchives_keepsLegacyRecordsDuringPartialMigration() {
+        val unchangedLegacy = sampleArchive(
+            media = emptyList()
+        ).copy(
+            key = "pixiv:unchanged",
+            sourceId = "unchanged",
+            updatedAtEpochMs = 10L
+        )
+        val legacyToUpdate = sampleArchive(
+            media = listOf(ClipboardArchiveMedia("https://img.example/pending.jpg", 0))
+        ).copy(
+            key = "pixiv:updated",
+            sourceId = "updated",
+            updatedAtEpochMs = 20L
+        )
+        val metadataUpdate = legacyToUpdate.copy(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/pending.jpg",
+                    sourceIndex = 0,
+                    fileName = "saved.jpg",
+                    status = ClipboardArchiveMediaStatus.Saved
+                )
+            ),
+            updatedAtEpochMs = 30L
+        )
+
+        val merged = mergeStoredClipboardArchives(
+            legacyArchives = listOf(unchangedLegacy, legacyToUpdate),
+            metadataArchives = listOf(metadataUpdate)
+        )
+
+        assertEquals(setOf("pixiv:unchanged", "pixiv:updated"), merged.map { it.key }.toSet())
+        assertEquals(10L, merged.first { it.key == "pixiv:unchanged" }.updatedAtEpochMs)
+        assertEquals(
+            listOf(ClipboardArchiveMediaStatus.Missing),
+            merged.first { it.key == "pixiv:unchanged" }.media.map { it.status }
+        )
+        assertEquals(
+            ClipboardArchiveMediaStatus.Saved,
+            merged.first { it.key == "pixiv:updated" }.media.single().status
+        )
+    }
+
+    @Test
+    fun mergeStoredClipboardArchives_addsPlaceholderOnlyForLegacyAggregateRecords() {
+        val legacy = sampleArchive(media = emptyList()).copy(key = "pixiv:legacy", sourceId = "legacy")
+        val current = sampleArchive(media = emptyList()).copy(key = "pixiv:current", sourceId = "current")
+
+        val legacyOnly = mergeStoredClipboardArchives(
+            legacyArchives = listOf(legacy),
+            metadataArchives = emptyList()
+        ).single()
+        val metadataOnly = mergeStoredClipboardArchives(
+            legacyArchives = emptyList(),
+            metadataArchives = listOf(current)
+        ).single()
+
+        assertEquals(listOf(ClipboardArchiveMediaStatus.Missing), legacyOnly.media.map { it.status })
+        assertTrue(legacyOnly.hasRetryableMedia())
+        assertTrue(metadataOnly.media.isEmpty())
+        assertFalse(metadataOnly.hasRetryableMedia())
+    }
+
+    @Test
     fun reconcileClipboardArchivesWithStorage_marksMissingSavedMedia() {
         val dir = createTempDirectory().toFile()
         try {
@@ -259,7 +498,24 @@ class ClipboardBackupTest {
     }
 
     @Test
-    fun retryableMedia_selectsPendingFailedAndMissingOnly() {
+    fun reconcileClipboardArchivesWithStorage_doesNotAddPlaceholderForCurrentEmptyArchive() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val reconciled = reconcileClipboardArchivesWithStorage(
+                archives = listOf(sampleArchive(media = emptyList())),
+                archiveDir = dir,
+                now = 10L
+            )
+
+            assertTrue(reconciled.single().media.isEmpty())
+            assertFalse(reconciled.single().hasRetryableMedia())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun retryableMedia_selectsPendingFailedMissingAndTooLargeOnly() {
         val archive = sampleArchive(
             media = listOf(
                 ClipboardArchiveMedia("https://img.example/pending.jpg", 0),
@@ -292,11 +548,21 @@ class ClipboardBackupTest {
             listOf(
                 "https://img.example/pending.jpg",
                 "https://img.example/failed.jpg",
+                "https://img.example/large.jpg",
                 "https://img.example/missing.jpg"
             ),
             archive.retryableMedia().map { it.sourceUrl }
         )
         assertTrue(archive.hasRetryableMedia())
+        assertEquals(
+            listOf(
+                "https://img.example/pending.jpg",
+                "https://img.example/failed.jpg",
+                "https://img.example/missing.jpg"
+            ),
+            archive.autoDownloadableMedia().map { it.sourceUrl }
+        )
+        assertTrue(archive.hasAutoDownloadableMedia())
     }
 
     @Test

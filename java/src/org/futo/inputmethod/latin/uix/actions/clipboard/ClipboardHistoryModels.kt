@@ -98,6 +98,7 @@ data class ClipboardEntry(
     val previewMetadata: ClipboardPreviewMetadata? = null,
     val previewFetchStatus: ClipboardPreviewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted,
     val previewFetchLastAttemptAt: Long? = null,
+    val previewFetchFailureDetail: String? = null,
 )
 
 const val ClipboardFileName = "clipboard.json"
@@ -201,6 +202,14 @@ fun ClipboardEntry.shouldShowManualPreviewRetry(): Boolean =
 
 fun ClipboardEntry.selectionKey(): String =
     text ?: backingFile ?: timestamp.toString()
+
+fun ClipboardEntry.lazyListKey(index: Int): String {
+    val entryKey = text?.takeIf { value -> value.length <= 512 }
+        ?: text?.toFNV1aHash()?.toString()
+        ?: backingFile
+        ?: selectionKey()
+    return "$entryKey:$timestamp:$index"
+}
 
 fun ClipboardEntry.matchesQuery(query: String): Boolean {
     if(query.isBlank()) return true

@@ -230,9 +230,7 @@ internal fun ClipboardHistoryActionWindowContents(
                 items(sortedList.size, key = { reverseIndex ->
                     val index = sortedList.size - reverseIndex - 1
                     val entry = sortedList[index]
-                    entry.text?.let {
-                        if(it.length > 512) it.toFNV1aHash() else it
-                    } ?: entry.backingFile ?: entry.selectionKey()
+                    entry.lazyListKey(index)
                 }) { reverseIndex ->
                     val index = sortedList.size - reverseIndex - 1
                     val entry = sortedList[index]
@@ -303,8 +301,9 @@ internal fun ClipboardHistoryActionWindowContents(
                             manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
                         },
                         showRetryPreviewAction = uiState.previewState.linkPreviewsEnabled &&
-                            clipboardHistoryManager.canRetryPreview(entry) &&
-                            entry.text?.let { clipboardHistoryManager.previewLoadingByText[it] != true } == true
+                            entry.shouldShowManualPreviewRetry() &&
+                            entry.text?.let { clipboardHistoryManager.previewLoadingByText[it] != true } == true,
+                        retryPreviewActionEnabled = clipboardHistoryManager.canRetryPreview(entry)
                     )
                 }
             }

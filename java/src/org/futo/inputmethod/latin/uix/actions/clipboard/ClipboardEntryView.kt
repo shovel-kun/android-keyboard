@@ -52,33 +52,80 @@ import org.futo.inputmethod.latin.uix.theme.Typography
 import java.io.File
 
 private object ClipboardThumbCache {
-    val cache = LruCache<String, ImageBitmap>(20)
+    val cache = LruCache<String, ImageBitmap>(128)
 }
+
+private data class ClipboardBitmapSource(
+    val file: File,
+    val cacheKey: String
+)
+
+private fun clipboardBitmapSource(
+    imageFile: File,
+    preferThumbnail: Boolean
+): ClipboardBitmapSource? {
+    val thumbnail = ClipboardUtil.thumbnailFor(imageFile)
+    val file = when {
+        preferThumbnail && thumbnail.exists() -> thumbnail
+        imageFile.exists() -> imageFile
+        thumbnail.exists() -> thumbnail
+        else -> return null
+    }
+    return ClipboardBitmapSource(
+        file = file,
+        cacheKey = listOf(
+            file.absolutePath,
+            "thumbnail=$preferThumbnail",
+            "modified=${file.lastModified()}",
+            "length=${file.length()}"
+        ).joinToString("|")
+    )
+}
+
+internal fun clipboardBitmapCacheKey(
+    imageFile: File,
+    preferThumbnail: Boolean = true
+): String? =
+    clipboardBitmapSource(imageFile, preferThumbnail)?.cacheKey
 
 internal fun decodeClipboardBitmap(
     imageFile: File,
     preferThumbnail: Boolean = true
 ): ImageBitmap? {
-    val thumbnail = ClipboardUtil.thumbnailFor(imageFile)
-    return when {
-        preferThumbnail && thumbnail.exists() -> ClipboardThumbCache.cache[thumbnail.name]
-            ?: BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()?.also {
-                ClipboardThumbCache.cache.put(thumbnail.name, it)
-            }
-
-        imageFile.exists() -> ClipboardThumbCache.cache[imageFile.name]
-            ?: BitmapFactory.decodeFile(imageFile.absolutePath)?.asImageBitmap()?.also {
-                ClipboardThumbCache.cache.put(imageFile.name, it)
-            }
-
-        thumbnail.exists() -> ClipboardThumbCache.cache[thumbnail.name]
-            ?: BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()?.also {
-                ClipboardThumbCache.cache.put(thumbnail.name, it)
-            }
-
-        else -> null
-    }
+    val source = clipboardBitmapSource(imageFile, preferThumbnail) ?: return null
+    return ClipboardThumbCache.cache[source.cacheKey]
+        ?: BitmapFactory.decodeFile(source.file.absolutePath)?.asImageBitmap()?.also {
+            ClipboardThumbCache.cache.put(source.cacheKey, it)
+        }
 }
+
+private fun cachedClipboardBitmap(
+    imageFile: File,
+    preferThumbnail: Boolean
+): ImageBitmap? =
+    clipboardBitmapCacheKey(imageFile, preferThumbnail)?.let(ClipboardThumbCache.cache::get)
+
+private fun requestedClipboardBitmapFiles(
+    imageFiles: List<File>,
+    maxCount: Int?
+): List<File> =
+    maxCount?.let { imageFiles.take(it) } ?: imageFiles
+
+private fun cachedClipboardBitmaps(
+    imageFiles: List<File>,
+    preferThumbnail: Boolean,
+    maxCount: Int?
+): List<ImageBitmap> =
+    requestedClipboardBitmapFiles(imageFiles, maxCount)
+        .mapNotNull { cachedClipboardBitmap(it, preferThumbnail) }
+
+private fun clipboardBitmapRequestKeys(
+    imageFiles: List<File>,
+    preferThumbnail: Boolean,
+    maxCount: Int?
+): List<String> =
+    requestedClipboardBitmapFiles(imageFiles, maxCount)
+        .map { clipboardBitmapCacheKey(it, preferThumbnail) ?: "${it.absolutePath}|missing|thumbnail=$preferThumbnail" }
 
 @Composable
 internal fun rememberClipboardBitmap(
@@ -87,8 +134,13 @@ internal fun rememberClipboardBitmap(
     preferThumbnail: Boolean = true
 ): ImageBitmap? {
     if(bitmapOverride != null || imageFile == null) return bitmapOverride
+    val requestKey = clipboardBitmapCacheKey(imageFile, preferThumbnail)
+        ?: "${imageFile.absolutePath}|missing|thumbnail=$preferThumbnail"
 
-    return produceState<ImageBitmap?>(initialValue = null, imageFile, preferThumbnail) {
+    return produceState<ImageBitmap?>(
+        initialValue = cachedClipboardBitmap(imageFile, preferThumbnail),
+        requestKey
+    ) {
         value = withContext(Dispatchers.IO) {
             decodeClipboardBitmap(imageFile, preferThumbnail)
         }
@@ -96,16 +148,22 @@ internal fun rememberClipboardBitmap(
 }
 
 @Composable
-private fun rememberClipboardBitmaps(
+internal fun rememberClipboardBitmaps(
     imageFiles: List<File>,
     bitmapOverrides: List<ImageBitmap>?,
-    preferThumbnail: Boolean = true
+    preferThumbnail: Boolean = true,
+    maxCount: Int? = null
 ): List<ImageBitmap> {
     if(bitmapOverrides != null) return bitmapOverrides
+    val requestKeys = clipboardBitmapRequestKeys(imageFiles, preferThumbnail, maxCount)
 
-    return produceState<List<ImageBitmap>>(initialValue = emptyList(), imageFiles, preferThumbnail) {
+    return produceState<List<ImageBitmap>>(
+        initialValue = cachedClipboardBitmaps(imageFiles, preferThumbnail, maxCount),
+        requestKeys
+    ) {
         value = withContext(Dispatchers.IO) {
-            imageFiles.mapNotNull { decodeClipboardBitmap(it, preferThumbnail) }
+            requestedClipboardBitmapFiles(imageFiles, maxCount)
+                .mapNotNull { decodeClipboardBitmap(it, preferThumbnail) }
         }
     }.value
 }
@@ -125,6 +183,7 @@ fun ClipboardEntryView(
     showWrapAction: Boolean = clipboardEntry.text != null,
     showCopyAction: Boolean = false,
     showRetryPreviewAction: Boolean = false,
+    retryPreviewActionEnabled: Boolean = true,
     showPinAction: Boolean = true,
     showRemoveAction: Boolean = true,
     showPreviewAction: Boolean = false,
@@ -187,6 +246,7 @@ fun ClipboardEntryView(
                 showPinAction = showPinAction,
                 showPreviewAction = showPreviewAction,
                 showRetryPreviewAction = showRetryPreviewAction,
+                retryPreviewActionEnabled = retryPreviewActionEnabled,
                 showCopyAction = showCopyAction,
                 showWrapAction = showWrapAction,
                 showRemoveAction = showRemoveAction,
@@ -243,6 +303,7 @@ private fun ClipboardEntryActionRow(
     showPinAction: Boolean,
     showPreviewAction: Boolean,
     showRetryPreviewAction: Boolean,
+    retryPreviewActionEnabled: Boolean,
     showCopyAction: Boolean,
     showWrapAction: Boolean,
     showRemoveAction: Boolean,
@@ -314,6 +375,7 @@ private fun ClipboardEntryActionRow(
             }
             ClipboardEntryOptionalAction(
                 visible = showRetryPreviewAction && onRetryPreview != null,
+                enabled = retryPreviewActionEnabled,
                 icon = R.drawable.refresh_cw,
                 contentDescription = R.string.action_clipboard_manager_retry_preview,
                 tint = contentColor
@@ -386,6 +448,7 @@ private fun ClipboardEntrySelectionIndicator(isSelected: Boolean) {
 @Composable
 private fun ClipboardEntryOptionalAction(
     visible: Boolean,
+    enabled: Boolean = true,
     icon: Int,
     contentDescription: Int,
     tint: androidx.compose.ui.graphics.Color,
@@ -393,11 +456,11 @@ private fun ClipboardEntryOptionalAction(
 ) {
     if(!visible) return
 
-    IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(32.dp)) {
         Icon(
             painter = painterResource(icon),
             contentDescription = stringResource(contentDescription),
-            tint = tint,
+            tint = if(enabled) tint else tint.copy(alpha = 0.38f),
             modifier = Modifier.size(16.dp)
         )
     }
@@ -486,7 +549,7 @@ private fun ClipboardEntryPreviewMedia(
             shouldBlurPreviewImage = shouldBlurPreviewImage
         )
     } else {
-        ClipboardEntryPreviewGrid(
+        ClipboardEntryPreviewCollage(
             bitmaps = bitmaps,
             totalMediaCount = totalMediaCount.coerceAtLeast(bitmaps.size),
             containerColor = containerColor,
@@ -537,67 +600,33 @@ private fun ClipboardEntryPreviewImage(
 }
 
 @Composable
-private fun ClipboardEntryPreviewGrid(
+private fun ClipboardEntryPreviewCollage(
     bitmaps: List<ImageBitmap>,
     totalMediaCount: Int,
     containerColor: androidx.compose.ui.graphics.Color,
     shouldBlurPreviewImage: Boolean
 ) {
     val visibleBitmaps = bitmaps.take(4)
-    val rows = visibleBitmaps.chunked(2)
-    val overflowCount = totalMediaCount - 4
     val imageModifier = if(shouldBlurPreviewImage) Modifier.blur(24.dp) else Modifier
 
-    Column(
+    ClipboardPreviewMediaCollage(
+        itemCount = visibleBitmaps.size,
+        totalMediaCount = totalMediaCount,
         modifier = Modifier
             .fillMaxWidth()
             .background(containerColor)
             .padding(horizontal = 8.dp)
             .clip(RoundedCornerShape(6.dp)),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        rows.forEachIndexed { rowIndex, row ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                row.forEachIndexed { columnIndex, bitmap ->
-                    val visibleIndex = rowIndex * 2 + columnIndex
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(1f)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.35f))
-                    ) {
-                        Image(
-                            bitmap = bitmap,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .then(imageModifier)
-                        )
-                        if(visibleIndex == 3 && overflowCount > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.46f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "+$overflowCount",
-                                    style = Typography.SmallMl,
-                                    color = androidx.compose.ui.graphics.Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-                if(row.size == 1) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
+        overflowTextStyle = Typography.SmallMl
+    ) { index ->
+        Image(
+            bitmap = visibleBitmaps[index],
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(imageModifier)
+        )
     }
 }
 
@@ -647,6 +676,24 @@ fun ClipboardEntryViewPreview() {
             mimeTypes = listOf(),
             previewText = "A tweet with photos should show the snippet first and the image below it.",
             previewMediaFiles = listOf(ClipboardPreviewMedia("[preview]"))
+        ),
+        ClipboardEntry(
+            timestamp = 0L,
+            pinned = false,
+            text = "https://x.com/futo/status/1912345678901234568",
+            uri = null,
+            mimeTypes = listOf(),
+            previewText = "Two images should read as a paired preview instead of a tiny strip.",
+            previewMediaFiles = List(2) { ClipboardPreviewMedia("[preview-$it]", sourceIndex = it) }
+        ),
+        ClipboardEntry(
+            timestamp = 0L,
+            pinned = false,
+            text = "https://x.com/futo/status/1912345678901234569",
+            uri = null,
+            mimeTypes = listOf(),
+            previewText = "Three images should use one lead image with two supporting thumbnails.",
+            previewMediaFiles = List(3) { ClipboardPreviewMedia("[preview-$it]", sourceIndex = it) }
         ),
         ClipboardEntry(
             timestamp = 0L,
@@ -722,8 +769,10 @@ fun ClipboardEntryViewPreview() {
                 onWrapAndPaste = {},
                 bitmapOverrides = when (it) {
                     1 -> previewBitmaps.take(1)
-                    2 -> previewBitmaps.take(1)
-                    3 -> previewBitmaps
+                    2 -> previewBitmaps.take(2)
+                    3 -> previewBitmaps.take(3)
+                    4 -> previewBitmaps.take(1)
+                    5 -> previewBitmaps
                     else -> null
                 }
             )

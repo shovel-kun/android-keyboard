@@ -3,6 +3,7 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import android.content.Context
 import android.os.Build
 import android.text.Html
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -16,6 +17,9 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 data class ClipboardLinkPreview(
     val snippet: String?,
@@ -41,9 +45,50 @@ sealed interface ClipboardPreviewMediaCacheResult {
         val mimeType: String?
     ) : ClipboardPreviewMediaCacheResult
 
-    data object Failed : ClipboardPreviewMediaCacheResult
-    data object SkippedTooLarge : ClipboardPreviewMediaCacheResult
+    data class Failed(
+        val detail: String
+    ) : ClipboardPreviewMediaCacheResult
+
+    data class SkippedTooLarge(
+        val detail: String
+    ) : ClipboardPreviewMediaCacheResult
+
+    data class RateLimited(
+        val provider: ClipboardPreviewProvider,
+        val retryAfterEpochMs: Long,
+        val detail: String
+    ) : ClipboardPreviewMediaCacheResult
 }
+
+data class ClipboardPreviewMediaDownloadProgress(
+    val completedBytes: Long,
+    val totalBytes: Long?
+)
+
+data class ClipboardLinkPreviewManifestResult(
+    val manifest: ClipboardLinkPreviewManifest?,
+    val failureDetail: String?,
+    val failure: ClipboardPreviewFetchFailure? = null
+)
+
+sealed interface ClipboardPreviewFetchFailure {
+    data class RateLimited(
+        val provider: ClipboardPreviewProvider,
+        val retryAfterEpochMs: Long,
+        val detail: String
+    ) : ClipboardPreviewFetchFailure
+
+    data class Unavailable(
+        val provider: ClipboardPreviewProvider,
+        val sourceUrl: String,
+        val detail: String
+    ) : ClipboardPreviewFetchFailure
+}
+
+private class ClipboardPreviewRateLimitedException(
+    val retryAfterEpochMs: Long,
+    override val message: String
+) : Exception(message)
 
 private val LinkPreviewJson = Json {
     ignoreUnknownKeys = true
@@ -81,37 +126,93 @@ private const val PreviewConnectTimeoutMillis = 5_000
 private const val PreviewReadTimeoutMillis = 10_000
 private const val MaxPreviewJsonBytes = 1_000_000
 private const val MaxPreviewMediaBytes = 50_000_000
+private const val HttpTooManyRequests = 429
+internal const val DefaultPreviewRateLimitCooldownMillis = 15L * 60L * 1000L
 
 object ClipboardLinkPreviewFetcher {
     fun supportsPreview(rawText: String): Boolean =
         extractPreviewRequest(rawText) != null
 
+    fun metadataForSupportedUrl(rawText: String): ClipboardPreviewMetadata? =
+        when (val request = extractPreviewRequest(rawText)) {
+            is TwitterStatusUrl -> ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.TWITTER,
+                sourceUrl = request.canonicalUrl(),
+                sourceId = request.id,
+                authorHandle = request.handle
+            )
+            is PixivArtworkUrl -> ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.PIXIV,
+                sourceUrl = request.canonicalUrl(),
+                sourceId = request.id,
+                selectedImageIndex = request.pageIndex
+            )
+            null -> null
+        }
+
     fun prefersImagePreview(rawText: String): Boolean =
         extractPreviewRequest(rawText) is PixivArtworkUrl
 
     fun fetchManifest(rawText: String): ClipboardLinkPreviewManifest? {
-        val request = extractPreviewRequest(rawText) ?: return null
+        return fetchManifestResult(rawText).manifest
+    }
+
+    fun fetchManifestResult(rawText: String): ClipboardLinkPreviewManifestResult {
+        val request = extractPreviewRequest(rawText) ?: return ClipboardLinkPreviewManifestResult(
+            manifest = null,
+            failureDetail = "Unsupported preview URL: $rawText"
+        )
         return try {
             when (request) {
                 is TwitterStatusUrl -> fetchTwitterPreview(request)
                 is PixivArtworkUrl -> fetchPixivPreview(request)
             }
-        } catch (_: Exception) {
-            null
-        }?.let {
-            ClipboardLinkPreviewManifest(
-                snippet = it.snippet,
-                mediaItems = it.mediaItems,
-                metadata = it.metadata
+        } catch (e: ClipboardPreviewRateLimitedException) {
+            val provider = request.provider()
+            val detail = "Rate limited by ${provider.name} while fetching preview manifest for $rawText. Retry after ${e.retryAfterEpochMs}. ${e.message}"
+            return ClipboardLinkPreviewManifestResult(
+                manifest = null,
+                failureDetail = detail,
+                failure = ClipboardPreviewFetchFailure.RateLimited(
+                    provider = provider,
+                    retryAfterEpochMs = e.retryAfterEpochMs,
+                    detail = detail
+                )
+            )
+        } catch (e: Exception) {
+            return ClipboardLinkPreviewManifestResult(
+                manifest = null,
+                failureDetail = "Failed to fetch preview manifest for $rawText: ${e.failureDetail()}"
+            )
+        }.let {
+            val manifest = it?.let { preview ->
+                ClipboardLinkPreviewManifest(
+                    snippet = preview.snippet,
+                    mediaItems = preview.mediaItems,
+                    metadata = preview.metadata
+                )
+            }
+            val unavailableFailure = manifest?.unavailablePreviewFailure(request, rawText)
+            if(unavailableFailure != null) {
+                return ClipboardLinkPreviewManifestResult(
+                    manifest = null,
+                    failureDetail = unavailableFailure.detail,
+                    failure = unavailableFailure
+                )
+            }
+            ClipboardLinkPreviewManifestResult(
+                manifest = manifest,
+                failureDetail = if(it == null) "Preview provider returned no usable manifest for $rawText" else null
             )
         }
     }
 
     fun fetch(context: Context, rawText: String): ClipboardLinkPreview? {
         val preview = fetchManifest(rawText) ?: return null
+        val provider = preview.metadata?.provider
 
         val mediaFiles = preview.mediaItems.mapNotNull { media ->
-            when (val result = cachePreviewMedia(context, media.url, context.clipboardDir)) {
+            when (val result = cachePreviewMedia(context, media.url, context.clipboardDir, provider = provider)) {
                 is ClipboardPreviewMediaCacheResult.Saved -> {
                     ClipboardPreviewMedia(
                         fileName = result.fileName,
@@ -120,8 +221,9 @@ object ClipboardLinkPreviewFetcher {
                         mimeType = result.mimeType ?: media.mimeType
                     )
                 }
-                ClipboardPreviewMediaCacheResult.Failed,
-                ClipboardPreviewMediaCacheResult.SkippedTooLarge -> null
+                is ClipboardPreviewMediaCacheResult.Failed,
+                is ClipboardPreviewMediaCacheResult.SkippedTooLarge,
+                is ClipboardPreviewMediaCacheResult.RateLimited -> null
             }
         }
         if (preview.snippet == null && mediaFiles.isEmpty() && preview.metadata == null) return null
@@ -150,6 +252,33 @@ object ClipboardLinkPreviewFetcher {
             html = html,
             statusUrl = TwitterStatusUrl(handle = "futo", id = "123")
         )?.mediaItems?.map { it.url }.orEmpty()
+
+    internal fun previewRateLimitedExceptionForTest(retryAfterEpochMs: Long, message: String): Exception =
+        ClipboardPreviewRateLimitedException(retryAfterEpochMs, message)
+
+    internal fun runPreviewRequestCatchingForTest(exception: Exception): String? =
+        runPreviewRequestCatching { throw exception }
+
+    internal fun unavailablePreviewFailureForTest(
+        snippet: String?,
+        title: String? = null,
+        bodyText: String? = null,
+        mediaItems: List<ClipboardLinkPreviewMedia> = emptyList()
+    ): ClipboardPreviewFetchFailure.Unavailable? =
+        ClipboardLinkPreviewManifest(
+            snippet = snippet,
+            mediaItems = mediaItems,
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.TWITTER,
+                sourceUrl = "https://x.com/futo/status/123",
+                sourceId = "123",
+                title = title,
+                bodyText = bodyText
+            )
+        ).unavailablePreviewFailure(
+            request = TwitterStatusUrl(handle = "futo", id = "123"),
+            rawText = "https://x.com/futo/status/123"
+        )
 
     private fun fetchTwitterPreview(statusUrl: TwitterStatusUrl): RemotePreviewData? {
         return requestTwitterPreview(statusUrl)
@@ -272,18 +401,27 @@ object ClipboardLinkPreviewFetcher {
             "https://api.fxtwitter.com/status/${statusUrl.id}"
         }
 
-        return runCatching {
+        return runPreviewRequestCatching {
             requestJsonObject(requestUrl, MaxPreviewJsonBytes)
-        }.getOrNull()
+        }
     }
 
     private fun requestTwitterHtmlPreview(statusUrl: TwitterStatusUrl): RemotePreviewData? {
-        val html = runCatching {
+        val html = runPreviewRequestCatching {
             requestText(statusUrl.fixupxUrl(), MaxPreviewJsonBytes)
-        }.getOrNull() ?: return null
+        } ?: return null
 
         return parseTwitterHtmlPreview(html, statusUrl)
     }
+
+    private fun <T> runPreviewRequestCatching(block: () -> T): T? =
+        try {
+            block()
+        } catch (e: ClipboardPreviewRateLimitedException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
 
     private fun parseTwitterHtmlPreview(
         html: String,
@@ -342,7 +480,9 @@ object ClipboardLinkPreviewFetcher {
     fun cachePreviewMedia(
         context: Context,
         mediaUrl: String,
-        destinationDir: File
+        destinationDir: File,
+        provider: ClipboardPreviewProvider? = null,
+        onProgress: (ClipboardPreviewMediaDownloadProgress) -> Unit = {}
     ): ClipboardPreviewMediaCacheResult {
         val fileBaseName = "preview_${mediaUrl.md5Hex()}"
         destinationDir.mkdirs()
@@ -362,7 +502,11 @@ object ClipboardLinkPreviewFetcher {
                 val mimeType = contentType.takeIf {
                     it.startsWith("image/") || it.startsWith("video/")
                 } ?: mediaUrl.guessedClipboardMimeType()
-                if (mimeType == null) return ClipboardPreviewMediaCacheResult.Failed
+                if (mimeType == null) {
+                    return ClipboardPreviewMediaCacheResult.Failed(
+                        "Unsupported media type for $mediaUrl. HTTP Content-Type was '${connection.contentType}'."
+                    )
+                }
 
                 val extension = mimeType.fileExtensionForMimeType() ?: mediaUrl.fileExtensionHint()
                 val fileName = "$fileBaseName.$extension"
@@ -371,10 +515,16 @@ object ClipboardLinkPreviewFetcher {
                 if (outputFile!!.exists()) {
                     return ClipboardPreviewMediaCacheResult.Saved(fileName, mimeType)
                 }
+                val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
 
                 connection.inputStream.use { input ->
                     tempFile.outputStream().use { output ->
-                        input.copyToCapped(output, MaxPreviewMediaBytes)
+                        input.copyToCapped(
+                            output = output,
+                            limit = MaxPreviewMediaBytes,
+                            totalBytes = totalBytes,
+                            onProgress = onProgress
+                        )
                     }
                 }
 
@@ -386,7 +536,9 @@ object ClipboardLinkPreviewFetcher {
                 }
             }
 
-            val finalFile = outputFile ?: return ClipboardPreviewMediaCacheResult.Failed
+            val finalFile = outputFile ?: return ClipboardPreviewMediaCacheResult.Failed(
+                "No output file was created for $mediaUrl."
+            )
             if (!tempFile.renameTo(finalFile)) {
                 tempFile.copyTo(finalFile, overwrite = true)
                 tempFile.delete()
@@ -394,12 +546,30 @@ object ClipboardLinkPreviewFetcher {
 
             ClipboardUtil.generateThumbnail(finalFile)
             return ClipboardPreviewMediaCacheResult.Saved(finalFile.name, outputMimeType)
-        } catch (_: IllegalStateException) {
+        } catch (e: CancellationException) {
             tempFile.delete()
-            return ClipboardPreviewMediaCacheResult.SkippedTooLarge
-        } catch (_: Exception) {
+            throw e
+        } catch (e: ClipboardPreviewRateLimitedException) {
             tempFile.delete()
-            return ClipboardPreviewMediaCacheResult.Failed
+            val rateLimitedProvider = provider ?: providerForUrl(mediaUrl) ?: return ClipboardPreviewMediaCacheResult.Failed(
+                "Rate limited while caching preview media for $mediaUrl, but provider could not be determined. Retry after ${e.retryAfterEpochMs}. ${e.message}"
+            )
+            val detail = "Rate limited by ${rateLimitedProvider.name} while caching preview media for $mediaUrl. Retry after ${e.retryAfterEpochMs}. ${e.message}"
+            return ClipboardPreviewMediaCacheResult.RateLimited(
+                provider = rateLimitedProvider,
+                retryAfterEpochMs = e.retryAfterEpochMs,
+                detail = detail
+            )
+        } catch (e: IllegalStateException) {
+            tempFile.delete()
+            return ClipboardPreviewMediaCacheResult.SkippedTooLarge(
+                "Preview media exceeded ${MaxPreviewMediaBytes} bytes for $mediaUrl: ${e.failureDetail()}"
+            )
+        } catch (e: Exception) {
+            tempFile.delete()
+            return ClipboardPreviewMediaCacheResult.Failed(
+                "Failed to cache preview media for $mediaUrl: ${e.failureDetail()}"
+            )
         }
     }
 
@@ -420,6 +590,9 @@ object ClipboardLinkPreviewFetcher {
     private inline fun <T> withConnection(url: String, block: (HttpURLConnection) -> T): T {
         val connection = openConnection(url)
         return try {
+            if(connection.responseCode == HttpTooManyRequests) {
+                throw connection.rateLimitedException(url)
+            }
             block(connection)
         } finally {
             connection.disconnect()
@@ -434,6 +607,61 @@ object ClipboardLinkPreviewFetcher {
         connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) FutoKeyboardLinkPreview/1.0")
         connection.setRequestProperty("Accept", "application/json,image/*,video/*,*/*")
         return connection
+    }
+
+    private fun PreviewRequest.provider(): ClipboardPreviewProvider = when (this) {
+        is TwitterStatusUrl -> ClipboardPreviewProvider.TWITTER
+        is PixivArtworkUrl -> ClipboardPreviewProvider.PIXIV
+    }
+
+    private fun PreviewRequest.canonicalSourceUrl(): String = when (this) {
+        is TwitterStatusUrl -> canonicalUrl()
+        is PixivArtworkUrl -> canonicalUrl()
+    }
+
+    private fun ClipboardLinkPreviewManifest.unavailablePreviewFailure(
+        request: PreviewRequest,
+        rawText: String
+    ): ClipboardPreviewFetchFailure.Unavailable? {
+        if(mediaItems.isNotEmpty()) return null
+        val unavailableText = listOfNotNull(
+            snippet,
+            metadata?.title,
+            metadata?.bodyText
+        ).firstOrNull(::isUnavailablePreviewText) ?: return null
+        val provider = request.provider()
+        val sourceUrl = metadata?.sourceUrl ?: request.canonicalSourceUrl()
+        val detail = "Unavailable ${provider.name} preview for $rawText: $unavailableText"
+        return ClipboardPreviewFetchFailure.Unavailable(
+            provider = provider,
+            sourceUrl = sourceUrl,
+            detail = detail
+        )
+    }
+
+    private fun providerForUrl(url: String): ClipboardPreviewProvider? {
+        val host = runCatching { URL(url).host.lowercase() }.getOrNull() ?: return null
+        return when {
+            SupportedTwitterHosts.contains(host) ||
+                host.endsWith(".twimg.com") ||
+                host.endsWith(".twitter.com") ||
+                host.endsWith(".x.com") -> ClipboardPreviewProvider.TWITTER
+            SupportedPixivHosts.contains(host) ||
+                host.endsWith(".pximg.net") ||
+                host.endsWith(".pixiv.net") ||
+                host.endsWith(".phixiv.net") -> ClipboardPreviewProvider.PIXIV
+            else -> null
+        }
+    }
+
+    private fun HttpURLConnection.rateLimitedException(url: String): ClipboardPreviewRateLimitedException {
+        val retryAfterHeader = getHeaderField("Retry-After")
+        val retryAfter = retryAfterEpochMs(retryAfterHeader, System.currentTimeMillis())
+        val detail = "HTTP 429 Too Many Requests for $url. Retry-After: ${retryAfterHeader ?: "not provided"}."
+        return ClipboardPreviewRateLimitedException(
+            retryAfterEpochMs = retryAfter,
+            message = detail
+        )
     }
 
     private fun extractPreviewRequest(rawText: String): PreviewRequest? {
@@ -501,6 +729,56 @@ object ClipboardLinkPreviewFetcher {
     }
 }
 
+internal fun isUnavailablePreviewText(text: String?): Boolean {
+    val normalized = text
+        ?.lowercase()
+        ?.replace(Regex("\\s+"), " ")
+        ?.trim()
+        ?: return false
+    if(normalized.isBlank()) return false
+    return listOf(
+        "suspended account",
+        "account has been suspended",
+        "post is from a suspended",
+        "tweet is from a suspended",
+        "post is unavailable",
+        "tweet is unavailable",
+        "this post is unavailable",
+        "this tweet is unavailable",
+        "this post was deleted",
+        "this tweet was deleted",
+        "post has been deleted",
+        "tweet has been deleted",
+        "not found",
+        "does not exist",
+        "login to view",
+        "log in to view",
+        "sign in to view",
+        "temporarily unavailable"
+    ).any(normalized::contains)
+}
+
+private fun Throwable.failureDetail(): String =
+    listOfNotNull(
+        this::class.qualifiedName ?: this::class.simpleName,
+        message?.takeIf { it.isNotBlank() }
+    ).joinToString(": ").ifBlank { toString() }
+
+internal fun retryAfterEpochMs(value: String?, nowEpochMs: Long): Long {
+    val fallback = nowEpochMs + DefaultPreviewRateLimitCooldownMillis
+    val trimmed = value?.trim()?.takeIf { it.isNotBlank() } ?: return fallback
+    trimmed.toLongOrNull()?.let {
+        return nowEpochMs + it.coerceAtLeast(0L) * 1000L
+    }
+    return runCatching {
+        SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("GMT")
+        }.parse(trimmed)!!
+            .time
+            .coerceAtLeast(nowEpochMs)
+    }.getOrDefault(fallback)
+}
+
 internal fun parseTwitterApiPreviewMediaUrlsForTest(responseText: String): List<String> =
     ClipboardLinkPreviewFetcher.parseTwitterApiPreviewMediaUrlsForTest(responseText)
 
@@ -510,13 +788,26 @@ internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: 
 internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String> =
     ClipboardLinkPreviewFetcher.parseTwitterHtmlPreviewMediaUrlsForTest(html)
 
+internal fun unavailablePreviewFailureForTest(
+    snippet: String?,
+    title: String? = null,
+    bodyText: String? = null,
+    mediaItems: List<ClipboardLinkPreviewMedia> = emptyList()
+): ClipboardPreviewFetchFailure.Unavailable? =
+    ClipboardLinkPreviewFetcher.unavailablePreviewFailureForTest(snippet, title, bodyText, mediaItems)
+
 private fun InputStream.readBytesCapped(limit: Int): ByteArray {
     val output = ByteArrayOutputStream(limit.coerceAtMost(8 * 1024))
     copyToCapped(output, limit)
     return output.toByteArray()
 }
 
-private fun InputStream.copyToCapped(output: OutputStream, limit: Int) {
+internal fun InputStream.copyToCapped(
+    output: OutputStream,
+    limit: Int,
+    totalBytes: Long? = null,
+    onProgress: (ClipboardPreviewMediaDownloadProgress) -> Unit = {}
+) {
     val buffer = ByteArray(8 * 1024)
     var total = 0
 
@@ -526,6 +817,12 @@ private fun InputStream.copyToCapped(output: OutputStream, limit: Int) {
         total += read
         if (total > limit) throw IllegalStateException("Preview payload too large")
         output.write(buffer, 0, read)
+        onProgress(
+            ClipboardPreviewMediaDownloadProgress(
+                completedBytes = total.toLong(),
+                totalBytes = totalBytes
+            )
+        )
     }
 }
 

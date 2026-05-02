@@ -27,9 +27,11 @@ import org.futo.inputmethod.latin.uix.getSetting
 import org.futo.inputmethod.latin.uix.getSettingBlocking
 import org.futo.inputmethod.latin.uix.getUnlockedSetting
 import org.futo.inputmethod.latin.uix.isDirectBootUnlocked
+import org.futo.inputmethod.latin.uix.setSetting
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.security.MessageDigest
+import kotlin.coroutines.coroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 private val ClipboardIOContext = Dispatchers.IO.limitedParallelism(1)
@@ -42,6 +44,176 @@ private data class ClipboardPreviewFetchRequest(
     val maxAttempts: Int
 )
 
+internal data class ClipboardArchiveBackfillRequest(
+    val entry: ClipboardEntry,
+    val archiveKey: String
+)
+
+internal data class ClipboardArchiveDownloadProgress(
+    val archiveKey: String,
+    val sourceUrl: String,
+    val sourceIndex: Int,
+    val completedBytes: Long,
+    val totalBytes: Long?,
+    val savedCount: Int,
+    val expectedCount: Int
+) {
+    val progressFraction: Float?
+        get() = totalBytes
+            ?.takeIf { it > 0L }
+            ?.let { (completedBytes.toFloat() / it.toFloat()).coerceIn(0f, 1f) }
+}
+
+private data class ClipboardArchiveMediaDownloadTarget(
+    val archive: ClipboardLinkArchive,
+    val media: ClipboardArchiveMedia
+)
+
+private data class ClipboardArchiveProgressSnapshot(
+    val archiveKey: String,
+    val sourceUrl: String,
+    val sourceIndex: Int,
+    val completedBytes: Long,
+    val totalBytes: Long?,
+    val savedCount: Int,
+    val expectedCount: Int
+) {
+    fun toProgress(): ClipboardArchiveDownloadProgress = ClipboardArchiveDownloadProgress(
+        archiveKey = archiveKey,
+        sourceUrl = sourceUrl,
+        sourceIndex = sourceIndex,
+        completedBytes = completedBytes,
+        totalBytes = totalBytes,
+        savedCount = savedCount,
+        expectedCount = expectedCount
+    )
+}
+
+internal data class ClipboardPreviewProviderCooldown(
+    val provider: ClipboardPreviewProvider,
+    val retryAfterEpochMs: Long,
+    val detail: String
+)
+
+internal fun replaceFileWithBackup(
+    swapFile: File,
+    targetFile: File,
+    backupFile: File
+) {
+    if(backupFile.exists() && !backupFile.delete()) {
+        throw Exception("Failed to delete stale backup file")
+    }
+    if(targetFile.exists() && !targetFile.renameTo(backupFile)) {
+        throw Exception("Failed to move current file to backup")
+    }
+    if(!swapFile.renameTo(targetFile)) {
+        throw Exception("Failed to swap new file")
+    }
+}
+
+internal fun ClipboardEntry.archiveBackfillMetadata(): ClipboardPreviewMetadata? {
+    val text = text ?: return null
+    val urlMetadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text) ?: return null
+    return previewMetadata?.takeIf { it.provider == urlMetadata.provider }?.let { legacy ->
+        urlMetadata.copy(
+            sourceUrl = legacy.sourceUrl ?: urlMetadata.sourceUrl,
+            sourceId = legacy.sourceId ?: urlMetadata.sourceId,
+            title = legacy.title,
+            bodyText = legacy.bodyText ?: previewText,
+            authorName = legacy.authorName,
+            authorHandle = legacy.authorHandle ?: urlMetadata.authorHandle,
+            authorId = legacy.authorId,
+            createdAt = legacy.createdAt,
+            imageCount = legacy.imageCount,
+            selectedImageIndex = legacy.selectedImageIndex ?: urlMetadata.selectedImageIndex,
+            tags = legacy.tags,
+            stats = legacy.stats,
+            flags = legacy.flags
+        )
+    } ?: urlMetadata.copy(bodyText = previewText)
+}
+
+internal fun ClipboardEntry.isEligibleForArchiveBackfill(
+    existingArchiveKeys: Set<String>
+): Boolean {
+    val archiveKey = archiveBackfillKey() ?: return false
+    return archiveKey !in existingArchiveKeys
+}
+
+private fun ClipboardEntry.archiveBackfillKey(): String? {
+    if(!hasRenderablePreview() && previewMetadata == null) return null
+    val metadata = archiveBackfillMetadata() ?: return null
+    return metadata.archiveKey()
+}
+
+internal fun archiveBackfillRequests(
+    entries: List<ClipboardEntry>,
+    existingArchiveKeys: Set<String>,
+    attemptedArchiveKeys: Set<String> = emptySet()
+): List<ClipboardArchiveBackfillRequest> {
+    val scheduledArchiveKeys = (existingArchiveKeys + attemptedArchiveKeys).toMutableSet()
+    return entries.mapNotNull { entry ->
+        val archiveKey = entry.archiveBackfillKey() ?: return@mapNotNull null
+        if(!scheduledArchiveKeys.add(archiveKey)) return@mapNotNull null
+        ClipboardArchiveBackfillRequest(entry = entry, archiveKey = archiveKey)
+    }
+}
+
+internal fun shouldRunArchiveBackfill(
+    completedVersion: Int,
+    currentVersion: Int,
+    incognito: Boolean,
+    previewsEnabled: Boolean
+): Boolean =
+    completedVersion < currentVersion && !incognito && previewsEnabled
+
+internal fun copyLegacyPreviewMediaToArchive(
+    entry: ClipboardEntry,
+    metadata: ClipboardPreviewMetadata,
+    clipboardDir: File,
+    archiveDir: File,
+    now: Long = System.currentTimeMillis()
+): List<ClipboardArchiveMedia> {
+    archiveDir.mkdirs()
+    val fallbackSourceUrl = metadata.sourceUrl ?: entry.text ?: return emptyList()
+
+    return entry.previewMedia().mapNotNull { media ->
+        val sourceFile = listOf(
+            File(clipboardDir, media.fileName),
+            File(archiveDir, media.fileName)
+        ).firstOrNull { it.isFile } ?: return@mapNotNull null
+        val targetFile = File(archiveDir, sourceFile.name)
+        if(sourceFile.absolutePath != targetFile.absolutePath && !targetFile.exists()) {
+            sourceFile.copyTo(targetFile, overwrite = false)
+        }
+
+        val sourceThumb = ClipboardUtil.thumbnailFor(sourceFile)
+        val targetThumb = ClipboardUtil.thumbnailFor(targetFile)
+        if(sourceThumb.isFile && sourceThumb.absolutePath != targetThumb.absolutePath && !targetThumb.exists()) {
+            sourceThumb.copyTo(targetThumb, overwrite = false)
+        }
+
+        ClipboardArchiveMedia(
+            sourceUrl = media.sourceUrl ?: "$fallbackSourceUrl#legacy-media-${media.sourceIndex}",
+            sourceIndex = media.sourceIndex,
+            mimeType = media.mimeType ?: targetFile.guessedClipboardMimeType(),
+            fileName = targetFile.name,
+            status = ClipboardArchiveMediaStatus.Saved,
+            lastAttemptAtEpochMs = now
+        )
+    }
+}
+
+internal fun retainedPreviewMediaAfterArchiveDelete(
+    entry: ClipboardEntry,
+    archivedFileNames: Set<String>,
+    clipboardDir: File
+): List<ClipboardPreviewMedia> =
+    entry.previewMedia().filter {
+        it.fileName !in archivedFileNames ||
+            File(clipboardDir, it.fileName).isFile
+    }
+
 class ClipboardHistoryManager(
     val context: Context,
     val coroutineScope: LifecycleCoroutineScope
@@ -49,6 +221,11 @@ class ClipboardHistoryManager(
     var clipboardIOFailureReason = ""
     val clipboardIOFailure = mutableStateOf(false)
     val previewLoadingByText = mutableStateMapOf<String, Boolean>()
+    private val archiveDownloadProgressByKey = mutableStateMapOf<String, ClipboardArchiveDownloadProgress>()
+    private val archiveFileNames = mutableStateOf<Set<String>>(emptySet())
+    private val providerCooldownByProvider = mutableStateMapOf<ClipboardPreviewProvider, ClipboardPreviewProviderCooldown>()
+    val archiveBackfillInProgress = mutableStateOf(false)
+    val archiveBackfillRemainingCount = mutableStateOf(0)
 
     companion object {
         val onClipboardImportedFlow = MutableSharedFlow<File>()
@@ -63,11 +240,17 @@ class ClipboardHistoryManager(
     private val clipboardFileSwap = File(context.filesDir, "$ClipboardFileName.swap")
     private val archiveFile = context.clipboardArchiveFile
     private val archiveFileBak = File(context.filesDir, "$ClipboardArchiveFileName.bak")
-    private val archiveFileSwap = File(context.filesDir, "$ClipboardArchiveFileName.swap")
+    private val archiveMetadataDir = context.clipboardArchiveMetadataDir
+    private val archiveSaveLock = Any()
 
     private var scheduledPreviewSaveJob: Job? = null
     private var saveClipboardLoadJob: Job? = null
     private var clipboardLoaded = false
+    private var archiveFileNamesLoaded = false
+    private val archiveBackfillAttemptedKeys = mutableSetOf<String>()
+    private var archiveBackfillCompletionPending = false
+    private var archiveBackfillBlockedByCooldown = false
+    private val archiveDownloadJobsByKey = mutableMapOf<String, Job>()
 
     override suspend fun onDeviceUnlocked() {
         loadClipboard()
@@ -154,7 +337,7 @@ class ClipboardHistoryManager(
             uri = null,
             mimeTypes = mimeTypes,
             previewText = preservedEntry?.previewText,
-            previewImageFile = preservedEntry?.previewImageFile,
+            previewImageFile = null,
             previewMediaFiles = preservedEntry?.previewMedia().orEmpty(),
             previewMetadata = preservedEntry?.previewMetadata,
             previewFetchStatus = preservedEntry?.previewFetchStatus
@@ -244,8 +427,8 @@ class ClipboardHistoryManager(
     }
 
     suspend fun reconcileClipboardStorage() = withContext(Dispatchers.Main) {
-        val deduplicated = clipboardHistory.toSet()
-        if(deduplicated.size < clipboardHistory.size) {
+        val deduplicated = deduplicateClipboardEntries(clipboardHistory)
+        if(deduplicated.size < clipboardHistory.size || deduplicated != clipboardHistory.toList()) {
             clipboardHistory.clear()
             clipboardHistory.addAll(deduplicated)
         }
@@ -326,13 +509,11 @@ class ClipboardHistoryManager(
                     throw Exception("Saved file data does not match expected data. Decoded: $decodedData, expected: $normalizedList")
                 }
 
-                if(clipboardFile.exists() && !clipboardFile.renameTo(clipboardFileBak)) {
-                    throw Exception("Failed to move clipboard file backup")
-                }
-
-                if(!clipboardFileSwap.renameTo(clipboardFile)) {
-                    throw Exception("Failed to swap new clipboard file")
-                }
+                replaceFileWithBackup(
+                    swapFile = clipboardFileSwap,
+                    targetFile = clipboardFile,
+                    backupFile = clipboardFileBak
+                )
 
                 if(decodeFile(clipboardFile) != normalizedList) {
                     throw Exception("Saved file data does not match expected data")
@@ -363,6 +544,8 @@ class ClipboardHistoryManager(
                 fetchPreviewForEntry(text)
             }
         }
+        runLegacyArchiveBackfillIfNeeded()
+        resumeProviderArchiveDownloads()
     }
 
     fun retryPreviewForEntry(entry: ClipboardEntry) {
@@ -371,25 +554,361 @@ class ClipboardHistoryManager(
     }
 
     fun canRetryPreview(entry: ClipboardEntry): Boolean =
-        entry.shouldShowManualPreviewRetry() || archiveForEntry(entry)?.hasRetryableMedia() == true
+        entry.shouldShowManualPreviewRetry() &&
+            entry.previewProviderCooldown() == null
+
+    fun isPreviewRetryBlockedByCooldown(entry: ClipboardEntry): Boolean =
+        entry.shouldShowManualPreviewRetry() &&
+            entry.previewProviderCooldown() != null
 
     fun expectedPreviewMediaCount(entry: ClipboardEntry): Int? =
         archiveForEntry(entry)?.media?.size?.takeIf { it > entry.previewMedia().size }
 
+    private fun runLegacyArchiveBackfillIfNeeded() {
+        if(archiveBackfillInProgress.value) return
+        if(!shouldRunArchiveBackfill(
+            completedVersion = context.getSetting(ClipboardArchiveBackfillCompletedVersion),
+            currentVersion = ClipboardArchiveBackfillVersion,
+            incognito = context.getSetting(ClipboardIncognitoMode),
+            previewsEnabled = currentPreviewState().shouldFetchPreviews
+        )) {
+            return
+        }
+
+        val requests = archiveBackfillRequests(
+            entries = clipboardHistory.toList(),
+            existingArchiveKeys = linkArchives.keys,
+            attemptedArchiveKeys = archiveBackfillAttemptedKeys
+        )
+        if(requests.isEmpty()) {
+            markLegacyArchiveBackfillComplete()
+            return
+        }
+
+        archiveBackfillCompletionPending = false
+        archiveBackfillBlockedByCooldown = false
+        var scheduledAny = false
+        requests.forEach { request ->
+            if(fetchArchiveForEntry(request)) {
+                scheduledAny = true
+            } else if(request.entry.archiveBackfillMetadata()?.provider?.let { providerCooldown(it) } != null) {
+                archiveBackfillBlockedByCooldown = true
+            } else if(request.entry.text?.let { previewLoadingByText[it] == true } == true ||
+                previewLoadingByText[request.archiveKey] == true
+            ) {
+                archiveBackfillBlockedByCooldown = true
+            }
+        }
+        if(scheduledAny) {
+            archiveBackfillCompletionPending = true
+        } else if(!archiveBackfillBlockedByCooldown) {
+            markLegacyArchiveBackfillComplete()
+        }
+    }
+
+    private fun fetchArchiveForEntry(request: ClipboardArchiveBackfillRequest): Boolean {
+        if(context.getSetting(ClipboardIncognitoMode)) return false
+        if(!currentPreviewState().shouldFetchPreviews) return false
+        val text = request.entry.text ?: return false
+        val archiveKey = request.archiveKey
+        if(!ClipboardLinkPreviewFetcher.supportsPreview(text)) return false
+        val metadata = request.entry.archiveBackfillMetadata() ?: return false
+        if(providerCooldown(metadata.provider) != null) return false
+        if(previewLoadingByText[text] == true) return false
+        if(previewLoadingByText[archiveKey] == true) return false
+        if(!archiveBackfillAttemptedKeys.add(archiveKey)) return false
+
+        if(metadata.archiveKey() != archiveKey) return false
+        if(archiveKey in linkArchives) return false
+
+        beginArchiveBackfillWork()
+        coroutineScope.launch {
+            previewLoadingByText[text] = true
+            try {
+                val manifestResult = withContext(ClipboardPreviewFetchContext) {
+                    ClipboardLinkPreviewFetcher.fetchManifestResult(text)
+                }
+                setProviderCooldown(manifestResult.failure)
+                if(manifestResult.failure is ClipboardPreviewFetchFailure.RateLimited) {
+                    archiveBackfillAttemptedKeys.remove(archiveKey)
+                    archiveBackfillBlockedByCooldown = true
+                    return@launch
+                }
+                val manifest = manifestResult.manifest
+                val attemptedAt = System.currentTimeMillis()
+                val archive = if(manifest != null &&
+                    (manifest.snippet != null || manifest.mediaItems.isNotEmpty() || manifest.metadata != null)
+                ) {
+                    createOrUpdateArchive(manifest, attemptedAt)
+                } else {
+                    createFallbackArchiveFromEntry(request.entry, attemptedAt)
+                }
+
+                archive?.takeIf { it.providerManifestAvailable }?.let {
+                    downloadArchiveMediaWithLoading(text, it.key)
+                }
+            } finally {
+                previewLoadingByText.remove(text)
+                finishArchiveBackfillWork()
+            }
+        }
+        return true
+    }
+
+    private fun resumeProviderArchiveDownloads() {
+        linkArchives.values
+            .filter { it.providerManifestAvailable && it.hasAutoDownloadableMedia() && !isArchiveRetryBlockedByCooldown(it) }
+            .forEach { startArchiveDownload(text = null, archiveKey = it.key) }
+    }
+
+    private fun beginArchiveBackfillWork() {
+        archiveBackfillRemainingCount.value += 1
+        archiveBackfillInProgress.value = true
+    }
+
+    private fun finishArchiveBackfillWork() {
+        archiveBackfillRemainingCount.value = (archiveBackfillRemainingCount.value - 1).coerceAtLeast(0)
+        archiveBackfillInProgress.value = archiveBackfillRemainingCount.value > 0
+        if(archiveBackfillCompletionPending &&
+            archiveBackfillRemainingCount.value == 0 &&
+            !archiveBackfillBlockedByCooldown
+        ) {
+            markLegacyArchiveBackfillComplete()
+        }
+    }
+
+    private fun markLegacyArchiveBackfillComplete() {
+        archiveBackfillCompletionPending = false
+        coroutineScope.launch {
+            context.setSetting(ClipboardArchiveBackfillCompletedVersion, ClipboardArchiveBackfillVersion)
+        }
+    }
+
+    internal fun archiveRecords(): List<ClipboardLinkArchive> {
+        val existingArchiveFileNames = currentArchiveFileNames()
+        return sortedClipboardArchives(
+            linkArchives.values.map {
+                archiveWithCurrentStorageState(it, existingArchiveFileNames)
+            }
+        )
+    }
+
+    internal fun archivePreviewFiles(archive: ClipboardLinkArchive): List<File> =
+        archiveWithCurrentStorageState(archive, currentArchiveFileNames())
+            .savedPreviewMedia()
+            .map { File(context.clipboardArchiveDir, it.fileName) }
+
+    internal fun archivePreviewFilesByKey(archives: Collection<ClipboardLinkArchive>): Map<String, List<File>> {
+        val existingArchiveFileNames = currentArchiveFileNames()
+        return archives.associate { archive ->
+            archive.key to archiveWithCurrentStorageState(archive, existingArchiveFileNames)
+                .savedPreviewMedia()
+                .map { File(context.clipboardArchiveDir, it.fileName) }
+        }
+    }
+
+    internal fun galleryItems(archive: ClipboardLinkArchive): List<ClipboardArchiveGalleryItem> =
+        archive.galleryItems(context.clipboardArchiveDir, currentArchiveFileNames())
+
+    internal fun isArchiveLoading(archive: ClipboardLinkArchive): Boolean =
+        previewLoadingByText[archive.key] == true
+
+    internal fun archiveDownloadProgress(archive: ClipboardLinkArchive): ClipboardArchiveDownloadProgress? =
+        archiveDownloadProgressByKey[archive.key]
+
+    internal fun archiveDownloadItems(): List<ClipboardArchiveDownloadListItem> =
+        archiveDownloadItems(
+            archives = linkArchives.values,
+            progressByArchiveKey = archiveDownloadProgressByKey,
+            loadingArchiveKeys = previewLoadingByText.filterValues { it }.keys,
+            cooldownsByProvider = activeProviderCooldowns(),
+            existingArchiveFileNames = currentArchiveFileNames()
+        )
+
+    internal fun archiveDownloadActionCount(): Int =
+        archiveDownloadActionCount(
+            archives = linkArchives.values,
+            existingArchiveFileNames = currentArchiveFileNames()
+        )
+
+    internal fun providerCooldown(provider: ClipboardPreviewProvider): ClipboardPreviewProviderCooldown? {
+        val cooldown = providerCooldownByProvider[provider] ?: return null
+        if(cooldown.retryAfterEpochMs <= System.currentTimeMillis()) {
+            providerCooldownByProvider.remove(provider)
+            return null
+        }
+        return cooldown
+    }
+
+    private fun ClipboardEntry.previewProviderCooldown(): ClipboardPreviewProviderCooldown? =
+        text
+            ?.let { ClipboardLinkPreviewFetcher.metadataForSupportedUrl(it)?.provider }
+            ?.let { providerCooldown(it) }
+
+    internal fun isArchiveRetryBlockedByCooldown(archive: ClipboardLinkArchive): Boolean =
+        providerCooldown(archive.provider) != null
+
+    internal fun retryArchive(archive: ClipboardLinkArchive) {
+        val retryArchive = archiveWithCurrentStorageState(archive, currentArchiveFileNames())
+        if(!retryArchive.hasRetryableMedia()) return
+
+        launchArchiveRetry(retryArchive)
+    }
+
+    internal fun retryArchiveMedia(item: ClipboardArchiveDownloadListItem) {
+        val archive = archiveWithCurrentStorageState(linkArchives[item.archiveKey] ?: return, currentArchiveFileNames())
+        if(!item.canRetry) return
+
+        launchArchiveRetry(archive, sourceUrls = setOf(item.sourceUrl))
+    }
+
+    internal fun retryAllArchiveDownloads(items: List<ClipboardArchiveDownloadListItem>) {
+        val existingArchiveFileNames = currentArchiveFileNames()
+        items
+            .filter { it.canRetry }
+            .groupBy { it.archiveKey }
+            .forEach { (archiveKey, archiveItems) ->
+                val archive = archiveWithCurrentStorageState(
+                    linkArchives[archiveKey] ?: return@forEach,
+                    existingArchiveFileNames
+                )
+                launchArchiveRetry(
+                    archive = archive,
+                    sourceUrls = archiveItems.map { it.sourceUrl }.toSet()
+                )
+            }
+    }
+
+    private fun launchArchiveRetry(
+        archive: ClipboardLinkArchive,
+        sourceUrls: Set<String>? = null,
+        includeSkippedTooLarge: Boolean = true
+    ) {
+        if(isArchiveDownloadActive(archive.key)) return
+        if(isArchiveRetryBlockedByCooldown(archive)) return
+
+        launchArchiveDownload(archive.key) {
+            if(archive.providerManifestAvailable) {
+                downloadArchiveMedia(
+                    text = null,
+                    archiveKey = archive.key,
+                    includeSkippedTooLarge = includeSkippedTooLarge,
+                    onlySourceUrls = sourceUrls
+                )
+            } else {
+                refetchFallbackArchive(archive)
+            }
+        }
+    }
+
+    private fun archiveWithCurrentStorageState(
+        archive: ClipboardLinkArchive,
+        existingArchiveFileNames: Set<String>
+    ): ClipboardLinkArchive =
+        archive.withMissingArchiveFilesMarked(existingArchiveFileNames, now = archive.updatedAtEpochMs)
+
+    private fun scanArchiveFileNames(): Set<String> =
+        context.clipboardArchiveDir.listFiles()
+            ?.filter { it.isFile }
+            ?.map { it.name }
+            ?.toSet()
+            .orEmpty()
+
+    private fun refreshArchiveFileNames(): Set<String> {
+        val fileNames = scanArchiveFileNames()
+        archiveFileNames.value = fileNames
+        archiveFileNamesLoaded = true
+        return fileNames
+    }
+
+    private fun currentArchiveFileNames(): Set<String> {
+        if(!archiveFileNamesLoaded) {
+            return refreshArchiveFileNames()
+        }
+        return archiveFileNames.value
+    }
+
+    internal fun stopArchiveDownload(archiveKey: String) {
+        val progress = archiveDownloadProgressByKey[archiveKey] ?: return
+        archiveDownloadJobsByKey[archiveKey]?.cancel()
+        val attemptedAt = System.currentTimeMillis()
+        val updated = reduceArchive(
+            archive = linkArchives[archiveKey],
+            event = ClipboardArchiveEvent.MediaDownloadFailed(
+                sourceUrl = progress.sourceUrl,
+                now = attemptedAt,
+                failureDetail = "Stopped by user"
+            )
+        ) ?: return
+        linkArchives[archiveKey] = updated
+        saveArchive(updated)
+        queuePreviewSave(delayMillis = 0L)
+    }
+
+    internal fun stopAllArchiveDownloads() {
+        archiveDownloadProgressByKey.keys.toList().forEach(::stopArchiveDownload)
+    }
+
+    private fun activeProviderCooldowns(): Map<ClipboardPreviewProvider, ClipboardPreviewProviderCooldown> {
+        val now = System.currentTimeMillis()
+        providerCooldownByProvider
+            .filterValues { it.retryAfterEpochMs <= now }
+            .keys
+            .toList()
+            .forEach(providerCooldownByProvider::remove)
+        return providerCooldownByProvider.toMap()
+    }
+
+    private suspend fun setProviderCooldown(cooldown: ClipboardPreviewProviderCooldown) {
+        withContext(Dispatchers.Main) {
+            val current = providerCooldownByProvider[cooldown.provider]
+            if(current == null || cooldown.retryAfterEpochMs > current.retryAfterEpochMs) {
+                providerCooldownByProvider[cooldown.provider] = cooldown
+            }
+        }
+    }
+
+    private suspend fun setProviderCooldown(failure: ClipboardPreviewFetchFailure?) {
+        when (failure) {
+            is ClipboardPreviewFetchFailure.RateLimited -> setProviderCooldown(
+                ClipboardPreviewProviderCooldown(
+                    provider = failure.provider,
+                    retryAfterEpochMs = failure.retryAfterEpochMs,
+                    detail = failure.detail
+                )
+            )
+            is ClipboardPreviewFetchFailure.Unavailable -> Unit
+            null -> Unit
+        }
+    }
+
+    internal fun deleteArchive(archive: ClipboardLinkArchive) {
+        deleteArchiveByKey(archive.key)
+    }
+
     fun deleteArchiveForEntry(entry: ClipboardEntry) {
-        val archive = archiveForEntry(entry) ?: return
+        deleteArchiveByKey(archiveForEntry(entry)?.key ?: return)
+    }
+
+    private fun deleteArchiveByKey(archiveKey: String) {
+        val archive = linkArchives[archiveKey] ?: return
         linkArchives.remove(archive.key)
+        deleteArchiveMetadataFile(archive.key)
         archive.media.mapNotNull { it.fileName }.forEach { fileName ->
             File(context.clipboardArchiveDir, fileName).delete()
             File(context.clipboardArchiveDir, ClipboardUtil.thumbnailForName(fileName)).delete()
         }
+        refreshArchiveFileNames()
 
         val archivedFileNames = archive.media.mapNotNull { it.fileName }.toSet()
         for(i in clipboardHistory.indices) {
             val current = clipboardHistory[i]
-            if(current.previewMetadata?.archiveKey() == archive.key) {
-                val retainedPreviewMedia = current.previewMedia()
-                    .filter { it.fileName !in archivedFileNames }
+            if(current.previewMetadata?.archiveKey() == archiveKey) {
+                val retainedPreviewMedia = retainedPreviewMediaAfterArchiveDelete(
+                    entry = current,
+                    archivedFileNames = archivedFileNames,
+                    clipboardDir = context.clipboardDir
+                )
                 clipboardHistory[i] = current.copy(
                     previewImageFile = null,
                     previewMediaFiles = retainedPreviewMedia
@@ -485,9 +1004,10 @@ class ClipboardHistoryManager(
         archives: List<ClipboardLinkArchive>
     ) = withContext(Dispatchers.Main) {
         clipboardHistory.clear()
-        clipboardHistory.addAll(data)
+        clipboardHistory.addAll(deduplicateClipboardEntries(data))
         linkArchives.clear()
         linkArchives.putAll(archives.associateBy { it.key })
+        refreshArchiveFileNames()
         clipboardLoaded = true
         clipboardIOFailureReason = ""
         clipboardIOFailure.value = false
@@ -556,11 +1076,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 else -> listOf(DefaultClipboardEntry)
             }
 
-            val loadedArchives = if(archiveFile.exists()) {
-                runCatching { archiveFile.decodeClipboardArchives() }.getOrElse { emptyList() }
-            } else {
-                emptyList()
-            }
+            val loadedArchives = loadArchives()
 
             publishClipboardLoaded(loadedEntries, loadedArchives)
             reconcileClipboardStorage()
@@ -574,20 +1090,59 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
     private fun decodeFile(file: File): List<ClipboardEntry> =
         decodeClipboardEntries(file.readText())
 
+    private fun loadArchives(): List<ClipboardLinkArchive> =
+        mergeStoredClipboardArchives(
+            legacyArchives = loadLegacyArchiveFile(),
+            metadataArchives = loadClipboardArchivesFromMetadataDir(archiveMetadataDir)
+        )
+
+    private fun loadLegacyArchiveFile(): List<ClipboardLinkArchive> =
+        if(archiveFile.exists()) {
+            try {
+                archiveFile.decodeLegacyClipboardArchives()
+            } catch(e: Exception) {
+                reportError("loadArchives main, trying bak", e)
+                if(archiveFileBak.exists()) {
+                    archiveFileBak.decodeLegacyClipboardArchives()
+                } else {
+                    throw e
+                }
+            }
+        } else if(archiveFileBak.exists()) {
+            archiveFileBak.decodeLegacyClipboardArchives()
+        } else {
+            emptyList()
+        }
+
     private fun fetchPreviewForEntry(text: String, manualRetry: Boolean = false) {
         val request = previewFetchRequest(text, manualRetry) ?: return
+        ClipboardLinkPreviewFetcher.metadataForSupportedUrl(request.text)?.provider?.let {
+            if(providerCooldown(it) != null) return
+        }
 
         coroutineScope.launch {
             previewLoadingByText[request.text] = true
             try {
                 var attempt = 0
                 var lastFetchedManifest: ClipboardLinkPreviewManifest? = null
+                var lastFailureDetail: String? = null
+                var unavailableRefresh = false
 
                 while (attempt < request.maxAttempts) {
-                    val manifest = withContext(ClipboardPreviewFetchContext) {
-                        ClipboardLinkPreviewFetcher.fetchManifest(request.text)
+                    val manifestResult = withContext(ClipboardPreviewFetchContext) {
+                        ClipboardLinkPreviewFetcher.fetchManifestResult(request.text)
                     }
+                    setProviderCooldown(manifestResult.failure)
+                    val manifest = manifestResult.manifest
+                    lastFailureDetail = manifestResult.failureDetail ?: lastFailureDetail
                     lastFetchedManifest = manifest ?: lastFetchedManifest
+                    if(manifestResult.failure is ClipboardPreviewFetchFailure.RateLimited) {
+                        break
+                    }
+                    if(manifestResult.failure is ClipboardPreviewFetchFailure.Unavailable) {
+                        unavailableRefresh = true
+                        break
+                    }
 
                     if(manifest != null && (manifest.snippet != null || manifest.mediaItems.isNotEmpty() || manifest.metadata != null)) {
                         val attemptedAt = System.currentTimeMillis()
@@ -596,11 +1151,12 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                         val updated = updateLatestTextEntry(request.text) { current ->
                             current.copy(
                                 previewText = manifest.snippet,
-                                previewImageFile = initialMedia.firstOrNull()?.fileName,
+                                previewImageFile = null,
                                 previewMediaFiles = initialMedia,
                                 previewMetadata = manifest.metadata ?: current.previewMetadata,
                                 previewFetchStatus = ClipboardPreviewFetchStatus.Success,
-                                previewFetchLastAttemptAt = attemptedAt
+                                previewFetchLastAttemptAt = attemptedAt,
+                                previewFetchFailureDetail = null
                             )
                         }
 
@@ -609,7 +1165,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                         }
 
                         archive?.let {
-                            downloadArchiveMedia(request.text, it.key)
+                            downloadArchiveMediaWithLoading(request.text, it.key)
                         }
                         return@launch
                     }
@@ -621,7 +1177,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 }
 
                 val attemptedAt = System.currentTimeMillis()
-                val retryArchiveKey = if(manualRetry) {
+                val retryArchiveKey = if(manualRetry && !unavailableRefresh) {
                     withContext(Dispatchers.Main) {
                         clipboardHistory.lastOrNull { it.text == request.text }
                             ?.let { archiveForEntry(it) }
@@ -632,7 +1188,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     null
                 }
                 if(retryArchiveKey != null) {
-                    downloadArchiveMedia(request.text, retryArchiveKey)
+                    downloadArchiveMediaWithLoading(request.text, retryArchiveKey)
                     return@launch
                 }
 
@@ -640,7 +1196,8 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     current.copy(
                         previewMetadata = lastFetchedManifest?.metadata ?: current.previewMetadata,
                         previewFetchStatus = ClipboardPreviewFetchStatus.Failed,
-                        previewFetchLastAttemptAt = attemptedAt
+                        previewFetchLastAttemptAt = attemptedAt,
+                        previewFetchFailureDetail = lastFailureDetail
                     )
                 }
 
@@ -736,112 +1293,440 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         manifest: ClipboardLinkPreviewManifest,
         now: Long
     ): ClipboardLinkArchive? {
-        val newArchive = newArchiveFromManifest(manifest, now) ?: return null
-        val updated = linkArchives[newArchive.key]?.let {
-            mergeArchiveWithManifest(it, manifest, now)
-        } ?: newArchive
-        linkArchives[newArchive.key] = updated
-        saveArchives()
+        val archiveKey = manifest.archiveKey() ?: return null
+        val updated = reduceArchive(
+            archive = linkArchives[archiveKey],
+            event = ClipboardArchiveEvent.ManifestSeen(manifest, now)
+        ) ?: return null
+        linkArchives[updated.key] = updated
+        saveArchive(updated)
         return updated
     }
 
-    private suspend fun downloadArchiveMedia(text: String, archiveKey: String) {
-        withContext(ClipboardPreviewFetchContext) {
-            while(true) {
-                val media = withContext(Dispatchers.Main) {
-                    linkArchives[archiveKey]?.retryableMedia()?.firstOrNull()
-                } ?: break
+    private suspend fun createFallbackArchiveFromEntry(
+        entry: ClipboardEntry,
+        now: Long
+    ): ClipboardLinkArchive? {
+        val metadata = entry.archiveBackfillMetadata() ?: return null
+        val key = metadata.archiveKey() ?: return null
+        if(linkArchives[key] != null) return linkArchives[key]
 
-                val attemptedAt = System.currentTimeMillis()
-                val result = ClipboardLinkPreviewFetcher.cachePreviewMedia(
-                    context = context,
-                    mediaUrl = media.sourceUrl,
-                    destinationDir = context.clipboardArchiveDir
-                )
-                val updatedMedia = when (result) {
-                    is ClipboardPreviewMediaCacheResult.Saved -> media.copy(
-                        fileName = result.fileName,
-                        mimeType = result.mimeType ?: media.mimeType,
-                        status = ClipboardArchiveMediaStatus.Saved,
-                        lastAttemptAtEpochMs = attemptedAt
-                    )
-                    ClipboardPreviewMediaCacheResult.Failed -> media.copy(
-                        status = ClipboardArchiveMediaStatus.Failed,
-                        lastAttemptAtEpochMs = attemptedAt
-                    )
-                    ClipboardPreviewMediaCacheResult.SkippedTooLarge -> media.copy(
-                        status = ClipboardArchiveMediaStatus.SkippedTooLarge,
-                        lastAttemptAtEpochMs = attemptedAt
-                    )
-                }
+        val savedMedia = withContext(ClipboardIOContext) {
+            copyLegacyPreviewMediaToArchive(
+                entry = entry,
+                metadata = metadata,
+                clipboardDir = context.clipboardDir,
+                archiveDir = context.clipboardArchiveDir,
+                now = now
+            )
+        }
+        val archive = newFallbackArchiveFromEntry(
+            entry = entry,
+            metadata = metadata,
+            savedMedia = savedMedia,
+            now = now
+        ) ?: return null
 
-                val archive = updateArchiveMedia(archiveKey, updatedMedia, attemptedAt) ?: continue
-                updateEntryPreviewFromArchive(text, archive, attemptedAt)
-                saveArchives()
-                queuePreviewSave(delayMillis = 0L)
+        if(savedMedia.isNotEmpty()) {
+            refreshArchiveFileNames()
+        }
+        linkArchives[archive.key] = archive
+        saveArchive(archive)
+        return archive
+    }
+
+    private suspend fun refetchFallbackArchive(archive: ClipboardLinkArchive) {
+        providerCooldown(archive.provider)?.let { return }
+        val manifestResult = withContext(ClipboardPreviewFetchContext) {
+            ClipboardLinkPreviewFetcher.fetchManifestResult(archive.sourceUrl)
+        }
+        setProviderCooldown(manifestResult.failure)
+        if(manifestResult.failure is ClipboardPreviewFetchFailure.Unavailable) {
+            markArchiveRefreshUnavailable(archive.key, manifestResult.failure.detail)
+            return
+        }
+        val manifest = manifestResult.manifest ?: return
+        if(manifest.snippet == null && manifest.mediaItems.isEmpty() && manifest.metadata == null) return
+
+        val attemptedAt = System.currentTimeMillis()
+        val updatedArchive = createOrUpdateArchive(manifest, attemptedAt) ?: return
+        downloadArchiveMedia(text = null, archiveKey = updatedArchive.key)
+    }
+
+    private suspend fun markArchiveRefreshUnavailable(
+        archiveKey: String,
+        detail: String
+    ) {
+        val attemptedAt = System.currentTimeMillis()
+        val sourceUrl = withContext(Dispatchers.Main) {
+            val archive = linkArchives[archiveKey] ?: return@withContext null
+            archive.retryableMedia().firstOrNull()?.sourceUrl
+                ?: archive.media.firstOrNull { it.status != ClipboardArchiveMediaStatus.Saved }?.sourceUrl
+                ?: archive.media.firstOrNull()?.sourceUrl
+        } ?: return
+        val updated = reduceArchiveMedia(
+            archiveKey = archiveKey,
+            event = ClipboardArchiveEvent.MediaDownloadFailed(
+                sourceUrl = sourceUrl,
+                now = attemptedAt,
+                failureDetail = detail
+            )
+        ) ?: return
+        saveArchive(updated)
+    }
+
+    private fun startArchiveDownload(text: String?, archiveKey: String) {
+        launchArchiveDownload(archiveKey) {
+            downloadArchiveMedia(text, archiveKey)
+        }
+    }
+
+    private suspend fun downloadArchiveMediaWithLoading(text: String?, archiveKey: String) {
+        coroutineContext[Job]?.let { archiveDownloadJobsByKey[archiveKey] = it }
+        try {
+            withArchiveLoading(archiveKey) {
+                downloadArchiveMedia(text, archiveKey)
+            }
+        } finally {
+            archiveDownloadJobsByKey.remove(archiveKey)
+        }
+    }
+
+    private fun launchArchiveDownload(
+        archiveKey: String,
+        block: suspend () -> Unit
+    ) {
+        if(isArchiveDownloadActive(archiveKey)) return
+        val job = coroutineScope.launch {
+            try {
+                withArchiveLoading(archiveKey, block)
+            } finally {
+                archiveDownloadJobsByKey.remove(archiveKey)
+            }
+        }
+        archiveDownloadJobsByKey[archiveKey] = job
+    }
+
+    private fun isArchiveDownloadActive(archiveKey: String): Boolean =
+        previewLoadingByText[archiveKey] == true ||
+            archiveDownloadJobsByKey[archiveKey]?.isActive == true
+
+    private suspend fun withArchiveLoading(
+        archiveKey: String,
+        block: suspend () -> Unit
+    ) {
+        val started = withContext(Dispatchers.Main) {
+            if(previewLoadingByText[archiveKey] == true) {
+                false
+            } else {
+                previewLoadingByText[archiveKey] = true
+                true
+            }
+        }
+        if(!started) return
+
+        try {
+            block()
+        } finally {
+            withContext(Dispatchers.Main) {
+                previewLoadingByText.remove(archiveKey)
+                archiveDownloadProgressByKey.remove(archiveKey)
             }
         }
     }
 
-    private suspend fun updateArchiveMedia(
+    private suspend fun downloadArchiveMedia(
+        text: String?,
         archiveKey: String,
-        updatedMedia: ClipboardArchiveMedia,
-        now: Long
+        includeSkippedTooLarge: Boolean = false,
+        onlySourceUrls: Set<String>? = null
+    ) {
+        val attemptedSourceUrls = mutableSetOf<String>()
+        withContext(ClipboardPreviewFetchContext) {
+            while(true) {
+                val target = withContext(Dispatchers.Main) {
+                    val archive = linkArchives[archiveKey]?.let {
+                        archiveWithCurrentStorageState(it, currentArchiveFileNames())
+                    }
+                    if(archive?.provider?.let { providerCooldown(it) } != null) return@withContext null
+                    val media = archive?.let {
+                        if(includeSkippedTooLarge) it.retryableMedia() else it.autoDownloadableMedia()
+                    }?.firstOrNull {
+                        (onlySourceUrls == null || it.sourceUrl in onlySourceUrls) &&
+                            attemptedSourceUrls.add(it.sourceUrl)
+                    }
+                    media?.let { ClipboardArchiveMediaDownloadTarget(archive, it) }
+                } ?: break
+                val media = target.media
+
+                val attemptedAt = System.currentTimeMillis()
+                publishArchiveDownloadProgress(
+                    media = media,
+                    completedBytes = 0L,
+                    totalBytes = null,
+                    archive = target.archive
+                )
+                var lastProgressAt = 0L
+                var lastProgressBytes = 0L
+                var currentCompletedBytes = 0L
+                var currentTotalBytes: Long? = null
+                val result = ClipboardLinkPreviewFetcher.cachePreviewMedia(
+                    context = context,
+                    mediaUrl = media.sourceUrl,
+                    destinationDir = context.clipboardArchiveDir,
+                    provider = linkArchives[archiveKey]?.provider,
+                    onProgress = { progress ->
+                        coroutineContext.ensureActive()
+                        currentCompletedBytes = progress.completedBytes
+                        currentTotalBytes = progress.totalBytes
+                        val now = System.currentTimeMillis()
+                        val bytesDelta = progress.completedBytes - lastProgressBytes
+                        if(bytesDelta >= 1024L * 1024L || now - lastProgressAt >= 500L) {
+                            lastProgressAt = now
+                            lastProgressBytes = progress.completedBytes
+                            publishArchiveDownloadProgress(
+                                media = media,
+                                completedBytes = progress.completedBytes,
+                                totalBytes = progress.totalBytes,
+                                archive = target.archive
+                            )
+                        }
+                    }
+                )
+                val event = when (result) {
+                    is ClipboardPreviewMediaCacheResult.Saved -> {
+                        withContext(Dispatchers.Main) {
+                            refreshArchiveFileNames()
+                        }
+                        ClipboardArchiveEvent.MediaDownloadSaved(
+                            sourceUrl = media.sourceUrl,
+                            fileName = result.fileName,
+                            mimeType = result.mimeType,
+                            now = attemptedAt
+                        )
+                    }
+                    is ClipboardPreviewMediaCacheResult.Failed -> ClipboardArchiveEvent.MediaDownloadFailed(
+                        sourceUrl = media.sourceUrl,
+                        now = attemptedAt,
+                        failureDetail = result.detail
+                    )
+                    is ClipboardPreviewMediaCacheResult.SkippedTooLarge -> ClipboardArchiveEvent.MediaSkippedTooLarge(
+                        sourceUrl = media.sourceUrl,
+                        now = attemptedAt,
+                        failureDetail = result.detail
+                    )
+                    is ClipboardPreviewMediaCacheResult.RateLimited -> {
+                        setProviderCooldown(
+                            ClipboardPreviewProviderCooldown(
+                                provider = result.provider,
+                                retryAfterEpochMs = result.retryAfterEpochMs,
+                                detail = result.detail
+                            )
+                        )
+                        ClipboardArchiveEvent.MediaDownloadFailed(
+                            sourceUrl = media.sourceUrl,
+                            now = attemptedAt,
+                            failureDetail = result.detail
+                        )
+                    }
+                }
+
+                val archive = reduceArchiveMedia(archiveKey, event) ?: continue
+                publishArchiveDownloadProgressNow(
+                    media = media,
+                    completedBytes = currentCompletedBytes,
+                    totalBytes = currentTotalBytes,
+                    archive = archive
+                )
+                updateEntriesPreviewFromArchive(text, archive, attemptedAt)
+                saveArchive(archive)
+                queuePreviewSave(delayMillis = 0L)
+                if(result is ClipboardPreviewMediaCacheResult.RateLimited) break
+            }
+        }
+    }
+
+    private fun publishArchiveDownloadProgress(
+        media: ClipboardArchiveMedia,
+        completedBytes: Long,
+        totalBytes: Long?,
+        archive: ClipboardLinkArchive
+    ) {
+        val snapshot = archiveProgressSnapshot(
+            media = media,
+            completedBytes = completedBytes,
+            totalBytes = totalBytes,
+            archive = archive
+        )
+        coroutineScope.launch(Dispatchers.Main.immediate) {
+            applyArchiveDownloadProgress(snapshot)
+        }
+    }
+
+    private suspend fun publishArchiveDownloadProgressNow(
+        media: ClipboardArchiveMedia,
+        completedBytes: Long,
+        totalBytes: Long?,
+        archive: ClipboardLinkArchive
+    ) {
+        val snapshot = archiveProgressSnapshot(
+            media = media,
+            completedBytes = completedBytes,
+            totalBytes = totalBytes,
+            archive = archive
+        )
+        withContext(Dispatchers.Main.immediate) {
+            applyArchiveDownloadProgress(snapshot)
+        }
+    }
+
+    private fun archiveProgressSnapshot(
+        media: ClipboardArchiveMedia,
+        completedBytes: Long,
+        totalBytes: Long?,
+        archive: ClipboardLinkArchive
+    ): ClipboardArchiveProgressSnapshot = ClipboardArchiveProgressSnapshot(
+        archiveKey = archive.key,
+        sourceUrl = media.sourceUrl,
+        sourceIndex = media.sourceIndex,
+        completedBytes = completedBytes,
+        totalBytes = totalBytes,
+        savedCount = archive.savedMediaCount(),
+        expectedCount = archive.expectedMediaCount()
+    )
+
+    private fun applyArchiveDownloadProgress(snapshot: ClipboardArchiveProgressSnapshot) {
+        val progress = snapshot.toProgress()
+        val previous = archiveDownloadProgressByKey[snapshot.archiveKey]
+        if(!shouldPublishArchiveDownloadProgress(previous, progress)) return
+        archiveDownloadProgressByKey[snapshot.archiveKey] = progress
+    }
+
+    private fun shouldPublishArchiveDownloadProgress(
+        previous: ClipboardArchiveDownloadProgress?,
+        next: ClipboardArchiveDownloadProgress
+    ): Boolean {
+        if(previous == null) return true
+        if(previous == next) return false
+        if(previous.sourceUrl != next.sourceUrl || previous.sourceIndex != next.sourceIndex) return true
+        if(previous.savedCount != next.savedCount || previous.expectedCount != next.expectedCount) return true
+        if(previous.totalBytes != next.totalBytes) return true
+        val byteDelta = next.completedBytes - previous.completedBytes
+        if(byteDelta < 0L) return true
+        return previous.progressPercent() != next.progressPercent() || byteDelta >= 1024L * 1024L
+    }
+
+    private suspend fun reduceArchiveMedia(
+        archiveKey: String,
+        event: ClipboardArchiveEvent
     ): ClipboardLinkArchive? = withContext(Dispatchers.Main) {
         val archive = linkArchives[archiveKey] ?: return@withContext null
-        val updated = archive.copy(
-            media = archive.media.map {
-                if(it.sourceUrl == updatedMedia.sourceUrl) updatedMedia else it
-            },
-            updatedAtEpochMs = now
-        )
+        val updated = reduceArchive(archive, event) ?: return@withContext null
         linkArchives[archiveKey] = updated
         updated
     }
 
-    private suspend fun updateEntryPreviewFromArchive(
-        text: String,
+    private suspend fun updateEntriesPreviewFromArchive(
+        text: String?,
         archive: ClipboardLinkArchive,
         attemptedAt: Long
     ) {
         val savedMedia = archive.savedPreviewMedia()
-        updateLatestTextEntry(text) { current ->
-            current.copy(
-                previewImageFile = savedMedia.firstOrNull()?.fileName,
-                previewMediaFiles = savedMedia,
-                previewMetadata = archive.metadata ?: current.previewMetadata,
-                previewFetchStatus = if(current.previewText != null || savedMedia.isNotEmpty()) {
-                    ClipboardPreviewFetchStatus.Success
-                } else {
-                    current.previewFetchStatus
-                },
-                previewFetchLastAttemptAt = attemptedAt
-            )
+        if(text != null) {
+            updateLatestTextEntry(text) { current ->
+                current.withArchivePreviewMedia(archive, savedMedia, attemptedAt)
+            }
+        } else {
+            withContext(Dispatchers.Main) {
+                for(i in clipboardHistory.indices) {
+                    val current = clipboardHistory[i]
+                    if(current.previewMetadata?.archiveKey() == archive.key) {
+                        clipboardHistory[i] = current.withArchivePreviewMedia(archive, savedMedia, attemptedAt)
+                    }
+                }
+            }
         }
     }
+
+    private fun ClipboardEntry.withArchivePreviewMedia(
+        archive: ClipboardLinkArchive,
+        savedMedia: List<ClipboardPreviewMedia>,
+        attemptedAt: Long
+    ): ClipboardEntry =
+        copy(
+            previewImageFile = null,
+            previewMediaFiles = savedMedia,
+            previewMetadata = archive.metadata ?: previewMetadata,
+            previewFetchStatus = if(previewText != null || savedMedia.isNotEmpty()) {
+                ClipboardPreviewFetchStatus.Success
+            } else {
+                previewFetchStatus
+            },
+            previewFetchLastAttemptAt = attemptedAt,
+            previewFetchFailureDetail = null
+        )
 
     private fun archiveForEntry(entry: ClipboardEntry): ClipboardLinkArchive? =
         entry.previewMetadata?.archiveKey()?.let { linkArchives[it] }
 
-    private fun saveArchives() {
+    private fun saveArchive(archive: ClipboardLinkArchive) {
         if(!context.isDirectBootUnlocked) return
-        val archives = linkArchives.values.toList()
-        try {
-            val encoded = encodeClipboardArchives(archives)
-            archiveFileSwap.writeText(encoded)
+        synchronized(archiveSaveLock) {
+            try {
+                archiveMetadataDir.mkdirs()
+                val archiveFile = archiveMetadataDir.clipboardArchiveMetadataFile(archive.key)
+                val archiveFileBak = File(archiveMetadataDir, "${archiveFile.name}.bak")
+                val archiveFileSwap = File(archiveMetadataDir, "${archiveFile.name}.swap")
+                val encoded = encodeClipboardArchive(archive)
+                archiveFileSwap.writeText(encoded)
+                if(archiveFileSwap.decodeClipboardArchive() != archive) {
+                    throw Exception("Saved archive data does not match expected data")
+                }
 
-            if(archiveFile.exists() && !archiveFile.renameTo(archiveFileBak)) {
-                throw Exception("Failed to move clipboard archive backup")
-            }
+                replaceFileWithBackup(
+                    swapFile = archiveFileSwap,
+                    targetFile = archiveFile,
+                    backupFile = archiveFileBak
+                )
 
-            if(!archiveFileSwap.renameTo(archiveFile)) {
-                throw Exception("Failed to swap clipboard archive file")
+                if(archiveFile.decodeClipboardArchive() != archive) {
+                    throw Exception("Saved archive data does not match expected data")
+                }
+            } catch(e: Exception) {
+                clipboardIOFailure.value = true
+                clipboardIOFailureReason = e.toString()
+                reportError("saveArchives", e)
             }
-        } catch(e: Exception) {
-            clipboardIOFailure.value = true
-            clipboardIOFailureReason = e.toString()
-            reportError("saveArchives", e)
         }
+    }
+
+    private fun saveArchives() {
+        linkArchives.values.forEach(::saveArchive)
+        deleteStaleArchiveMetadataFiles()
+        deleteLegacyArchiveAggregateFiles()
+    }
+
+    private fun deleteArchiveMetadataFile(archiveKey: String) {
+        val file = archiveMetadataDir.clipboardArchiveMetadataFile(archiveKey)
+        listOf(file, File(archiveMetadataDir, "${file.name}.bak"), File(archiveMetadataDir, "${file.name}.swap"))
+            .forEach { it.delete() }
+    }
+
+    private fun deleteStaleArchiveMetadataFiles() {
+        val expectedNames = linkArchives.keys
+            .map(::clipboardArchiveMetadataFileName)
+            .flatMap { listOf(it, "$it.bak", "$it.swap") }
+            .toSet()
+        archiveMetadataDir.listFiles()?.forEach { file ->
+            if(file.name !in expectedNames) {
+                file.delete()
+            }
+        }
+    }
+
+    private fun deleteLegacyArchiveAggregateFiles() {
+        listOf(archiveFile, archiveFileBak, File(context.filesDir, "$ClipboardArchiveFileName.swap"))
+            .forEach { it.delete() }
     }
 
     private fun reconcileArchiveStorage() {
@@ -861,5 +1746,6 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 file.delete()
             }
         }
+        refreshArchiveFileNames()
     }
 }

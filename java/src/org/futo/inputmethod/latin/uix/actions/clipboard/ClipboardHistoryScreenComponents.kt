@@ -5,40 +5,49 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.view.ViewGroup
 import android.widget.MediaController
 import android.widget.Toast
 import android.widget.VideoView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -47,6 +56,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +66,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +75,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -74,6 +87,331 @@ import androidx.core.net.toUri
 import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
 import java.io.File
+
+private const val ClipboardHistoryPreviewZoomedThreshold = 1.01f
+private const val ClipboardHistoryPreviewEdgeEpsilonPx = 0.5f
+private val ClipboardHistoryPreviewEdgeSwipeThreshold = 48.dp
+internal val ClipboardPreviewFabThumbnailEndInset = 96.dp
+
+internal enum class ClipboardHistoryPreviewEdgeSwipe {
+    Previous,
+    Next
+}
+
+internal data class ClipboardHistoryPreviewEdgeSwipeProgress(
+    val direction: ClipboardHistoryPreviewEdgeSwipe?,
+    val accumulatedPx: Float
+)
+
+internal data class ClipboardMediaPreviewItem(
+    val file: File?,
+    val thumbnailLabel: String
+)
+
+internal data class ClipboardPreviewFabAction(
+    val label: String,
+    val iconRes: Int? = null,
+    val imageVector: ImageVector? = null,
+    val iconRotationDegrees: Float = 0f,
+    val destructive: Boolean = false,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit
+)
+
+internal data class ClipboardPreviewShareTarget(
+    val file: File,
+    val mimeType: String
+)
+
+internal fun isClipboardHistoryPreviewZoomed(zoom: Float): Boolean =
+    zoom > ClipboardHistoryPreviewZoomedThreshold
+
+internal fun clampClipboardHistoryPreviewOffset(
+    offset: Offset,
+    zoom: Float,
+    baseImageWidthPx: Float,
+    baseImageHeightPx: Float,
+    containerWidthPx: Float,
+    containerHeightPx: Float
+): Offset {
+    val maxX = ((baseImageWidthPx * zoom) - containerWidthPx).coerceAtLeast(0f) / 2f
+    val maxY = ((baseImageHeightPx * zoom) - containerHeightPx).coerceAtLeast(0f) / 2f
+    return Offset(
+        x = offset.x.coerceIn(-maxX, maxX),
+        y = offset.y.coerceIn(-maxY, maxY)
+    )
+}
+
+internal fun clipboardHistoryPreviewEdgeSwipeProgress(
+    offsetX: Float,
+    panX: Float,
+    maxOffsetX: Float,
+    accumulatedPx: Float,
+    thresholdPx: Float
+): ClipboardHistoryPreviewEdgeSwipeProgress {
+    if(maxOffsetX <= 0f) return ClipboardHistoryPreviewEdgeSwipeProgress(null, 0f)
+    val direction = when {
+        panX > 0f && offsetX >= maxOffsetX - ClipboardHistoryPreviewEdgeEpsilonPx ->
+            ClipboardHistoryPreviewEdgeSwipe.Previous
+        panX < 0f && offsetX <= -maxOffsetX + ClipboardHistoryPreviewEdgeEpsilonPx ->
+            ClipboardHistoryPreviewEdgeSwipe.Next
+        else -> null
+    }
+    if(direction == null) return ClipboardHistoryPreviewEdgeSwipeProgress(null, 0f)
+
+    val nextAccumulated = accumulatedPx + kotlin.math.abs(panX)
+    return ClipboardHistoryPreviewEdgeSwipeProgress(
+        direction = direction.takeIf { nextAccumulated >= thresholdPx },
+        accumulatedPx = if(nextAccumulated >= thresholdPx) 0f else nextAccumulated
+    )
+}
+
+internal fun clipboardPreviewShareTarget(
+    context: Context,
+    entry: ClipboardEntry,
+    previewState: ClipboardPreviewState,
+    page: Int = 0
+): ClipboardPreviewShareTarget? {
+    val mediaFiles = when {
+        entry.text == null -> listOfNotNull(entry.getFile(context))
+        previewState.showsEmbed -> entry.getPreviewFiles(context)
+        else -> emptyList()
+    }
+    return clipboardPreviewShareTarget(
+        entry = entry,
+        previewState = previewState,
+        mediaFiles = mediaFiles,
+        page = page
+    )
+}
+
+internal fun clipboardPreviewShareTarget(
+    entry: ClipboardEntry,
+    previewState: ClipboardPreviewState,
+    mediaFiles: List<File>,
+    page: Int
+): ClipboardPreviewShareTarget? {
+    val file = mediaFiles.getOrNull(page)?.takeIf { it.isFile } ?: return null
+    val mimeType = when {
+        entry.backingFile != null -> entry.mimeTypes.firstOrNull()
+        previewState.showsEmbed -> entry.previewMedia().getOrNull(page)?.mimeType
+        else -> null
+    } ?: file.guessedClipboardMimeType()
+        ?: if(file.isClipboardVideoFile()) "video/*" else "image/*"
+
+    return ClipboardPreviewShareTarget(file = file, mimeType = mimeType)
+}
+
+@Composable
+internal fun ClipboardPreviewActionFabMenu(
+    actions: List<ClipboardPreviewFabAction>,
+    modifier: Modifier = Modifier
+) {
+    if(actions.isEmpty()) return
+
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .navigationBarsPadding(),
+        contentAlignment = Alignment.BottomEnd
+    ) {
+        if(expanded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { expanded = false }
+            )
+        }
+
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if(expanded) {
+                actions.asReversed().forEach { action ->
+                    ClipboardPreviewFabActionRow(
+                        action = action,
+                        onSelected = {
+                            expanded = false
+                            action.onClick()
+                        }
+                    )
+                }
+            }
+
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .clickable { expanded = !expanded }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(R.drawable.more_horizontal),
+                        contentDescription = stringResource(R.string.action_more_actions_title)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ClipboardPreviewOverlayDialog(
+    items: List<ClipboardMediaPreviewItem>,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    initialPage: Int = 0,
+    thumbnailStripEndInset: Dp = 0.dp,
+    fabActions: List<ClipboardPreviewFabAction>,
+    onPageChanged: (Int) -> Unit = {},
+    headerContent: @Composable RowScope.((File) -> Unit) -> Unit,
+    placeholder: @Composable (Int, ClipboardMediaPreviewItem?) -> Unit
+) {
+    var fullscreenVideoFile by remember { mutableStateOf<File?>(null) }
+    var chromeVisible by remember { mutableStateOf(true) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color.Black.copy(alpha = 0.94f)
+        ) {
+            Box(
+                modifier = modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(16.dp)
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    ClipboardMediaPreviewPager(
+                        items = items,
+                        initialPage = initialPage,
+                        fullscreenVideoFile = fullscreenVideoFile,
+                        chromeVisible = chromeVisible,
+                        thumbnailStripEndInset = thumbnailStripEndInset,
+                        modifier = Modifier.fillMaxSize(),
+                        onPageChanged = onPageChanged,
+                        onMediaTap = { chromeVisible = !chromeVisible },
+                        placeholder = placeholder
+                    )
+
+                    AnimatedVisibility(
+                        visible = chromeVisible,
+                        enter = slideInVertically { -it } + fadeIn(),
+                        exit = slideOutVertically { -it } + fadeOut(),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            headerContent { fullscreenVideoFile = it }
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = chromeVisible,
+                    enter = slideInVertically { it } + fadeIn(),
+                    exit = slideOutVertically { it } + fadeOut(),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    ClipboardPreviewActionFabMenu(
+                        actions = fabActions,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+
+    fullscreenVideoFile?.let { mediaFile ->
+        ClipboardHistoryVideoFullscreenDialog(
+            mediaFile = mediaFile,
+            onDismiss = { fullscreenVideoFile = null }
+        )
+    }
+}
+
+@Composable
+private fun ClipboardPreviewFabActionRow(
+    action: ClipboardPreviewFabAction,
+    onSelected: () -> Unit
+) {
+    val containerColor = when {
+        action.destructive -> MaterialTheme.colorScheme.errorContainer
+        action.enabled -> MaterialTheme.colorScheme.surfaceContainerHighest
+        else -> MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f)
+    }
+    val contentColor = when {
+        action.destructive -> MaterialTheme.colorScheme.onErrorContainer
+        action.enabled -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    }
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest
+        ) {
+            Text(
+                text = action.label,
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = containerColor,
+            contentColor = contentColor,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .clickable(enabled = action.enabled, onClick = onSelected)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                val iconModifier = Modifier
+                    .size(22.dp)
+                    .rotate(action.iconRotationDegrees)
+                action.iconRes?.let { iconRes ->
+                    Icon(
+                        painter = painterResource(iconRes),
+                        contentDescription = action.label,
+                        tint = contentColor,
+                        modifier = iconModifier
+                    )
+                } ?: action.imageVector?.let { imageVector ->
+                    Icon(
+                        imageVector = imageVector,
+                        contentDescription = action.label,
+                        tint = contentColor,
+                        modifier = iconModifier
+                    )
+                }
+            }
+        }
+    }
+}
+
+internal enum class ClipboardHistoryContentMode {
+    Clips,
+    Archives
+}
 
 internal enum class ClipboardHistoryFilter(
     val labelRes: Int,
@@ -139,21 +477,15 @@ internal fun shareClipboardMedia(
     entry: ClipboardEntry,
     previewState: ClipboardPreviewState
 ) {
-    val sharingPreviewMedia = entry.backingFile == null &&
-        previewState.showsEmbed &&
-        entry.previewMedia().isNotEmpty()
-    val targetFile = when {
-        entry.backingFile != null -> entry.getFile(context)
-        sharingPreviewMedia -> entry.getPreviewFile(context)
-        else -> null
-    }?.takeIf { it.isFile } ?: return
+    val target = clipboardPreviewShareTarget(context, entry, previewState) ?: return
+    shareMediaFile(context, target.file, target.mimeType)
+}
 
-    val mimeType = when {
-        sharingPreviewMedia -> null
-        else -> entry.mimeTypes.firstOrNull()
-    } ?: targetFile.guessedClipboardMimeType()
-        ?: if(targetFile.isClipboardVideoFile()) "video/*" else "image/*"
-
+internal fun shareMediaFile(
+    context: Context,
+    targetFile: File,
+    mimeType: String
+) {
     val uri = createClipboardContentUri(
         file = targetFile,
         mimeType = mimeType,
@@ -183,9 +515,62 @@ internal fun shouldSkipDeleteConfirmation(
 ): Boolean = skipDeleteConfirmation && entries.isNotEmpty() && entries.all { !it.pinned }
 
 @Composable
+internal fun ClipboardHistoryModeRow(
+    mode: ClipboardHistoryContentMode,
+    clipCount: Int,
+    archiveCount: Int,
+    onModeSelected: (ClipboardHistoryContentMode) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        ClipboardHistoryModeChip(
+            label = stringResource(R.string.clipboard_history_mode_clips, clipCount),
+            selected = mode == ClipboardHistoryContentMode.Clips,
+            onClick = { onModeSelected(ClipboardHistoryContentMode.Clips) },
+            modifier = Modifier.weight(1f)
+        )
+        ClipboardHistoryModeChip(
+            label = stringResource(R.string.clipboard_history_mode_archives, archiveCount),
+            selected = mode == ClipboardHistoryContentMode.Archives,
+            onClick = { onModeSelected(ClipboardHistoryContentMode.Archives) },
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun ClipboardHistoryModeChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if(selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            color = if(selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 internal fun ClipboardHistoryTitle(
     title: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {}
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -208,6 +593,7 @@ internal fun ClipboardHistoryTitle(
                 modifier = Modifier.padding(vertical = 16.dp)
             )
         }
+        actions()
     }
 }
 
@@ -434,94 +820,120 @@ internal fun ClipboardHistoryImagePreviewDialog(
     onDismiss: () -> Unit,
     onTogglePin: () -> Unit,
     onDelete: () -> Unit,
-    onShare: () -> Unit
+    onShare: (File, String) -> Unit
 ) {
     val context = LocalContext.current
-    val mediaFile = remember(entry, previewState, context) {
+    val mediaFiles = remember(entry, previewState, context) {
         when {
-            entry.text == null -> entry.getFile(context)
-            previewState.showsEmbed -> entry.getPreviewFile(context)
-            else -> null
+            entry.text == null -> listOfNotNull(entry.getFile(context))
+            previewState.showsEmbed -> entry.getPreviewFiles(context)
+            else -> emptyList()
         }
     }
-    val isVideo = remember(mediaFile) { mediaFile?.isClipboardVideoFile() == true }
-    val bitmap = rememberClipboardBitmap(
-        imageFile = mediaFile?.takeUnless { isVideo },
-        bitmapOverride = null,
-        preferThumbnail = false
+    val initialPage = entry.previewMetadata?.selectedImageIndex
+        ?.coerceIn(0, (mediaFiles.size - 1).coerceAtLeast(0))
+        ?: 0
+    val mediaItems = remember(mediaFiles) {
+        mediaFiles.mapIndexed { index, file ->
+            ClipboardMediaPreviewItem(file = file, thumbnailLabel = (index + 1).toString())
+        }
+    }
+    var currentPage by remember(mediaItems, initialPage) { mutableStateOf(initialPage) }
+    val currentVideoFile = mediaItems
+        .getOrNull(currentPage)
+        ?.file
+        ?.takeIf { it.isClipboardVideoFile() }
+    val currentShareTarget = remember(entry, previewState, mediaFiles, currentPage) {
+        clipboardPreviewShareTarget(entry, previewState, mediaFiles, currentPage)
+    }
+    val previewActions = listOf(
+        ClipboardPreviewFabAction(
+            label = stringResource(
+                if(entry.pinned) {
+                    R.string.action_clipboard_manager_unpin_item
+                } else {
+                    R.string.action_clipboard_manager_pin_item
+                }
+            ),
+            iconRes = R.drawable.push_pin,
+            iconRotationDegrees = if(entry.pinned) 0f else 45f,
+            onClick = onTogglePin
+        ),
+        ClipboardPreviewFabAction(
+            label = stringResource(R.string.clipboard_history_share_image),
+            imageVector = Icons.AutoMirrored.Filled.Send,
+            onClick = {
+                val shareTarget = currentShareTarget ?: return@ClipboardPreviewFabAction
+                onShare(shareTarget.file, shareTarget.mimeType)
+            }
+        ),
+        ClipboardPreviewFabAction(
+            label = stringResource(R.string.action_clipboard_manager_remove_item),
+            iconRes = R.drawable.trash,
+            destructive = true,
+            onClick = onDelete
+        )
     )
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = Color.Black.copy(alpha = 0.94f)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.action_clipboard_manager_cancel_action_button),
-                            tint = Color.White
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Text(
-                        text = stringResource(R.string.clipboard_history_preview_title),
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    when {
-                        mediaFile != null && isVideo -> ClipboardHistoryVideoPreview(mediaFile)
-                        bitmap != null -> ClipboardHistoryZoomablePreviewImage(bitmap)
-                        previewLoading -> Text(
-                            text = stringResource(R.string.action_clipboard_manager_loading_preview),
-                            color = Color.White
-                        )
-                        else -> Text(
-                            text = stringResource(R.string.clipboard_history_image_preview_unavailable),
-                            color = Color.White
-                        )
-                    }
-                }
-
-                ClipboardHistoryImagePreviewActions(
-                    entry = entry,
-                    onTogglePin = onTogglePin,
-                    onShare = onShare,
-                    onDelete = onDelete
+    ClipboardPreviewOverlayDialog(
+        items = mediaItems,
+        initialPage = initialPage,
+        thumbnailStripEndInset = ClipboardPreviewFabThumbnailEndInset,
+        fabActions = previewActions,
+        onDismiss = onDismiss,
+        onPageChanged = { currentPage = it },
+        placeholder = { _, _ ->
+            if(previewLoading) {
+                Text(
+                    text = stringResource(R.string.action_clipboard_manager_loading_preview),
+                    color = Color.White
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.clipboard_history_image_preview_unavailable),
+                    color = Color.White
                 )
             }
+        },
+        headerContent = { showFullscreen ->
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.action_clipboard_manager_cancel_action_button),
+                    tint = Color.White
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Text(
+                text = stringResource(R.string.clipboard_history_preview_title),
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f)
+            )
+
+            currentVideoFile?.let { videoFile ->
+                IconButton(onClick = { showFullscreen(videoFile) }) {
+                    Icon(
+                        painter = painterResource(R.drawable.maximize),
+                        contentDescription = stringResource(R.string.clipboard_history_video_fullscreen),
+                        tint = Color.White
+                    )
+                }
+            }
         }
-    }
+    )
 }
 
 @Composable
-private fun ClipboardHistoryVideoPreview(mediaFile: File) {
+internal fun ClipboardHistoryVideoPreview(
+    mediaFile: File,
+    modifier: Modifier = Modifier,
+    paused: Boolean = false
+) {
     AndroidView(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier,
         factory = { viewContext ->
             VideoView(viewContext).apply {
                 val mediaController = MediaController(viewContext)
@@ -530,27 +942,245 @@ private fun ClipboardHistoryVideoPreview(mediaFile: File) {
                 setVideoURI(mediaFile.toUri())
                 setOnPreparedListener { player: MediaPlayer ->
                     player.isLooping = true
-                    start()
+                    if(!paused) start()
                 }
             }
         },
         update = { videoView ->
-            if(videoView.tag != mediaFile.absolutePath) {
+            if(paused) {
+                videoView.pause()
+            } else if(videoView.tag != mediaFile.absolutePath) {
                 videoView.tag = mediaFile.absolutePath
                 videoView.setVideoURI(mediaFile.toUri())
                 videoView.start()
             } else if(!videoView.isPlaying) {
                 videoView.start()
             }
+        },
+        onRelease = { videoView ->
+            videoView.stopPlayback()
+            (videoView.parent as? ViewGroup)?.removeView(videoView)
         }
     )
 }
 
 @Composable
-private fun ClipboardHistoryZoomablePreviewImage(bitmap: ImageBitmap) {
+internal fun ClipboardHistoryVideoFullscreenDialog(
+    mediaFile: File,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color.Black
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                ClipboardHistoryVideoPreview(
+                    mediaFile = mediaFile,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.56f),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(16.dp)
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            painter = painterResource(R.drawable.close),
+                            contentDescription = stringResource(R.string.action_clipboard_manager_cancel_action_button),
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ClipboardMediaPreviewPager(
+    items: List<ClipboardMediaPreviewItem>,
+    modifier: Modifier = Modifier,
+    initialPage: Int = 0,
+    fullscreenVideoFile: File? = null,
+    chromeVisible: Boolean = true,
+    thumbnailStripEndInset: Dp = 0.dp,
+    onPageChanged: (Int) -> Unit = {},
+    onMediaTap: () -> Unit = {},
+    placeholder: @Composable (Int, ClipboardMediaPreviewItem?) -> Unit
+) {
+    val pageCount = items.size.coerceAtLeast(1)
+    val pagerState = rememberPagerState(
+        initialPage = initialPage.coerceIn(0, pageCount - 1),
+        pageCount = { pageCount }
+    )
+    val scope = rememberCoroutineScope()
+    var currentPageZoomed by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(pagerState.currentPage) {
+        currentPageZoomed = false
+        onPageChanged(pagerState.currentPage)
+    }
+
+    Box(modifier = modifier) {
+        HorizontalPager(
+            state = pagerState,
+            userScrollEnabled = !currentPageZoomed,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            val item = items.getOrNull(page)
+            val mediaFile = item?.file
+            val isVideo = mediaFile?.isClipboardVideoFile() == true
+            val bitmap = rememberClipboardBitmap(
+                imageFile = mediaFile?.takeUnless { isVideo },
+                bitmapOverride = null,
+                preferThumbnail = false
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if(bitmap == null) {
+                            Modifier.pointerInput(onMediaTap) {
+                                detectTapGestures(onTap = { onMediaTap() })
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    mediaFile != null && isVideo -> ClipboardHistoryVideoPreview(
+                        mediaFile = mediaFile,
+                        modifier = Modifier.fillMaxSize(),
+                        paused = fullscreenVideoFile == mediaFile
+                    )
+                    bitmap != null -> ClipboardHistoryZoomablePreviewImage(
+                        bitmap = bitmap,
+                        onTap = onMediaTap,
+                        onZoomedChange = { zoomed ->
+                            if(page == pagerState.currentPage) {
+                                currentPageZoomed = zoomed
+                            }
+                        },
+                        onRequestPrevious = {
+                            if(pagerState.currentPage > 0) {
+                                scope.launch {
+                                    currentPageZoomed = false
+                                    pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                }
+                            }
+                        },
+                        onRequestNext = {
+                            if(pagerState.currentPage < items.lastIndex) {
+                                scope.launch {
+                                    currentPageZoomed = false
+                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                }
+                            }
+                        }
+                    )
+                    else -> placeholder(page, item)
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = chromeVisible && items.size > 1,
+            enter = slideInVertically { it } + fadeIn(),
+            exit = slideOutVertically { it } + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+        ) {
+            ClipboardMediaPreviewThumbnailStrip(
+                items = items,
+                selectedIndex = pagerState.currentPage,
+                endInset = thumbnailStripEndInset,
+                onSelected = { index ->
+                    scope.launch {
+                        currentPageZoomed = false
+                        pagerState.animateScrollToPage(index)
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ClipboardMediaPreviewThumbnailStrip(
+    items: List<ClipboardMediaPreviewItem>,
+    selectedIndex: Int,
+    endInset: Dp = 0.dp,
+    onSelected: (Int) -> Unit
+) {
+    LazyRow(
+        contentPadding = PaddingValues(end = endInset),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        itemsIndexed(items) { index, item ->
+            val bitmap = rememberClipboardBitmap(
+                imageFile = item.file?.takeUnless { it.isClipboardVideoFile() },
+                bitmapOverride = null,
+                preferThumbnail = true
+            )
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color.White.copy(alpha = 0.10f),
+                border = androidx.compose.foundation.BorderStroke(
+                    width = if(index == selectedIndex) 2.dp else 1.dp,
+                    color = if(index == selectedIndex) Color.White else Color.White.copy(alpha = 0.25f)
+                ),
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onSelected(index) }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if(bitmap != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = bitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Text(
+                            text = item.thumbnailLabel,
+                            color = Color.White.copy(alpha = 0.78f),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ClipboardHistoryZoomablePreviewImage(
+    bitmap: ImageBitmap,
+    onTap: () -> Unit = {},
+    onZoomedChange: (Boolean) -> Unit = {},
+    onRequestPrevious: () -> Unit = {},
+    onRequestNext: () -> Unit = {}
+) {
     val imageAspectRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
     var zoom by remember(bitmap) { mutableStateOf(1f) }
     var offset by remember(bitmap) { mutableStateOf(Offset.Zero) }
+    var zoomed by remember(bitmap) { mutableStateOf(false) }
+    var edgeSwipeAccumulatedPx by remember(bitmap) { mutableStateOf(0f) }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -564,125 +1194,96 @@ private fun ClipboardHistoryZoomablePreviewImage(bitmap: ImageBitmap) {
         val widthConstrained = containerWidthPx / imageAspectRatio <= containerHeightPx
         val baseImageWidthPx = if(widthConstrained) containerWidthPx else containerHeightPx * imageAspectRatio
         val baseImageHeightPx = if(widthConstrained) containerWidthPx / imageAspectRatio else containerHeightPx
-
-        fun clampOffset(nextOffset: Offset, nextZoom: Float): Offset {
-            val maxX = ((baseImageWidthPx * nextZoom) - containerWidthPx).coerceAtLeast(0f) / 2f
-            val maxY = ((baseImageHeightPx * nextZoom) - containerHeightPx).coerceAtLeast(0f) / 2f
-            return Offset(
-                x = nextOffset.x.coerceIn(-maxX, maxX),
-                y = nextOffset.y.coerceIn(-maxY, maxY)
-            )
-        }
+        val edgeSwipeThresholdPx = with(density) { ClipboardHistoryPreviewEdgeSwipeThreshold.toPx() }
 
         val baseImageWidth = with(density) { baseImageWidthPx.toDp() }
         val baseImageHeight = with(density) { baseImageHeightPx.toDp() }
 
-        androidx.compose.foundation.Image(
-            bitmap = bitmap,
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
+        Box(
             modifier = Modifier
-                .size(width = baseImageWidth, height = baseImageHeight)
-                .graphicsLayer {
-                    scaleX = zoom
-                    scaleY = zoom
-                    translationX = offset.x
-                    translationY = offset.y
-                }
+                .fillMaxSize()
                 .pointerInput(bitmap, containerWidthPx, containerHeightPx) {
-                    detectTransformGestures { _, pan, zoomChange, _ ->
-                        val nextZoom = (zoom * zoomChange).coerceIn(1f, 4f)
-                        zoom = nextZoom
-                        offset = if(nextZoom == 1f) {
-                            Offset.Zero
-                        } else {
-                            clampOffset(offset + pan, nextZoom)
+                awaitPointerEventScope {
+                    while(true) {
+                        val event = awaitPointerEvent()
+                        val pressedCount = event.changes.count { it.pressed }
+                        val shouldHandleGesture = zoomed || pressedCount > 1
+
+                        if(shouldHandleGesture) {
+                            val zoomChange = event.calculateZoom()
+                            val nextZoom = (zoom * zoomChange).coerceIn(1f, 4f)
+                            val nextZoomed = isClipboardHistoryPreviewZoomed(nextZoom)
+                            zoom = nextZoom
+
+                            if(zoomed != nextZoomed) {
+                                zoomed = nextZoomed
+                                onZoomedChange(nextZoomed)
+                            }
+
+                            offset = if(!nextZoomed) {
+                                edgeSwipeAccumulatedPx = 0f
+                                Offset.Zero
+                            } else {
+                                val pan = event.calculatePan()
+                                val maxOffsetX = ((baseImageWidthPx * nextZoom) - containerWidthPx).coerceAtLeast(0f) / 2f
+                                val edgeSwipeProgress = clipboardHistoryPreviewEdgeSwipeProgress(
+                                    offsetX = offset.x,
+                                    panX = pan.x,
+                                    maxOffsetX = maxOffsetX,
+                                    accumulatedPx = edgeSwipeAccumulatedPx,
+                                    thresholdPx = edgeSwipeThresholdPx
+                                )
+                                edgeSwipeAccumulatedPx = edgeSwipeProgress.accumulatedPx
+                                when(edgeSwipeProgress.direction) {
+                                    ClipboardHistoryPreviewEdgeSwipe.Previous -> onRequestPrevious()
+                                    ClipboardHistoryPreviewEdgeSwipe.Next -> onRequestNext()
+                                    null -> {}
+                                }
+                                clampClipboardHistoryPreviewOffset(
+                                    offset = offset + pan,
+                                    zoom = nextZoom,
+                                    baseImageWidthPx = baseImageWidthPx,
+                                    baseImageHeightPx = baseImageHeightPx,
+                                    containerWidthPx = containerWidthPx,
+                                    containerHeightPx = containerHeightPx
+                                )
+                            }
+
+                            event.changes
+                                .filter { it.positionChanged() }
+                                .forEach { it.consume() }
                         }
                     }
                 }
+            }
                 .pointerInput(bitmap) {
-                    detectTapGestures(onDoubleTap = {
-                        zoom = 1f
-                        offset = Offset.Zero
-                    })
-                }
-        )
-    }
-}
-
-@Composable
-private fun ClipboardHistoryImagePreviewActions(
-    entry: ClipboardEntry,
-    onTogglePin: () -> Unit,
-    onShare: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val pinContainerColor = if(entry.pinned) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        Color.White.copy(alpha = 0.08f)
-    }
-    val pinContentColor = if(entry.pinned) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        Color.White.copy(alpha = 0.72f)
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        OutlinedButton(
-            onClick = onTogglePin,
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 52.dp),
-            shape = RoundedCornerShape(18.dp),
-            colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = pinContainerColor,
-                contentColor = pinContentColor
-            )
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.push_pin),
-                contentDescription = if(entry.pinned) {
-                    stringResource(R.string.action_clipboard_manager_unpin_item)
-                } else {
-                    stringResource(R.string.action_clipboard_manager_pin_item)
+                    detectTapGestures(
+                        onTap = { onTap() },
+                        onDoubleTap = {
+                            zoom = 1f
+                            offset = Offset.Zero
+                            edgeSwipeAccumulatedPx = 0f
+                            if(zoomed) {
+                                zoomed = false
+                                onZoomedChange(false)
+                            }
+                        }
+                    )
                 },
-                modifier = Modifier.rotate(if(entry.pinned) 0f else 45f)
-            )
-        }
-
-        Button(
-            onClick = onShare,
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 52.dp),
-            shape = RoundedCornerShape(18.dp)
+            contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.Send,
-                contentDescription = stringResource(R.string.clipboard_history_share_image)
-            )
-        }
-
-        Button(
-            onClick = onDelete,
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 52.dp),
-            shape = RoundedCornerShape(18.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer
-            )
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.trash),
-                contentDescription = stringResource(R.string.action_clipboard_manager_remove_item)
+            androidx.compose.foundation.Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .size(width = baseImageWidth, height = baseImageHeight)
+                    .graphicsLayer {
+                        scaleX = zoom
+                        scaleY = zoom
+                        translationX = offset.x
+                        translationY = offset.y
+                    }
             )
         }
     }

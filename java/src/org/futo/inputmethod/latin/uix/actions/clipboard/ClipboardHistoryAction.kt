@@ -73,6 +73,13 @@ val ClipboardEmbedDisplayModeSetting = SettingsKey(
     ClipboardEmbedDisplayMode.ShowEmbed.storedValue
 )
 
+internal const val ClipboardArchiveBackfillVersion = 1
+
+val ClipboardArchiveBackfillCompletedVersion = SettingsKey(
+    intPreferencesKey("clipboard_archive_backfill_completed_version"),
+    0
+)
+
 val ClipboardHistoryAction = Action(
     icon = R.drawable.clipboard_manager,
     name = R.string.action_clipboard_manager_title,
