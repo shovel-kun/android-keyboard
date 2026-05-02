@@ -60,6 +60,12 @@ private data class ClipboardBitmapSource(
     val cacheKey: String
 )
 
+internal sealed class ClipboardBitmapLoadState {
+    data object Loading : ClipboardBitmapLoadState()
+    data object Unavailable : ClipboardBitmapLoadState()
+    data class Loaded(val bitmap: ImageBitmap) : ClipboardBitmapLoadState()
+}
+
 private fun clipboardBitmapSource(
     imageFile: File,
     preferThumbnail: Boolean
@@ -144,6 +150,36 @@ internal fun rememberClipboardBitmap(
         value = withContext(Dispatchers.IO) {
             decodeClipboardBitmap(imageFile, preferThumbnail)
         }
+    }.value
+}
+
+@Composable
+internal fun rememberClipboardBitmapLoadState(
+    imageFile: File?,
+    bitmapOverride: ImageBitmap?,
+    preferThumbnail: Boolean = true
+): ClipboardBitmapLoadState {
+    bitmapOverride?.let { return ClipboardBitmapLoadState.Loaded(it) }
+    if(imageFile == null) return ClipboardBitmapLoadState.Unavailable
+
+    val cachedBitmap = cachedClipboardBitmap(imageFile, preferThumbnail)
+    val source = clipboardBitmapSource(imageFile, preferThumbnail)
+    val requestKey = source?.cacheKey
+        ?: "${imageFile.absolutePath}|missing|thumbnail=$preferThumbnail"
+    val initialState = when {
+        cachedBitmap != null -> ClipboardBitmapLoadState.Loaded(cachedBitmap)
+        source != null -> ClipboardBitmapLoadState.Loading
+        else -> ClipboardBitmapLoadState.Unavailable
+    }
+
+    return produceState<ClipboardBitmapLoadState>(
+        initialValue = initialState,
+        requestKey
+    ) {
+        value = withContext(Dispatchers.IO) {
+            decodeClipboardBitmap(imageFile, preferThumbnail)
+        }?.let(ClipboardBitmapLoadState::Loaded)
+            ?: ClipboardBitmapLoadState.Unavailable
     }.value
 }
 

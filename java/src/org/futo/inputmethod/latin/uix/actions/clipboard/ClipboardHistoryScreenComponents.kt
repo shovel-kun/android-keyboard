@@ -1041,11 +1041,12 @@ internal fun ClipboardMediaPreviewPager(
             val item = items.getOrNull(page)
             val mediaFile = item?.file
             val isVideo = mediaFile?.isClipboardVideoFile() == true
-            val bitmap = rememberClipboardBitmap(
+            val bitmapState = rememberClipboardBitmapLoadState(
                 imageFile = mediaFile?.takeUnless { isVideo },
                 bitmapOverride = null,
                 preferThumbnail = false
             )
+            val bitmap = (bitmapState as? ClipboardBitmapLoadState.Loaded)?.bitmap
 
             Box(
                 modifier = Modifier
@@ -1091,6 +1092,10 @@ internal fun ClipboardMediaPreviewPager(
                                 }
                             }
                         }
+                    )
+                    bitmapState == ClipboardBitmapLoadState.Loading -> Text(
+                        text = stringResource(R.string.action_clipboard_manager_loading_preview),
+                        color = Color.White
                     )
                     else -> placeholder(page, item)
                 }
