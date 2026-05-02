@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -64,6 +65,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.futo.inputmethod.latin.R
@@ -87,33 +89,46 @@ internal fun ClipboardArchiveDownloadsScreen(
     onStop: (ClipboardArchiveDownloadListItem) -> Unit,
     onStopAll: () -> Unit
 ) {
-    val activeItems = items.filter { it.canStop }
-    val retryableItems = items.filter { it.canRetry }
+    val presentation = archiveDownloadPresentation(items)
 
     Column(
         modifier = modifier.padding(horizontal = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        ClipboardArchiveDownloadSummaryPanel(presentation.summary)
+
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedButton(
-                onClick = { onRetryAll(retryableItems) },
-                enabled = retryableItems.isNotEmpty(),
+                onClick = { onRetryAll(presentation.retryableItems) },
+                enabled = presentation.retryableItems.isNotEmpty(),
                 modifier = Modifier.weight(1f)
             ) {
+                Icon(
+                    painter = painterResource(R.drawable.refresh_cw),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Box(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.clipboard_history_downloads_retry_all))
             }
             OutlinedButton(
                 onClick = onStopAll,
-                enabled = activeItems.isNotEmpty(),
+                enabled = presentation.activeItems.isNotEmpty(),
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.error
                 )
             ) {
+                Icon(
+                    painter = painterResource(R.drawable.close),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Box(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.clipboard_history_downloads_stop_all))
             }
         }
@@ -133,23 +148,138 @@ internal fun ClipboardArchiveDownloadsScreen(
                 )
             }
         } else {
+            val activeTitle = stringResource(R.string.clipboard_history_downloads_section_active)
+            val waitingTitle = stringResource(R.string.clipboard_history_downloads_section_waiting)
+            val attentionTitle = stringResource(R.string.clipboard_history_downloads_section_attention)
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(
-                    items = items,
-                    key = { "${it.archiveKey}:${it.sourceIndex}:${it.sourceUrl}" }
-                ) {
-                    ClipboardArchiveDownloadRow(
-                        item = it,
-                        onRetry = { onRetry(it) },
-                        onStop = { onStop(it) }
-                    )
-                }
+                archiveDownloadSection(
+                    title = activeTitle,
+                    items = presentation.groups.active,
+                    onRetry = onRetry,
+                    onStop = onStop
+                )
+                archiveDownloadSection(
+                    title = waitingTitle,
+                    items = presentation.groups.waiting,
+                    onRetry = onRetry,
+                    onStop = onStop
+                )
+                archiveDownloadSection(
+                    title = attentionTitle,
+                    items = presentation.groups.needsAttention,
+                    onRetry = onRetry,
+                    onStop = onStop
+                )
             }
         }
     }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.archiveDownloadSection(
+    title: String,
+    items: List<ClipboardArchiveDownloadListItem>,
+    onRetry: (ClipboardArchiveDownloadListItem) -> Unit,
+    onStop: (ClipboardArchiveDownloadListItem) -> Unit
+) {
+    if(items.isEmpty()) return
+    item(key = "section:$title") {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = when(items.first().status) {
+                ClipboardArchiveDownloadRowStatus.Active -> MaterialTheme.colorScheme.primary
+                ClipboardArchiveDownloadRowStatus.Waiting -> MaterialTheme.colorScheme.tertiary
+                ClipboardArchiveDownloadRowStatus.Failed -> MaterialTheme.colorScheme.error
+            },
+            modifier = Modifier.padding(top = 8.dp)
+        )
+    }
+    items(
+        items = items,
+        key = { "${it.archiveKey}:${it.sourceIndex}:${it.sourceUrl}" }
+    ) {
+        ClipboardArchiveDownloadRow(
+            item = it,
+            onRetry = { onRetry(it) },
+            onStop = { onStop(it) }
+        )
+    }
+}
+
+@Composable
+private fun ClipboardArchiveDownloadSummaryPanel(summary: ClipboardArchiveDownloadSummary) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ClipboardArchiveDownloadSummaryCell(
+                count = summary.activeCount,
+                label = stringResource(R.string.clipboard_history_downloads_summary_active),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            ClipboardArchiveDownloadSummaryDivider()
+            ClipboardArchiveDownloadSummaryCell(
+                count = summary.waitingCount,
+                label = stringResource(R.string.clipboard_history_downloads_summary_waiting),
+                color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.weight(1f)
+            )
+            ClipboardArchiveDownloadSummaryDivider()
+            ClipboardArchiveDownloadSummaryCell(
+                count = summary.retryCount,
+                label = stringResource(R.string.clipboard_history_downloads_summary_retry),
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ClipboardArchiveDownloadSummaryCell(
+    count: Int,
+    label: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.headlineSmall,
+            color = color,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+private fun ClipboardArchiveDownloadSummaryDivider() {
+    Box(
+        modifier = Modifier
+            .height(52.dp)
+            .width(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant)
+    )
 }
 
 @Composable
@@ -165,113 +295,187 @@ private fun ClipboardArchiveDownloadRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = item.providerLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = item.status.labelText(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if(item.status == ClipboardArchiveDownloadRowStatus.Failed) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                )
-            }
-
             Text(
                 text = item.title,
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
             )
-            item.subtitle?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Text(
-                text = stringResource(
-                    R.string.clipboard_history_downloads_media_index,
-                    item.sourceIndex + 1
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            item.failureSummaryLabelRes?.let {
-                Text(
-                    text = stringResource(it),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            item.lastAttemptAtEpochMs?.let {
-                Text(
-                    text = stringResource(R.string.clipboard_history_downloads_last_attempt, it),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            item.retryAvailableAtEpochMs?.let {
-                Text(
-                    text = stringResource(R.string.clipboard_history_downloads_retry_available, it),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            item.progress?.let {
-                Text(
-                    text = archiveDownloadProgressLabel(it),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                ClipboardArchiveDownloadProgressIndicator(it)
-            }
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
-                    onClick = onRetry,
-                    enabled = item.canRetry,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(stringResource(R.string.action_clipboard_manager_retry_preview))
-                }
-                OutlinedButton(
-                    onClick = onStop,
-                    enabled = item.canStop,
+                Column(
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(stringResource(R.string.clipboard_history_downloads_stop))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ClipboardArchiveDownloadProviderIcon(item.provider, item.providerLabel)
+                        Text(
+                            text = item.subtitle ?: item.sourceUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.image),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = stringResource(
+                                R.string.clipboard_history_downloads_media_position,
+                                item.sourceIndex + 1,
+                                item.mediaCount
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        ClipboardArchiveDownloadStatusPill(item)
+                    }
+                    item.lastAttemptAtEpochMs?.let {
+                        Text(
+                            text = stringResource(
+                                R.string.clipboard_history_downloads_last_attempt,
+                                it.archiveReadableDateTime()
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    item.retryAvailableAtEpochMs?.let {
+                        Text(
+                            text = stringResource(
+                                R.string.clipboard_history_downloads_retry_available,
+                                it.archiveReadableDateTime()
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    item.progress?.let {
+                        Text(
+                            text = archiveDownloadProgressLabel(it),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        ClipboardArchiveDownloadProgressIndicator(it)
+                    }
                 }
+                ClipboardArchiveDownloadRowAction(
+                    item = item,
+                    onRetry = onRetry,
+                    onStop = onStop
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun ClipboardArchiveDownloadStatusPill(item: ClipboardArchiveDownloadListItem) {
+    val foreground = when(item.status) {
+        ClipboardArchiveDownloadRowStatus.Active -> MaterialTheme.colorScheme.primary
+        ClipboardArchiveDownloadRowStatus.Waiting -> MaterialTheme.colorScheme.tertiary
+        ClipboardArchiveDownloadRowStatus.Failed -> MaterialTheme.colorScheme.error
+    }
+    val label = item.failureSummaryLabelRes
+        ?.takeIf { item.status == ClipboardArchiveDownloadRowStatus.Failed }
+        ?.let { stringResource(it) }
+        ?: item.status.labelText()
+
+    Surface(
+        color = foreground.copy(alpha = 0.16f),
+        contentColor = foreground,
+        border = BorderStroke(1.dp, foreground.copy(alpha = 0.45f)),
+        shape = CircleShape
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun ClipboardArchiveDownloadProviderIcon(
+    provider: ClipboardPreviewProvider,
+    providerLabel: String
+) {
+    Image(
+        painter = painterResource(
+            when(provider) {
+                ClipboardPreviewProvider.PIXIV -> R.drawable.provider_pixiv
+                ClipboardPreviewProvider.TWITTER -> R.drawable.provider_x
+            }
+        ),
+        contentDescription = providerLabel,
+        colorFilter = null,
+        modifier = Modifier.size(22.dp)
+    )
+}
+
+@Composable
+private fun ClipboardArchiveDownloadRowAction(
+    item: ClipboardArchiveDownloadListItem,
+    onRetry: () -> Unit,
+    onStop: () -> Unit
+) {
+    val isActive = item.canStop
+    val enabled = if(isActive) item.canStop else item.canRetry
+    val color = if(isActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Surface(
+        color = Color.Transparent,
+        contentColor = color,
+        border = BorderStroke(1.dp, color.copy(alpha = if(enabled) 0.7f else 0.3f)),
+        shape = CircleShape,
+        modifier = Modifier.size(46.dp)
+    ) {
+        IconButton(
+            onClick = if(isActive) onStop else onRetry,
+            enabled = enabled,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Icon(
+                painter = painterResource(if(isActive) R.drawable.close else R.drawable.refresh_cw),
+                contentDescription = stringResource(
+                    if(isActive) {
+                        R.string.clipboard_history_downloads_stop
+                    } else {
+                        R.string.action_clipboard_manager_retry_preview
+                    }
+                ),
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

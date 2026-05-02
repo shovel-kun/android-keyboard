@@ -608,6 +608,7 @@ private fun ClipboardHistoryModeChip(
 internal fun ClipboardHistoryTitle(
     title: String,
     onBack: () -> Unit,
+    badgeCount: Int? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     Row(
@@ -630,6 +631,20 @@ internal fun ClipboardHistoryTitle(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(vertical = 16.dp)
             )
+            badgeCount?.let {
+                Spacer(modifier = Modifier.width(10.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shape = CircleShape
+                ) {
+                    Text(
+                        text = it.toString(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
         }
         actions()
     }

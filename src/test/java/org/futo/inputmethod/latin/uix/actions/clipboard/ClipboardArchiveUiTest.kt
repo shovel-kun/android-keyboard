@@ -264,6 +264,111 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun archiveDownloadPresentation_matchDownloadScreenSections() {
+        val active = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/active.jpg",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Pending
+                )
+            )
+        ).copy(key = "pixiv:active")
+        val waiting = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/waiting.jpg",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Pending
+                )
+            )
+        ).copy(key = "pixiv:waiting")
+        val failed = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/failed.jpg",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Failed
+                )
+            )
+        ).copy(key = "pixiv:failed")
+        val missing = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/missing.jpg",
+                    sourceIndex = 0,
+                    fileName = "missing.jpg",
+                    status = ClipboardArchiveMediaStatus.Saved
+                )
+            )
+        ).copy(key = "pixiv:missing")
+        val tooLarge = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/large.jpg",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.SkippedTooLarge
+                )
+            )
+        ).copy(key = "pixiv:large")
+        val cooldownBlocked = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/cooldown.jpg",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Failed,
+                    failureDetail = "HTTP 429 Too Many Requests"
+                )
+            )
+        ).copy(
+            key = "twitter:cooldown",
+            provider = ClipboardPreviewProvider.TWITTER
+        )
+        val progress = ClipboardArchiveDownloadProgress(
+            archiveKey = active.key,
+            sourceUrl = "https://img.example/active.jpg",
+            sourceIndex = 0,
+            completedBytes = 50L,
+            totalBytes = 100L,
+            savedCount = 0,
+            expectedCount = 1
+        )
+
+        val items = archiveDownloadItems(
+            archives = listOf(active, waiting, failed, missing, tooLarge, cooldownBlocked),
+            progressByArchiveKey = mapOf(active.key to progress),
+            loadingArchiveKeys = setOf(active.key),
+            cooldownsByProvider = mapOf(
+                ClipboardPreviewProvider.TWITTER to ClipboardPreviewProviderCooldown(
+                    provider = ClipboardPreviewProvider.TWITTER,
+                    retryAfterEpochMs = 123_456L,
+                    detail = "rate limited"
+                )
+            ),
+            existingArchiveFileNames = emptySet()
+        )
+        val presentation = archiveDownloadPresentation(items)
+        val summary = presentation.summary
+        val groups = presentation.groups
+
+        assertEquals(1, summary.activeCount)
+        assertEquals(1, summary.waitingCount)
+        assertEquals(4, summary.retryCount)
+        assertEquals(
+            setOf(waiting.key, failed.key, missing.key, tooLarge.key),
+            presentation.retryableItems.map { it.archiveKey }.toSet()
+        )
+        assertEquals(listOf(active.key), presentation.activeItems.map { it.archiveKey })
+        assertEquals(listOf(active.key), groups.active.map { it.archiveKey })
+        assertEquals(listOf(waiting.key), groups.waiting.map { it.archiveKey })
+        assertEquals(
+            setOf(failed.key, missing.key, tooLarge.key, cooldownBlocked.key),
+            groups.needsAttention.map { it.archiveKey }.toSet()
+        )
+        assertFalse(groups.needsAttention.first { it.archiveKey == cooldownBlocked.key }.canRetry)
+    }
+
+    @Test
     fun archiveDownloadItems_ignoresCurrentEmptyArchive() {
         val archive = sampleArchive(media = emptyList())
 

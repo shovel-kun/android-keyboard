@@ -50,6 +50,8 @@ internal data class ClipboardArchiveDownloadListItem(
     val archiveKey: String,
     val sourceUrl: String,
     val sourceIndex: Int,
+    val mediaCount: Int,
+    val provider: ClipboardPreviewProvider,
     val providerLabel: String,
     val title: String,
     val subtitle: String?,
@@ -61,6 +63,58 @@ internal data class ClipboardArchiveDownloadListItem(
     val canStop: Boolean,
     val canRetry: Boolean
 )
+
+internal data class ClipboardArchiveDownloadSummary(
+    val activeCount: Int,
+    val waitingCount: Int,
+    val retryCount: Int
+)
+
+internal data class ClipboardArchiveDownloadGroups(
+    val active: List<ClipboardArchiveDownloadListItem>,
+    val waiting: List<ClipboardArchiveDownloadListItem>,
+    val needsAttention: List<ClipboardArchiveDownloadListItem>
+)
+
+internal data class ClipboardArchiveDownloadPresentation(
+    val summary: ClipboardArchiveDownloadSummary,
+    val groups: ClipboardArchiveDownloadGroups,
+    val retryableItems: List<ClipboardArchiveDownloadListItem>,
+    val activeItems: List<ClipboardArchiveDownloadListItem>
+)
+
+internal fun archiveDownloadPresentation(items: List<ClipboardArchiveDownloadListItem>): ClipboardArchiveDownloadPresentation {
+    val active = mutableListOf<ClipboardArchiveDownloadListItem>()
+    val waiting = mutableListOf<ClipboardArchiveDownloadListItem>()
+    val needsAttention = mutableListOf<ClipboardArchiveDownloadListItem>()
+    val retryable = mutableListOf<ClipboardArchiveDownloadListItem>()
+    val stoppable = mutableListOf<ClipboardArchiveDownloadListItem>()
+
+    items.forEach { item ->
+        when(item.status) {
+            ClipboardArchiveDownloadRowStatus.Active -> active.add(item)
+            ClipboardArchiveDownloadRowStatus.Waiting -> waiting.add(item)
+            ClipboardArchiveDownloadRowStatus.Failed -> needsAttention.add(item)
+        }
+        if(item.canRetry) retryable.add(item)
+        if(item.canStop) stoppable.add(item)
+    }
+
+    return ClipboardArchiveDownloadPresentation(
+        summary = ClipboardArchiveDownloadSummary(
+            activeCount = active.size,
+            waitingCount = waiting.size,
+            retryCount = needsAttention.size
+        ),
+        groups = ClipboardArchiveDownloadGroups(
+            active = active,
+            waiting = waiting,
+            needsAttention = needsAttention
+        ),
+        retryableItems = retryable,
+        activeItems = stoppable
+    )
+}
 
 internal fun sortedClipboardArchives(archives: Collection<ClipboardLinkArchive>): List<ClipboardLinkArchive> =
     archives.sortedWith(
@@ -120,6 +174,8 @@ internal fun archiveDownloadItems(
                     archiveKey = archive.key,
                     sourceUrl = media.sourceUrl,
                     sourceIndex = media.sourceIndex,
+                    mediaCount = archive.media.size,
+                    provider = archive.provider,
                     providerLabel = archive.providerLabel(),
                     title = archive.displayTitle(),
                     subtitle = archive.displaySubtitle() ?: archive.sourceUrl,
@@ -315,7 +371,7 @@ private fun ClipboardLinkArchive.mediaDetailsRows(): List<ClipboardArchiveDetail
 }
 
 internal fun Long.archiveReadableDateTime(): String {
-    val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.getDefault())
+    val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
     return formatter.format(Date(this))
 }
 

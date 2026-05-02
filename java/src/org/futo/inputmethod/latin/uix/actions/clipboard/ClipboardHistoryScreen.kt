@@ -251,6 +251,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                 context.getString(R.string.typing_settings_enable_clipboard_history)
             },
             onBack = ::handleBack,
+            badgeCount = archiveDownloadItems.size.takeIf { downloadsVisible },
             actions = {
                 if(!selectionMode && !downloadsVisible && uiState.historyEnabled && uiState.historyVisible) {
                     IconButton(onClick = { downloadsVisible = true }) {

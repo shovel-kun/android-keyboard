@@ -451,7 +451,8 @@ private fun reduceImportedArchive(
     archive: ClipboardLinkArchive?,
     incoming: ClipboardLinkArchive
 ): ClipboardLinkArchive {
-    val existing = archive ?: return incoming.copy(media = normalizeArchiveMedia(incoming.media))
+    val normalizedIncoming = incoming.copy(media = normalizeArchiveMedia(incoming.media))
+    val existing = archive ?: return normalizedIncoming.withLegacyRetryablePlaceholderIfEmpty()
     return existing.copy(
         sourceUrl = existing.sourceUrl.ifBlank { incoming.sourceUrl },
         sourceId = existing.sourceId ?: incoming.sourceId,
