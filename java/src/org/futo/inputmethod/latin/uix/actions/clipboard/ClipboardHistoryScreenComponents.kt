@@ -92,6 +92,7 @@ private const val ClipboardHistoryPreviewZoomedThreshold = 1.01f
 private const val ClipboardHistoryPreviewEdgeEpsilonPx = 0.5f
 private val ClipboardHistoryPreviewEdgeSwipeThreshold = 48.dp
 internal val ClipboardPreviewFabThumbnailEndInset = 96.dp
+private val ClipboardMediaPreviewThumbnailSize = 64.dp
 
 internal enum class ClipboardHistoryPreviewEdgeSwipe {
     Previous,
@@ -275,6 +276,8 @@ internal fun ClipboardPreviewOverlayDialog(
 ) {
     var fullscreenVideoFile by remember { mutableStateOf<File?>(null) }
     var chromeVisible by remember { mutableStateOf(true) }
+    val density = LocalDensity.current
+    val fabSlideDistancePx = with(density) { ClipboardMediaPreviewThumbnailSize.roundToPx() }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -322,8 +325,8 @@ internal fun ClipboardPreviewOverlayDialog(
 
                 AnimatedVisibility(
                     visible = chromeVisible,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = slideInVertically { fabSlideDistancePx } + fadeIn(),
+                    exit = slideOutVertically { fabSlideDistancePx } + fadeOut(),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     ClipboardPreviewActionFabMenu(
@@ -1143,7 +1146,7 @@ private fun ClipboardMediaPreviewThumbnailStrip(
                     color = if(index == selectedIndex) Color.White else Color.White.copy(alpha = 0.25f)
                 ),
                 modifier = Modifier
-                    .size(64.dp)
+                    .size(ClipboardMediaPreviewThumbnailSize)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable { onSelected(index) }
             ) {
