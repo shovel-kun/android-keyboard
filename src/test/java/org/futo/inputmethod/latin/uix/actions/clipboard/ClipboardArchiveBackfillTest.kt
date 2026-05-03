@@ -222,7 +222,7 @@ class ClipboardArchiveBackfillTest {
                 entry = entry,
                 metadata = metadata,
                 clipboardDir = clipboardDir,
-                archiveDir = archiveDir,
+                legacyArchiveDir = archiveDir,
                 now = 20L
             )
 
@@ -252,7 +252,7 @@ class ClipboardArchiveBackfillTest {
                 entry = entry,
                 metadata = metadata,
                 clipboardDir = clipboardDir,
-                archiveDir = archiveDir,
+                legacyArchiveDir = archiveDir,
                 now = 20L
             )
             val archive = newFallbackArchiveFromEntry(
@@ -266,8 +266,8 @@ class ClipboardArchiveBackfillTest {
             val reloaded = decodeClipboardArchives(encoded)
             val reconciled = reconcileClipboardArchivesWithStorage(
                 archives = reloaded,
-                archiveDir = archiveDir,
                 clipboardDir = clipboardDir,
+                legacyArchiveDir = archiveDir,
                 now = 40L
             )
 
@@ -298,7 +298,7 @@ class ClipboardArchiveBackfillTest {
                     entry = entry,
                     metadata = metadata,
                     clipboardDir = clipboardDir,
-                    archiveDir = archiveDir,
+                    legacyArchiveDir = archiveDir,
                     now = 20L
                 ),
                 now = 30L
@@ -308,8 +308,8 @@ class ClipboardArchiveBackfillTest {
 
             val reconciled = reconcileClipboardArchivesWithStorage(
                 archives = listOf(archive),
-                archiveDir = archiveDir,
                 clipboardDir = clipboardDir,
+                legacyArchiveDir = archiveDir,
                 now = 40L
             )
 

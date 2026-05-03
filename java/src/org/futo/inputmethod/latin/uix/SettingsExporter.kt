@@ -719,13 +719,12 @@ object SettingsExporter {
         copyImportedClipboardFiles(extracted.archiveFilesDir, context.clipboardDir)
         val reconciled = reconcileClipboardImportResult(
             clipboardDir = context.clipboardDir,
-            archiveDir = context.clipboardArchiveDir,
             entries = extracted.entries,
             archiveReferencedFileNames = referencedClipboardArchiveFileNames(extracted.archives)
         )
         val reconciledArchives = reconcileClipboardArchiveImportResult(
             clipboardDir = context.clipboardDir,
-            archiveDir = context.clipboardArchiveDir,
+            legacyArchiveDir = context.clipboardArchiveDir,
             archives = extracted.archives
         )
         clipboardFile.writeText(encodeClipboardEntries(reconciled))
@@ -750,13 +749,12 @@ object SettingsExporter {
         val mergedArchives = mergeClipboardArchives(currentArchives, extracted.archives)
         val reconciled = reconcileClipboardImportResult(
             clipboardDir = context.clipboardDir,
-            archiveDir = context.clipboardArchiveDir,
             entries = mergedEntries,
             archiveReferencedFileNames = referencedClipboardArchiveFileNames(mergedArchives)
         )
         val reconciledArchives = reconcileClipboardArchiveImportResult(
             clipboardDir = context.clipboardDir,
-            archiveDir = context.clipboardArchiveDir,
+            legacyArchiveDir = context.clipboardArchiveDir,
             archives = mergedArchives
         )
         context.clipboardFile.writeText(encodeClipboardEntries(reconciled))
@@ -804,11 +802,10 @@ object SettingsExporter {
 
     private fun reconcileClipboardImportResult(
         clipboardDir: File,
-        archiveDir: File,
         entries: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry>,
         archiveReferencedFileNames: Set<String> = emptySet()
     ): List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry> {
-        val reconciledEntries = reconcileClipboardEntriesWithStorage(entries, clipboardDir, archiveDir)
+        val reconciledEntries = reconcileClipboardEntriesWithStorage(entries, clipboardDir)
         val stillReferenced = referencedClipboardFileNames(reconciledEntries) + archiveReferencedFileNames
 
         clipboardDir.listFiles()?.forEach { file ->
@@ -822,13 +819,17 @@ object SettingsExporter {
 
     private fun reconcileClipboardArchiveImportResult(
         clipboardDir: File,
-        archiveDir: File,
+        legacyArchiveDir: File,
         archives: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive>
     ): List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive> {
-        val reconciledArchives = reconcileClipboardArchivesWithStorage(archives, archiveDir, clipboardDir)
+        val reconciledArchives = reconcileClipboardArchivesWithStorage(
+            archives = archives,
+            clipboardDir = clipboardDir,
+            legacyArchiveDir = legacyArchiveDir
+        )
         val stillReferenced = referencedClipboardArchiveFileNames(reconciledArchives)
 
-        archiveDir.listFiles()?.forEach { file ->
+        legacyArchiveDir.listFiles()?.forEach { file ->
             if(file.name !in stillReferenced) {
                 file.delete()
             }

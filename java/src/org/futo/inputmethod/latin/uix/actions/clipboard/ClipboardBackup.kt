@@ -63,17 +63,16 @@ fun referencedClipboardFileNames(entries: List<ClipboardEntry>): Set<String> =
 
 fun reconcileClipboardEntriesWithStorage(
     entries: List<ClipboardEntry>,
-    clipboardDir: File,
-    archiveDir: File? = null
+    clipboardDir: File
 ): List<ClipboardEntry> {
     val deduplicated = LinkedHashSet<ClipboardEntry>()
 
     return entries.mapNotNull { entry ->
         if(entry.backingFile != null && File(clipboardDir, entry.backingFile).isFile != true) {
             null
-        } else if(entry.previewMedia().any { !previewMediaFileExists(clipboardDir, archiveDir, it.fileName) }) {
+        } else if(entry.previewMedia().any { !previewMediaFileExists(clipboardDir, it.fileName) }) {
             val retainedPreviewMedia = entry.previewMedia()
-                .filter { previewMediaFileExists(clipboardDir, archiveDir, it.fileName) }
+                .filter { previewMediaFileExists(clipboardDir, it.fileName) }
             entry.copy(
                 previewImageFile = null,
                 previewMediaFiles = retainedPreviewMedia,
@@ -93,9 +92,8 @@ fun reconcileClipboardEntriesWithStorage(
     }.filter { deduplicated.add(it) }
 }
 
-private fun previewMediaFileExists(clipboardDir: File, archiveDir: File?, fileName: String): Boolean =
-    File(clipboardDir, fileName).isFile == true ||
-        archiveDir?.let { File(it, fileName).isFile == true } == true
+private fun previewMediaFileExists(clipboardDir: File, fileName: String): Boolean =
+    File(clipboardDir, fileName).isFile == true
 
 fun mergeClipboardEntries(
     currentEntries: List<ClipboardEntry>,

@@ -227,18 +227,10 @@ fun ClipboardLinkArchive.withLegacyRetryablePlaceholderIfEmpty(): ClipboardLinkA
     }
 
 fun ClipboardLinkArchive.withMissingArchiveFilesMarked(
-    archiveDir: File,
-    now: Long = System.currentTimeMillis()
-): ClipboardLinkArchive {
-    return withMissingArchiveFilesMarked(existingArchiveMediaFileNames(archiveDir), now)
-}
-
-fun ClipboardLinkArchive.withMissingArchiveFilesMarked(
-    archiveDir: File,
     clipboardDir: File,
     now: Long = System.currentTimeMillis()
 ): ClipboardLinkArchive {
-    return withMissingArchiveFilesMarked(existingArchiveMediaFileNames(archiveDir, clipboardDir), now)
+    return withMissingArchiveFilesMarked(existingClipboardMediaFileNames(clipboardDir), now)
 }
 
 fun ClipboardLinkArchive.withMissingArchiveFilesMarked(
@@ -257,8 +249,8 @@ fun referencedClipboardArchiveFileNames(archives: Collection<ClipboardLinkArchiv
         .flatMap { listOf(it, ClipboardUtil.thumbnailForName(it)) }
         .toSet()
 
-fun existingArchiveMediaFileNames(archiveDir: File, clipboardDir: File? = null): Set<String> =
-    listOfNotNull(archiveDir, clipboardDir)
+fun existingClipboardMediaFileNames(clipboardDir: File, legacyArchiveDir: File? = null): Set<String> =
+    listOfNotNull(clipboardDir, legacyArchiveDir)
         .flatMap { dir ->
             dir.listFiles()
                 ?.filter { it.isFile }
@@ -267,17 +259,24 @@ fun existingArchiveMediaFileNames(archiveDir: File, clipboardDir: File? = null):
         }
         .toSet()
 
-fun archiveMediaFile(archiveDir: File, clipboardDir: File, fileName: String): File? =
-    listOf(File(clipboardDir, fileName), File(archiveDir, fileName))
+fun clipboardMediaFile(clipboardDir: File, fileName: String): File? =
+    File(clipboardDir, fileName).takeIf { it.isFile }
+
+fun legacyAwareClipboardMediaFile(
+    clipboardDir: File,
+    legacyArchiveDir: File,
+    fileName: String
+): File? =
+    listOf(File(clipboardDir, fileName), File(legacyArchiveDir, fileName))
         .firstOrNull { it.isFile }
 
 fun migrateLegacyArchiveMediaFiles(
-    archiveDir: File,
+    legacyArchiveDir: File,
     clipboardDir: File,
     referencedFileNames: Set<String>
 ) {
     clipboardDir.mkdirs()
-    archiveDir.listFiles()?.forEach { legacyFile ->
+    legacyArchiveDir.listFiles()?.forEach { legacyFile ->
         if(!legacyFile.isFile) return@forEach
 
         val destination = File(clipboardDir, legacyFile.name)
@@ -286,16 +285,16 @@ fun migrateLegacyArchiveMediaFiles(
         }
         legacyFile.delete()
     }
-    archiveDir.delete()
+    legacyArchiveDir.delete()
 }
 
 fun reconcileClipboardArchivesWithStorage(
     archives: Collection<ClipboardLinkArchive>,
-    archiveDir: File,
-    clipboardDir: File? = null,
+    clipboardDir: File,
+    legacyArchiveDir: File? = null,
     now: Long = System.currentTimeMillis()
 ): List<ClipboardLinkArchive> {
-    val existingFileNames = existingArchiveMediaFileNames(archiveDir, clipboardDir)
+    val existingFileNames = existingClipboardMediaFileNames(clipboardDir, legacyArchiveDir)
     return archives.mapNotNull {
         reduceArchive(it, ClipboardArchiveEvent.DiskReconciled(existingFileNames, now))
     }

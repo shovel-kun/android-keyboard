@@ -167,8 +167,7 @@ fun ClipboardEntry.getPreviewFiles(context: Context): List<File> =
     previewMediaFileNames().map { previewMediaFile(context, it) }
 
 private fun previewMediaFile(context: Context, fileName: String): File {
-    val clipboardFile = File(context.clipboardDir, fileName)
-    return if(clipboardFile.isFile) clipboardFile else File(context.clipboardArchiveDir, fileName)
+    return File(context.clipboardDir, fileName)
 }
 
 fun ClipboardEntry.previewMedia(): List<ClipboardPreviewMedia> =

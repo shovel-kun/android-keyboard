@@ -74,9 +74,9 @@ class ClipboardArchiveUiTest {
 
     @Test
     fun galleryItems_preserveExpectedOrderAndPlaceholders() {
-        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
         try {
-            File(archiveDir, "one.jpg").writeText("image")
+            File(clipboardDir, "one.jpg").writeText("image")
             val archive = sampleArchive(
                 media = listOf(
                     ClipboardArchiveMedia(
@@ -93,20 +93,19 @@ class ClipboardArchiveUiTest {
                 )
             )
 
-            val items = archive.galleryItems(archiveDir)
+            val items = archive.galleryItems(clipboardDir)
 
             assertEquals(listOf(0, 1), items.map { it.media.sourceIndex })
             assertTrue(items.first().isShareable)
             assertFalse(items.last().isShareable)
             assertEquals(ClipboardArchiveDisplayStatus.Retry, items.last().displayStatus)
         } finally {
-            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
         }
     }
 
     @Test
     fun galleryItems_resolveSharedClipboardMedia() {
-        val archiveDir = createTempDirectory().toFile()
         val clipboardDir = createTempDirectory().toFile()
         try {
             val sharedFile = File(clipboardDir, "shared.jpg")
@@ -122,13 +121,12 @@ class ClipboardArchiveUiTest {
                 )
             )
 
-            val item = archive.galleryItems(archiveDir, clipboardDir).single()
+            val item = archive.galleryItems(clipboardDir).single()
 
             assertEquals(sharedFile, item.file)
             assertTrue(item.isShareable)
             assertEquals(ClipboardArchiveDisplayStatus.Complete, item.displayStatus)
         } finally {
-            archiveDir.deleteRecursively()
             clipboardDir.deleteRecursively()
         }
     }
@@ -555,7 +553,7 @@ class ClipboardArchiveUiTest {
 
     @Test
     fun savedMediaMissingOnDiskAppearsRetryableInGalleryAndDownloads() {
-        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
         try {
             val archive = sampleArchive(
                 media = listOf(
@@ -568,12 +566,12 @@ class ClipboardArchiveUiTest {
                 )
             )
 
-            val galleryItem = archive.galleryItems(archiveDir).single()
+            val galleryItem = archive.galleryItems(clipboardDir).single()
             val downloadItem = archiveDownloadItems(
                 archives = listOf(archive),
                 progressByArchiveKey = emptyMap(),
                 loadingArchiveKeys = emptySet(),
-                archiveDir = archiveDir
+                clipboardDir = clipboardDir
             ).single()
 
             assertEquals(ClipboardArchiveMediaStatus.Missing, galleryItem.media.status)
@@ -583,15 +581,15 @@ class ClipboardArchiveUiTest {
             assertEquals(R.string.clipboard_history_archive_failure_file_missing, downloadItem.failureSummaryLabelRes)
             assertTrue(downloadItem.canRetry)
         } finally {
-            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
         }
     }
 
     @Test
     fun savedMediaPresentOnDiskStaysOutOfDownloads() {
-        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
         try {
-            File(archiveDir, "complete.jpg").writeText("image")
+            File(clipboardDir, "complete.jpg").writeText("image")
             val archive = sampleArchive(
                 media = listOf(
                     ClipboardArchiveMedia(
@@ -607,12 +605,12 @@ class ClipboardArchiveUiTest {
                 archives = listOf(archive),
                 progressByArchiveKey = emptyMap(),
                 loadingArchiveKeys = emptySet(),
-                archiveDir = archiveDir
+                clipboardDir = clipboardDir
             )
 
             assertEquals(emptyList<ClipboardArchiveDownloadListItem>(), items)
         } finally {
-            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
         }
     }
 

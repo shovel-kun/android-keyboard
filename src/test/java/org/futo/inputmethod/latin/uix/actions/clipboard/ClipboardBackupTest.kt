@@ -148,7 +148,7 @@ class ClipboardBackupTest {
     }
 
     @Test
-    fun reconcileClipboardEntriesWithStorage_retainsArchiveBackedPreviewMedia() {
+    fun reconcileClipboardEntriesWithStorage_dropsLegacyArchiveBackedPreviewMedia() {
         val clipboardDir = createTempDirectory().toFile()
         val archiveDir = createTempDirectory().toFile()
         try {
@@ -165,11 +165,10 @@ class ClipboardBackupTest {
                         previewFetchStatus = ClipboardPreviewFetchStatus.Success
                     )
                 ),
-                clipboardDir = clipboardDir,
-                archiveDir = archiveDir
+                clipboardDir = clipboardDir
             )
 
-            assertEquals(listOf("archived.jpg"), reconciled.single().previewMediaFileNames())
+            assertTrue(reconciled.single().previewMediaFileNames().isEmpty())
         } finally {
             clipboardDir.deleteRecursively()
             archiveDir.deleteRecursively()
@@ -485,7 +484,7 @@ class ClipboardBackupTest {
                         )
                     )
                 ),
-                archiveDir = dir,
+                clipboardDir = dir,
                 now = 10L
             )
 
@@ -517,8 +516,8 @@ class ClipboardBackupTest {
                         )
                     )
                 ),
-                archiveDir = archiveDir,
                 clipboardDir = clipboardDir,
+                legacyArchiveDir = archiveDir,
                 now = 10L
             )
 
@@ -532,7 +531,7 @@ class ClipboardBackupTest {
     }
 
     @Test
-    fun archiveMediaFile_prefersUnifiedClipboardStoreWhenBothCopiesExist() {
+    fun legacyAwareClipboardMediaFile_prefersClipboardStoreWhenBothCopiesExist() {
         val archiveDir = createTempDirectory().toFile()
         val clipboardDir = createTempDirectory().toFile()
         try {
@@ -540,7 +539,14 @@ class ClipboardBackupTest {
             val clipboardFile = File(clipboardDir, "shared.jpg")
             clipboardFile.writeText("clipboard copy")
 
-            assertEquals(clipboardFile, archiveMediaFile(archiveDir, clipboardDir, "shared.jpg"))
+            assertEquals(
+                clipboardFile,
+                legacyAwareClipboardMediaFile(
+                    clipboardDir = clipboardDir,
+                    legacyArchiveDir = archiveDir,
+                    fileName = "shared.jpg"
+                )
+            )
         } finally {
             archiveDir.deleteRecursively()
             clipboardDir.deleteRecursively()
@@ -557,7 +563,7 @@ class ClipboardBackupTest {
             File(archiveDir, "unreferenced.jpg").writeText("unused")
 
             migrateLegacyArchiveMediaFiles(
-                archiveDir = archiveDir,
+                legacyArchiveDir = archiveDir,
                 clipboardDir = clipboardDir,
                 referencedFileNames = setOf("saved.jpg", ClipboardUtil.thumbnailForName("saved.jpg"))
             )
@@ -582,7 +588,7 @@ class ClipboardBackupTest {
             clipboardFile.writeText("clipboard bytes")
 
             migrateLegacyArchiveMediaFiles(
-                archiveDir = archiveDir,
+                legacyArchiveDir = archiveDir,
                 clipboardDir = clipboardDir,
                 referencedFileNames = setOf("saved.jpg")
             )
@@ -630,7 +636,7 @@ class ClipboardBackupTest {
         try {
             val reconciled = reconcileClipboardArchivesWithStorage(
                 archives = listOf(sampleArchive(media = emptyList())),
-                archiveDir = dir,
+                clipboardDir = dir,
                 now = 10L
             )
 

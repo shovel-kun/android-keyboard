@@ -169,7 +169,7 @@ internal fun archiveDownloadItems(
     loadingArchiveKeys: Set<String>,
     queuedSourceUrlsByArchiveKey: Map<String, Set<String>> = emptyMap(),
     cooldownsByProvider: Map<ClipboardPreviewProvider, ClipboardPreviewProviderCooldown> = emptyMap(),
-    archiveDir: File? = null,
+    clipboardDir: File? = null,
     existingArchiveFileNames: Set<String>? = null
 ): List<ClipboardArchiveDownloadListItem> =
     archives.flatMap { rawArchive ->
@@ -178,7 +178,7 @@ internal fun archiveDownloadItems(
                 existingArchiveFileNames,
                 now = rawArchive.updatedAtEpochMs
             )
-            archiveDir != null -> rawArchive.withMissingArchiveFilesMarked(archiveDir, now = rawArchive.updatedAtEpochMs)
+            clipboardDir != null -> rawArchive.withMissingArchiveFilesMarked(clipboardDir, now = rawArchive.updatedAtEpochMs)
             else -> rawArchive
         }
         val progress = progressByArchiveKey[archive.key]
@@ -508,34 +508,17 @@ internal fun ClipboardLinkArchive.matchesStatusFilter(filter: ClipboardArchiveSt
             )
     }
 
-internal fun ClipboardLinkArchive.galleryItems(archiveDir: File): List<ClipboardArchiveGalleryItem> {
-    val archive = withMissingArchiveFilesMarked(archiveDir, now = updatedAtEpochMs)
-    return archive.galleryItemsFromNormalizedArchive { File(archiveDir, it).takeIf { file -> file.isFile } }
+internal fun ClipboardLinkArchive.galleryItems(clipboardDir: File): List<ClipboardArchiveGalleryItem> {
+    val archive = withMissingArchiveFilesMarked(clipboardDir, now = updatedAtEpochMs)
+    return archive.galleryItemsFromNormalizedArchive { clipboardMediaFile(clipboardDir, it) }
 }
 
 internal fun ClipboardLinkArchive.galleryItems(
-    archiveDir: File,
-    clipboardDir: File
-): List<ClipboardArchiveGalleryItem> {
-    val archive = withMissingArchiveFilesMarked(archiveDir, clipboardDir, now = updatedAtEpochMs)
-    return archive.galleryItemsFromNormalizedArchive { archiveMediaFile(archiveDir, clipboardDir, it) }
-}
-
-internal fun ClipboardLinkArchive.galleryItems(
-    archiveDir: File,
-    existingArchiveFileNames: Set<String>
-): List<ClipboardArchiveGalleryItem> {
-    val archive = withMissingArchiveFilesMarked(existingArchiveFileNames, now = updatedAtEpochMs)
-    return archive.galleryItemsFromNormalizedArchive { File(archiveDir, it).takeIf { file -> file.isFile } }
-}
-
-internal fun ClipboardLinkArchive.galleryItems(
-    archiveDir: File,
     clipboardDir: File,
     existingArchiveFileNames: Set<String>
 ): List<ClipboardArchiveGalleryItem> {
     val archive = withMissingArchiveFilesMarked(existingArchiveFileNames, now = updatedAtEpochMs)
-    return archive.galleryItemsFromNormalizedArchive { archiveMediaFile(archiveDir, clipboardDir, it) }
+    return archive.galleryItemsFromNormalizedArchive { clipboardMediaFile(clipboardDir, it) }
 }
 
 private fun ClipboardLinkArchive.galleryItemsFromNormalizedArchive(

@@ -172,14 +172,17 @@ internal fun copyLegacyPreviewMediaToArchive(
     entry: ClipboardEntry,
     metadata: ClipboardPreviewMetadata,
     clipboardDir: File,
-    archiveDir: File,
+    legacyArchiveDir: File,
     now: Long = System.currentTimeMillis()
 ): List<ClipboardArchiveMedia> {
-    archiveDir.mkdirs()
     val fallbackSourceUrl = metadata.sourceUrl ?: entry.text ?: return emptyList()
 
     return entry.previewMedia().mapNotNull { media ->
-        val mediaFile = archiveMediaFile(archiveDir, clipboardDir, media.fileName) ?: return@mapNotNull null
+        val mediaFile = legacyAwareClipboardMediaFile(
+            clipboardDir = clipboardDir,
+            legacyArchiveDir = legacyArchiveDir,
+            fileName = media.fileName
+        ) ?: return@mapNotNull null
 
         ClipboardArchiveMedia(
             sourceUrl = media.sourceUrl ?: "$fallbackSourceUrl#legacy-media-${media.sourceIndex}",
@@ -442,8 +445,7 @@ class ClipboardHistoryManager(
             val entry = clipboardHistory[i]
             val retainedPreviewMedia = entry.previewMedia()
                 .filter {
-                    File(context.clipboardDir, it.fileName).isFile == true ||
-                        File(context.clipboardArchiveDir, it.fileName).isFile == true
+                    File(context.clipboardDir, it.fileName).isFile == true
                 }
             if(retainedPreviewMedia.size != entry.previewMedia().size) {
                 clipboardHistory[i] = entry.copy(
@@ -704,19 +706,19 @@ class ClipboardHistoryManager(
     internal fun archivePreviewFiles(archive: ClipboardLinkArchive): List<File> =
         archiveWithCurrentStorageState(archive, currentArchiveFileNames())
             .savedPreviewMedia()
-            .mapNotNull { archiveMediaFile(context.clipboardArchiveDir, context.clipboardDir, it.fileName) }
+            .mapNotNull { clipboardMediaFile(context.clipboardDir, it.fileName) }
 
     internal fun archivePreviewFilesByKey(archives: Collection<ClipboardLinkArchive>): Map<String, List<File>> {
         val existingArchiveFileNames = currentArchiveFileNames()
         return archives.associate { archive ->
             archive.key to archiveWithCurrentStorageState(archive, existingArchiveFileNames)
                 .savedPreviewMedia()
-                .mapNotNull { archiveMediaFile(context.clipboardArchiveDir, context.clipboardDir, it.fileName) }
+                .mapNotNull { clipboardMediaFile(context.clipboardDir, it.fileName) }
         }
     }
 
     internal fun galleryItems(archive: ClipboardLinkArchive): List<ClipboardArchiveGalleryItem> =
-        archive.galleryItems(context.clipboardArchiveDir, context.clipboardDir, currentArchiveFileNames())
+        archive.galleryItems(context.clipboardDir, currentArchiveFileNames())
 
     internal fun isArchiveLoading(archive: ClipboardLinkArchive): Boolean =
         previewLoadingByText[archive.key] == true
@@ -831,7 +833,7 @@ class ClipboardHistoryManager(
         archive.withMissingArchiveFilesMarked(existingArchiveFileNames, now = archive.updatedAtEpochMs)
 
     private fun scanArchiveFileNames(): Set<String> =
-        existingArchiveMediaFileNames(context.clipboardArchiveDir, context.clipboardDir)
+        existingClipboardMediaFileNames(context.clipboardDir, context.clipboardArchiveDir)
 
     private fun refreshArchiveFileNames(): Set<String> {
         val fileNames = scanArchiveFileNames()
@@ -1338,7 +1340,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 entry = entry,
                 metadata = metadata,
                 clipboardDir = context.clipboardDir,
-                archiveDir = context.clipboardArchiveDir,
+                legacyArchiveDir = context.clipboardArchiveDir,
                 now = now
             )
         }
@@ -1783,14 +1785,14 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
     private fun reconcileArchiveStorage() {
         val referencedArchiveFiles = referencedClipboardArchiveFileNames(linkArchives.values)
         migrateLegacyArchiveMediaFiles(
-            archiveDir = context.clipboardArchiveDir,
+            legacyArchiveDir = context.clipboardArchiveDir,
             clipboardDir = context.clipboardDir,
             referencedFileNames = referencedArchiveFiles
         )
         val reconciled = reconcileClipboardArchivesWithStorage(
             archives = linkArchives.values,
-            archiveDir = context.clipboardArchiveDir,
-            clipboardDir = context.clipboardDir
+            clipboardDir = context.clipboardDir,
+            legacyArchiveDir = context.clipboardArchiveDir
         )
         if(reconciled.associateBy { it.key } != linkArchives.toMap()) {
             linkArchives.clear()
