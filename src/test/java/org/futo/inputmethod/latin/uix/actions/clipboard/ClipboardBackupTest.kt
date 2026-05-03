@@ -1,5 +1,6 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
+import org.futo.inputmethod.latin.uix.clipboardBackupMediaFiles
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -524,6 +525,99 @@ class ClipboardBackupTest {
             val media = reconciled.single().media.single()
             assertEquals(ClipboardArchiveMediaStatus.Saved, media.status)
             assertEquals(ClipboardLinkArchiveStatus.Complete, reconciled.single().status)
+        } finally {
+            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveMediaFile_prefersUnifiedClipboardStoreWhenBothCopiesExist() {
+        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
+        try {
+            File(archiveDir, "shared.jpg").writeText("archive copy")
+            val clipboardFile = File(clipboardDir, "shared.jpg")
+            clipboardFile.writeText("clipboard copy")
+
+            assertEquals(clipboardFile, archiveMediaFile(archiveDir, clipboardDir, "shared.jpg"))
+        } finally {
+            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrateLegacyArchiveMediaFiles_movesReferencedMediaToClipboardStore() {
+        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
+        try {
+            File(archiveDir, "saved.jpg").writeText("archive bytes")
+            File(archiveDir, ClipboardUtil.thumbnailForName("saved.jpg")).writeText("thumb")
+            File(archiveDir, "unreferenced.jpg").writeText("unused")
+
+            migrateLegacyArchiveMediaFiles(
+                archiveDir = archiveDir,
+                clipboardDir = clipboardDir,
+                referencedFileNames = setOf("saved.jpg", ClipboardUtil.thumbnailForName("saved.jpg"))
+            )
+
+            assertEquals("archive bytes", File(clipboardDir, "saved.jpg").readText())
+            assertEquals("thumb", File(clipboardDir, ClipboardUtil.thumbnailForName("saved.jpg")).readText())
+            assertFalse(File(clipboardDir, "unreferenced.jpg").exists())
+            assertFalse(archiveDir.exists())
+        } finally {
+            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrateLegacyArchiveMediaFiles_keepsClipboardCopyWhenDuplicateExists() {
+        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
+        try {
+            File(archiveDir, "saved.jpg").writeText("archive bytes")
+            val clipboardFile = File(clipboardDir, "saved.jpg")
+            clipboardFile.writeText("clipboard bytes")
+
+            migrateLegacyArchiveMediaFiles(
+                archiveDir = archiveDir,
+                clipboardDir = clipboardDir,
+                referencedFileNames = setOf("saved.jpg")
+            )
+
+            assertEquals("clipboard bytes", clipboardFile.readText())
+            assertFalse(archiveDir.exists())
+        } finally {
+            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun clipboardBackupMediaFiles_exportsEverythingUnderClipboardFiles() {
+        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
+        try {
+            val clipFile = File(clipboardDir, "clip.jpg").apply { writeText("clip") }
+            File(archiveDir, "clip.jpg").writeText("duplicate")
+            val archiveOnlyFile = File(archiveDir, "archive-only.jpg").apply { writeText("archive") }
+
+            val entries = clipboardBackupMediaFiles(
+                referencedFiles = setOf("clip.jpg"),
+                referencedArchiveFiles = setOf("clip.jpg", "archive-only.jpg"),
+                clipboardDir = clipboardDir,
+                archiveDir = archiveDir
+            )
+
+            assertEquals(
+                listOf(
+                    "clipboardfiles/clip.jpg" to clipFile,
+                    "clipboardfiles/archive-only.jpg" to archiveOnlyFile
+                ),
+                entries
+            )
         } finally {
             archiveDir.deleteRecursively()
             clipboardDir.deleteRecursively()

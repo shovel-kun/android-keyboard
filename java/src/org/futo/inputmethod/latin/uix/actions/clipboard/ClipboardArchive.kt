@@ -268,8 +268,26 @@ fun existingArchiveMediaFileNames(archiveDir: File, clipboardDir: File? = null):
         .toSet()
 
 fun archiveMediaFile(archiveDir: File, clipboardDir: File, fileName: String): File? =
-    listOf(File(archiveDir, fileName), File(clipboardDir, fileName))
+    listOf(File(clipboardDir, fileName), File(archiveDir, fileName))
         .firstOrNull { it.isFile }
+
+fun migrateLegacyArchiveMediaFiles(
+    archiveDir: File,
+    clipboardDir: File,
+    referencedFileNames: Set<String>
+) {
+    clipboardDir.mkdirs()
+    archiveDir.listFiles()?.forEach { legacyFile ->
+        if(!legacyFile.isFile) return@forEach
+
+        val destination = File(clipboardDir, legacyFile.name)
+        if(legacyFile.name in referencedFileNames && !destination.exists()) {
+            legacyFile.copyTo(destination, overwrite = false)
+        }
+        legacyFile.delete()
+    }
+    archiveDir.delete()
+}
 
 fun reconcileClipboardArchivesWithStorage(
     archives: Collection<ClipboardLinkArchive>,

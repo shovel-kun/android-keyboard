@@ -96,6 +96,25 @@ const val EXPORT_SETTINGS_REQUEST = 69835032
 const val IMPORT_CLIPBOARD_BACKUP_REQUEST = 1901146881
 const val EXPORT_CLIPBOARD_BACKUP_REQUEST = 79835032
 
+internal fun clipboardBackupMediaFiles(
+    referencedFiles: Set<String>,
+    referencedArchiveFiles: Set<String>,
+    clipboardDir: File,
+    archiveDir: File
+): List<Pair<String, File>> {
+    val exportedFiles = mutableSetOf<String>()
+    return (referencedFiles + referencedArchiveFiles).mapNotNull { fileName ->
+        if(!exportedFiles.add(fileName)) return@mapNotNull null
+
+        listOf(
+            File(clipboardDir, fileName),
+            File(archiveDir, fileName)
+        ).firstOrNull { it.isFile }?.let { file ->
+            "$ClipboardBackupFilesDirectoryName/$fileName" to file
+        }
+    }
+}
+
 @Serializable
 data class PersonalWord(
     val word: String,
@@ -319,21 +338,24 @@ object SettingsExporter {
         }
 
         // Collect clipboard files
+        val exportedClipboardFiles = mutableSetOf<String>()
         context.clipboardDir.listFiles()?.forEach { clipboardFile ->
             assert(!clipboardFile.isDirectory)
+            exportedClipboardFiles.add(clipboardFile.name)
             val entry = ZipEntry("clipboard/${clipboardFile.name}")
             zipOut.putNextEntry(entry)
             clipboardFile.inputStream().use { it.copyTo(zipOut) }
             zipOut.closeEntry()
         }
-        context.clipboardArchiveDir.listFiles()?.forEach { archiveFile ->
-            assert(!archiveFile.isDirectory)
-            val entry = ZipEntry("$ClipboardArchiveFilesDirectoryName/${archiveFile.name}")
-            zipOut.putNextEntry(entry)
+        referencedClipboardArchiveFileNames(clipboardArchives).forEach { fileName ->
+            if(!exportedClipboardFiles.add(fileName)) return@forEach
+            val archiveFile = File(context.clipboardArchiveDir, fileName)
+            if(!archiveFile.isFile) return@forEach
+
+            zipOut.putNextEntry(ZipEntry("clipboard/$fileName"))
             archiveFile.inputStream().use { it.copyTo(zipOut) }
             zipOut.closeEntry()
         }
-
         // Collect mozc (Japanese user typing history, etc)
         mozcUserProfileDir(context).listFiles()?.forEach { subfile ->
             assert(!subfile.isDirectory)
@@ -390,31 +412,14 @@ object SettingsExporter {
         zipOut.write(encodeClipboardArchives(clipboardArchives).encodeUtf8().toByteArray())
         zipOut.closeEntry()
 
-        val exportedClipboardFiles = mutableSetOf<String>()
-        referencedFiles.forEach { fileName ->
-            val file = File(context.clipboardDir, fileName)
-            if(!file.isFile) return@forEach
-
-            exportedClipboardFiles.add(fileName)
-            zipOut.putNextEntry(ZipEntry("$ClipboardBackupFilesDirectoryName/$fileName"))
+        clipboardBackupMediaFiles(
+            referencedFiles = referencedFiles,
+            referencedArchiveFiles = referencedArchiveFiles,
+            clipboardDir = context.clipboardDir,
+            archiveDir = context.clipboardArchiveDir
+        ).forEach { (entryName, file) ->
+            zipOut.putNextEntry(ZipEntry(entryName))
             file.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
-        }
-
-        referencedArchiveFiles.forEach { fileName ->
-            val archiveFile = File(context.clipboardArchiveDir, fileName)
-            if(archiveFile.isFile) {
-                zipOut.putNextEntry(ZipEntry("$ClipboardBackupArchiveFilesDirectoryName/$fileName"))
-                archiveFile.inputStream().use { it.copyTo(zipOut) }
-                zipOut.closeEntry()
-                return@forEach
-            }
-
-            val clipboardFile = File(context.clipboardDir, fileName)
-            if(!clipboardFile.isFile || !exportedClipboardFiles.add(fileName)) return@forEach
-
-            zipOut.putNextEntry(ZipEntry("$ClipboardBackupFilesDirectoryName/$fileName"))
-            clipboardFile.inputStream().use { it.copyTo(zipOut) }
             zipOut.closeEntry()
         }
     }
@@ -544,8 +549,8 @@ object SettingsExporter {
                     val relDir = entry.name.removePrefix("$ClipboardArchiveFilesDirectoryName/")
                     assert(!relDir.contains('/'))
 
-                    context.clipboardArchiveDir.mkdirs()
-                    File(context.clipboardArchiveDir, relDir).outputStream().use {
+                    context.clipboardDir.mkdirs()
+                    File(context.clipboardDir, relDir).outputStream().use {
                         zipIn.copyTo(it)
                     }
                 }
@@ -709,10 +714,9 @@ object SettingsExporter {
         context.clipboardArchiveFile.delete()
         context.clipboardArchiveMetadataDir.deleteRecursively()
         context.clipboardArchiveDir.deleteRecursively()
-        context.clipboardArchiveDir.mkdirs()
 
         copyImportedClipboardFiles(extracted.filesDir, context.clipboardDir)
-        copyImportedClipboardFiles(extracted.archiveFilesDir, context.clipboardArchiveDir)
+        copyImportedClipboardFiles(extracted.archiveFilesDir, context.clipboardDir)
         val reconciled = reconcileClipboardImportResult(
             clipboardDir = context.clipboardDir,
             archiveDir = context.clipboardArchiveDir,
@@ -734,8 +738,7 @@ object SettingsExporter {
     ) {
         context.clipboardDir.mkdirs()
         copyImportedClipboardFiles(extracted.filesDir, context.clipboardDir)
-        context.clipboardArchiveDir.mkdirs()
-        copyImportedClipboardFiles(extracted.archiveFilesDir, context.clipboardArchiveDir)
+        copyImportedClipboardFiles(extracted.archiveFilesDir, context.clipboardDir)
 
         val currentEntries = if(context.clipboardFile.exists()) {
             runCatching { context.clipboardFile.decodeClipboardEntries() }.getOrElse { emptyList() }

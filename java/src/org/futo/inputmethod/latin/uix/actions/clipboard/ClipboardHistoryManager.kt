@@ -1524,7 +1524,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 val result = ClipboardLinkPreviewFetcher.cachePreviewMedia(
                     context = context,
                     mediaUrl = media.sourceUrl,
-                    destinationDir = context.clipboardArchiveDir,
+                    destinationDir = context.clipboardDir,
                     provider = linkArchives[archiveKey]?.provider,
                     onProgress = { progress ->
                         coroutineContext.ensureActive()
@@ -1781,6 +1781,12 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
     }
 
     private fun reconcileArchiveStorage() {
+        val referencedArchiveFiles = referencedClipboardArchiveFileNames(linkArchives.values)
+        migrateLegacyArchiveMediaFiles(
+            archiveDir = context.clipboardArchiveDir,
+            clipboardDir = context.clipboardDir,
+            referencedFileNames = referencedArchiveFiles
+        )
         val reconciled = reconcileClipboardArchivesWithStorage(
             archives = linkArchives.values,
             archiveDir = context.clipboardArchiveDir,
@@ -1792,12 +1798,12 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             saveArchives()
         }
 
-        val stillReferenced = referencedClipboardArchiveFileNames(linkArchives.values)
         context.clipboardArchiveDir.listFiles()?.forEach { file ->
-            if(file.name !in stillReferenced) {
+            if(file.name !in referencedArchiveFiles) {
                 file.delete()
             }
         }
+        context.clipboardArchiveDir.delete()
         refreshArchiveFileNames()
     }
 }
