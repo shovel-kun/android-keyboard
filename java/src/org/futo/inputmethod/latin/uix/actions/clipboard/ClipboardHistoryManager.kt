@@ -163,9 +163,10 @@ internal fun shouldRunArchiveBackfill(
     completedVersion: Int,
     currentVersion: Int,
     incognito: Boolean,
-    previewsEnabled: Boolean
+    previewsEnabled: Boolean,
+    forceCompletedVersion: Boolean = false
 ): Boolean =
-    completedVersion < currentVersion && !incognito && previewsEnabled
+    !incognito && previewsEnabled && (forceCompletedVersion || completedVersion < currentVersion)
 
 internal fun copyLegacyPreviewMediaToArchive(
     entry: ClipboardEntry,
@@ -424,6 +425,7 @@ class ClipboardHistoryManager(
         if(file != clipboardFile && file.name != clipboardFile.name) return
 
         loadClipboard()
+        refreshMissingLinkPreviews(forceArchiveBackfill = true)
     }
 
     suspend fun reconcileClipboardStorage() = withContext(Dispatchers.Main) {
@@ -534,7 +536,7 @@ class ClipboardHistoryManager(
         }
     }
 
-    fun refreshMissingLinkPreviews() {
+    fun refreshMissingLinkPreviews(forceArchiveBackfill: Boolean = false) {
         if(context.getSetting(ClipboardIncognitoMode)) return
         if(!currentPreviewState().shouldFetchPreviews) return
 
@@ -544,7 +546,7 @@ class ClipboardHistoryManager(
                 fetchPreviewForEntry(text)
             }
         }
-        runLegacyArchiveBackfillIfNeeded()
+        runLegacyArchiveBackfillIfNeeded(forceCompletedVersion = forceArchiveBackfill)
         resumeProviderArchiveDownloads()
     }
 
@@ -564,15 +566,18 @@ class ClipboardHistoryManager(
     fun expectedPreviewMediaCount(entry: ClipboardEntry): Int? =
         archiveForEntry(entry)?.media?.size?.takeIf { it > entry.previewMedia().size }
 
-    private fun runLegacyArchiveBackfillIfNeeded() {
+    private fun runLegacyArchiveBackfillIfNeeded(forceCompletedVersion: Boolean = false) {
         if(archiveBackfillInProgress.value) return
+        val incognito = context.getSetting(ClipboardIncognitoMode)
+        val previewsEnabled = currentPreviewState().shouldFetchPreviews
         if(!shouldRunArchiveBackfill(
             completedVersion = context.getSetting(ClipboardArchiveBackfillCompletedVersion),
             currentVersion = ClipboardArchiveBackfillVersion,
-            incognito = context.getSetting(ClipboardIncognitoMode),
-            previewsEnabled = currentPreviewState().shouldFetchPreviews
+            incognito = incognito,
+            previewsEnabled = previewsEnabled,
+            forceCompletedVersion = forceCompletedVersion
         )) {
-            return
+            if(incognito || !previewsEnabled) return
         }
 
         val requests = archiveBackfillRequests(
@@ -580,8 +585,12 @@ class ClipboardHistoryManager(
             existingArchiveKeys = linkArchives.keys,
             attemptedArchiveKeys = archiveBackfillAttemptedKeys
         )
+        val shouldCompleteMigration = !forceCompletedVersion &&
+            context.getSetting(ClipboardArchiveBackfillCompletedVersion) < ClipboardArchiveBackfillVersion
         if(requests.isEmpty()) {
-            markLegacyArchiveBackfillComplete()
+            if(shouldCompleteMigration) {
+                markLegacyArchiveBackfillComplete()
+            }
             return
         }
 
@@ -600,9 +609,11 @@ class ClipboardHistoryManager(
             }
         }
         if(scheduledAny) {
-            archiveBackfillCompletionPending = true
+            archiveBackfillCompletionPending = shouldCompleteMigration
         } else if(!archiveBackfillBlockedByCooldown) {
-            markLegacyArchiveBackfillComplete()
+            if(shouldCompleteMigration) {
+                markLegacyArchiveBackfillComplete()
+            }
         }
     }
 

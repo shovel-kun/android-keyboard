@@ -111,6 +111,63 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
+    fun archiveBackfillVersion_forcedImportBypassesOnlyCompletedVersion() {
+        assertTrue(
+            shouldRunArchiveBackfill(
+                completedVersion = 1,
+                currentVersion = 1,
+                incognito = false,
+                previewsEnabled = true,
+                forceCompletedVersion = true
+            )
+        )
+        assertFalse(
+            shouldRunArchiveBackfill(
+                completedVersion = 1,
+                currentVersion = 1,
+                incognito = true,
+                previewsEnabled = true,
+                forceCompletedVersion = true
+            )
+        )
+        assertFalse(
+            shouldRunArchiveBackfill(
+                completedVersion = 1,
+                currentVersion = 1,
+                incognito = false,
+                previewsEnabled = false,
+                forceCompletedVersion = true
+            )
+        )
+    }
+
+    @Test
+    fun archiveBackfillRequests_afterSecondLegacyImportSchedulesOnlyMissingArchiveKey() {
+        val firstImportArchiveKey = "pixiv:123"
+        val laterImportedEntry = samplePixivEntry(
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.PIXIV,
+                sourceUrl = "https://www.phixiv.net/en/artworks/456",
+                sourceId = "456",
+                imageCount = 1
+            )
+        ).copy(
+            text = "https://www.pixiv.net/en/artworks/456",
+            previewImageFile = "legacy-456.jpg",
+            previewMediaFiles = emptyList()
+        )
+        val alreadyArchivedEntry = samplePixivEntry()
+
+        val requests = archiveBackfillRequests(
+            entries = listOf(alreadyArchivedEntry, laterImportedEntry),
+            existingArchiveKeys = setOf(firstImportArchiveKey)
+        )
+
+        assertEquals(listOf("pixiv:456"), requests.map { it.archiveKey })
+        assertEquals(laterImportedEntry, requests.single().entry)
+    }
+
+    @Test
     fun fallbackArchiveFromLegacyPreview_isPartialAndKeepsExpectedPlaceholders() {
         val entry = samplePixivEntry(
             metadata = ClipboardPreviewMetadata(
