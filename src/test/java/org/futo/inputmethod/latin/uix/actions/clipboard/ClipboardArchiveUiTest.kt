@@ -218,6 +218,69 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun scrollControlsVisibleAfterScroll_keepsControlsVisibleAtTop() {
+        val previous = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 4,
+            firstVisibleItemScrollOffset = 20
+        )
+        val current = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 0,
+            firstVisibleItemScrollOffset = 0
+        )
+
+        assertTrue(scrollControlsVisibleAfterScroll(previous, current, currentlyVisible = false))
+    }
+
+    @Test
+    fun scrollControlsVisibleAfterScroll_hidesControlsWhenScrollingDown() {
+        val previous = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 0,
+            firstVisibleItemScrollOffset = 10
+        )
+        val currentOffsetDown = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 0,
+            firstVisibleItemScrollOffset = 40
+        )
+        val currentIndexDown = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 1,
+            firstVisibleItemScrollOffset = 0
+        )
+
+        assertFalse(scrollControlsVisibleAfterScroll(previous, currentOffsetDown, currentlyVisible = true))
+        assertFalse(scrollControlsVisibleAfterScroll(previous, currentIndexDown, currentlyVisible = true))
+    }
+
+    @Test
+    fun scrollControlsVisibleAfterScroll_showsControlsWhenScrollingUp() {
+        val previous = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 2,
+            firstVisibleItemScrollOffset = 80
+        )
+        val currentOffsetUp = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 2,
+            firstVisibleItemScrollOffset = 20
+        )
+        val currentIndexUp = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 1,
+            firstVisibleItemScrollOffset = 120
+        )
+
+        assertTrue(scrollControlsVisibleAfterScroll(previous, currentOffsetUp, currentlyVisible = false))
+        assertTrue(scrollControlsVisibleAfterScroll(previous, currentIndexUp, currentlyVisible = false))
+    }
+
+    @Test
+    fun scrollControlsVisibleAfterScroll_preservesVisibilityWhenPositionIsUnchanged() {
+        val position = ClipboardScrollControlsPosition(
+            firstVisibleItemIndex = 2,
+            firstVisibleItemScrollOffset = 80
+        )
+
+        assertTrue(scrollControlsVisibleAfterScroll(position, position, currentlyVisible = true))
+        assertFalse(scrollControlsVisibleAfterScroll(position, position, currentlyVisible = false))
+    }
+
+    @Test
     fun archiveMediaShareMimeType_prefersActualVideoFileOverStaleImageMetadata() {
         val staleGifMetadata = ClipboardArchiveMedia(
             sourceUrl = "https://example.com/animated.gif",
@@ -395,6 +458,70 @@ class ClipboardArchiveUiTest {
             groups.needsAttention.map { it.archiveKey }.toSet()
         )
         assertFalse(groups.needsAttention.first { it.archiveKey == cooldownBlocked.key }.canRetry)
+    }
+
+    @Test
+    fun archiveDownloadItems_showsQueuedRetriesWhileArchiveDownloadIsActive() {
+        val archive = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/active.jpg",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Pending
+                ),
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/queued.jpg",
+                    sourceIndex = 1,
+                    status = ClipboardArchiveMediaStatus.Failed
+                ),
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/retryable.jpg",
+                    sourceIndex = 2,
+                    status = ClipboardArchiveMediaStatus.Failed
+                )
+            )
+        )
+        val progress = ClipboardArchiveDownloadProgress(
+            archiveKey = archive.key,
+            sourceUrl = "https://img.example/active.jpg",
+            sourceIndex = 0,
+            completedBytes = 50L,
+            totalBytes = 100L,
+            savedCount = 0,
+            expectedCount = 3
+        )
+
+        val items = archiveDownloadItems(
+            archives = listOf(archive),
+            progressByArchiveKey = mapOf(archive.key to progress),
+            loadingArchiveKeys = setOf(archive.key),
+            queuedSourceUrlsByArchiveKey = mapOf(
+                archive.key to setOf("https://img.example/queued.jpg")
+            )
+        )
+
+        val active = items.first { it.sourceUrl == "https://img.example/active.jpg" }
+        val queued = items.first { it.sourceUrl == "https://img.example/queued.jpg" }
+        val retryable = items.first { it.sourceUrl == "https://img.example/retryable.jpg" }
+
+        assertEquals(ClipboardArchiveDownloadRowStatus.Active, active.status)
+        assertFalse(active.canRetry)
+        assertEquals(ClipboardArchiveDownloadRowStatus.Waiting, queued.status)
+        assertFalse(queued.canRetry)
+        assertEquals(ClipboardArchiveDownloadRowStatus.Failed, retryable.status)
+        assertTrue(retryable.canRetry)
+    }
+
+    @Test
+    fun archiveDownloadItems_matchProviderFilter() {
+        val pixivItem = sampleDownloadItem(ClipboardPreviewProvider.PIXIV)
+        val twitterItem = sampleDownloadItem(ClipboardPreviewProvider.TWITTER)
+
+        assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.All))
+        assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
+        assertFalse(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
+        assertTrue(twitterItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
+        assertFalse(twitterItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
     }
 
     @Test
@@ -988,5 +1115,23 @@ class ClipboardArchiveUiTest {
         media = media,
         createdAtEpochMs = 1L,
         updatedAtEpochMs = 1L
+    )
+
+    private fun sampleDownloadItem(provider: ClipboardPreviewProvider) = ClipboardArchiveDownloadListItem(
+        archiveKey = "archive:${provider.name}",
+        sourceUrl = "https://img.example/${provider.name}.jpg",
+        sourceIndex = 0,
+        mediaCount = 1,
+        provider = provider,
+        providerLabel = provider.name,
+        title = provider.name,
+        subtitle = null,
+        status = ClipboardArchiveDownloadRowStatus.Failed,
+        failureSummaryLabelRes = null,
+        progress = null,
+        lastAttemptAtEpochMs = null,
+        retryAvailableAtEpochMs = null,
+        canStop = false,
+        canRetry = true
     )
 }

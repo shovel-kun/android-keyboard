@@ -1,6 +1,13 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,9 +17,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
@@ -63,6 +72,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     var activeMode by remember { mutableStateOf(ClipboardHistoryContentMode.Clips) }
     var archiveProviderFilter by remember { mutableStateOf(ClipboardArchiveProviderFilter.All) }
     var archiveStatusFilter by remember { mutableStateOf(ClipboardArchiveStatusFilter.All) }
+    var archiveDownloadProviderFilter by remember { mutableStateOf(ClipboardArchiveProviderFilter.All) }
     var archiveFiltersVisible by remember { mutableStateOf(false) }
     val selectedKeys = remember { mutableStateListOf<String>() }
     var selectionMode by remember { mutableStateOf(false) }
@@ -71,6 +81,10 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
     var archiveDeleteRequest by remember { mutableStateOf<ArchiveDeleteRequest?>(null) }
     var downloadsVisible by remember { mutableStateOf(false) }
+    var clipboardControlsVisible by remember { mutableStateOf(true) }
+    val clipsGridState = rememberLazyStaggeredGridState()
+    val archivesGridState = rememberLazyStaggeredGridState()
+    val activeGridState = if(activeMode == ClipboardHistoryContentMode.Clips) clipsGridState else archivesGridState
     val archiveBackfillInProgress by manager.archiveBackfillInProgress
     val archiveBackfillRemainingCount by manager.archiveBackfillRemainingCount
 
@@ -188,6 +202,16 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         }
     }
 
+    LaunchedEffect(activeMode, activeFilter, archiveProviderFilter, archiveStatusFilter, selectionMode, query.value, downloadsVisible) {
+        clipboardControlsVisible = true
+    }
+
+    rememberScrollControlsVisible(
+        state = activeGridState,
+        controlsVisible = clipboardControlsVisible,
+        onControlsVisibleChanged = { clipboardControlsVisible = it }
+    )
+
     val previewEntry = previewEntryKey?.let { key ->
         allEntries.firstOrNull { it.selectionKey() == key }
     }
@@ -278,11 +302,13 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             downloadsVisible && uiState.historyEnabled && uiState.historyVisible -> {
                 ClipboardArchiveDownloadsScreen(
                     items = archiveDownloadItems,
+                    providerFilter = archiveDownloadProviderFilter,
                     modifier = Modifier.weight(1f),
+                    onProviderFilterSelected = { archiveDownloadProviderFilter = it },
                     onRetry = { manager.retryArchiveMedia(it) },
                     onRetryAll = { manager.retryAllArchiveDownloads(it) },
                     onStop = { manager.stopArchiveDownload(it.archiveKey) },
-                    onStopAll = { manager.stopAllArchiveDownloads() }
+                    onStopAll = { items -> items.forEach { manager.stopArchiveDownload(it.archiveKey) } }
                 )
             }
 
@@ -360,76 +386,79 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             }
 
             else -> {
-                Box(Modifier.padding(8.dp)) {
-                    SettingsTextEdit(
-                        text = query,
-                        icon = {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = stringResource(R.string.settings_search_menu_title)
-                            )
-                        },
-                        trailingContent = if(
-                            query.value.isNotBlank() ||
-                            (activeMode == ClipboardHistoryContentMode.Archives && !selectionMode)
-                        ) {
-                            {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if(query.value.isNotBlank()) {
-                                        IconButton(onClick = { query.value = "" }) {
-                                            Icon(
-                                                Icons.Default.Clear,
-                                                contentDescription = stringResource(R.string.clipboard_history_clear_search)
+                ClipboardScrollControlsVisibility(visible = clipboardControlsVisible) {
+                    Box(Modifier.padding(8.dp)) {
+                        SettingsTextEdit(
+                            text = query,
+                            icon = {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = stringResource(R.string.settings_search_menu_title)
+                                )
+                            },
+                            trailingContent = if(
+                                query.value.isNotBlank() ||
+                                (activeMode == ClipboardHistoryContentMode.Archives && !selectionMode)
+                            ) {
+                                {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if(query.value.isNotBlank()) {
+                                            IconButton(onClick = { query.value = "" }) {
+                                                Icon(
+                                                    Icons.Default.Clear,
+                                                    contentDescription = stringResource(R.string.clipboard_history_clear_search)
+                                                )
+                                            }
+                                        }
+                                        if(activeMode == ClipboardHistoryContentMode.Archives && !selectionMode) {
+                                            ClipboardArchiveFilterButton(
+                                                filtersActive = archiveFiltersActive,
+                                                onClick = { archiveFiltersVisible = true }
                                             )
                                         }
                                     }
-                                    if(activeMode == ClipboardHistoryContentMode.Archives && !selectionMode) {
-                                        ClipboardArchiveFilterButton(
-                                            filtersActive = archiveFiltersActive,
-                                            onClick = { archiveFiltersVisible = true }
-                                        )
-                                    }
+                                }
+                            } else {
+                                null
+                            },
+                            placeholder = stringResource(R.string.clipboard_history_search_placeholder),
+                            forceQwerty = true
+                        )
+                    }
+
+                    if(!selectionMode) {
+                        ClipboardHistoryModeRow(
+                            mode = activeMode,
+                            clipCount = allEntries.size,
+                            archiveCount = allArchives.size,
+                            onModeSelected = {
+                                activeMode = it
+                                if(it == ClipboardHistoryContentMode.Archives) {
+                                    clearSelection()
+                                    previewEntryKey = null
                                 }
                             }
-                        } else {
-                            null
-                        },
-                        placeholder = stringResource(R.string.clipboard_history_search_placeholder),
-                        forceQwerty = true
-                    )
-                }
-
-                if(!selectionMode) {
-                    ClipboardHistoryModeRow(
-                        mode = activeMode,
-                        clipCount = allEntries.size,
-                        archiveCount = allArchives.size,
-                        onModeSelected = {
-                            activeMode = it
-                            if(it == ClipboardHistoryContentMode.Archives) {
-                                clearSelection()
-                                previewEntryKey = null
-                            }
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if(archiveBackfillInProgress) {
-                        ClipboardArchiveBackfillStatus(remainingCount = archiveBackfillRemainingCount)
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                    if(activeMode == ClipboardHistoryContentMode.Clips) {
-                        ClipboardHistoryFilterRow(
-                            activeFilter = activeFilter,
-                            counts = filterCounts,
-                            onFilterSelected = { activeFilter = it }
                         )
                         Spacer(modifier = Modifier.height(8.dp))
+                        if(archiveBackfillInProgress) {
+                            ClipboardArchiveBackfillStatus(remainingCount = archiveBackfillRemainingCount)
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                        if(activeMode == ClipboardHistoryContentMode.Clips) {
+                            ClipboardHistoryFilterRow(
+                                activeFilter = activeFilter,
+                                counts = filterCounts,
+                                onFilterSelected = { activeFilter = it }
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
                     }
                 }
 
                 when (activeMode) {
                     ClipboardHistoryContentMode.Clips -> ClipboardClipsContent(
                         modifier = Modifier.weight(1f),
+                        gridState = clipsGridState,
                         visibleEntries = visibleEntries,
                         activeFilter = activeFilter,
                         useSingleColumn = useSingleColumn,
@@ -446,6 +475,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
 
                     ClipboardHistoryContentMode.Archives -> ClipboardArchivesContent(
                         modifier = Modifier.weight(1f),
+                        gridState = archivesGridState,
                         visibleArchives = visibleArchives,
                         previewFilesByKey = archivePreviewFilesByKey,
                         archiveBackfillInProgress = archiveBackfillInProgress,
@@ -566,8 +596,53 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
 }
 
 @Composable
+private fun ClipboardScrollControlsVisibility(
+    visible: Boolean,
+    content: @Composable () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(expandFrom = Alignment.Top) + slideInVertically { -it } + fadeIn(),
+        exit = shrinkVertically(shrinkTowards = Alignment.Top) + slideOutVertically { -it } + fadeOut()
+    ) {
+        Column {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun rememberScrollControlsVisible(
+    state: LazyStaggeredGridState,
+    controlsVisible: Boolean,
+    onControlsVisibleChanged: (Boolean) -> Unit
+) {
+    var previousPosition by remember(state) {
+        mutableStateOf(
+            ClipboardScrollControlsPosition(
+                firstVisibleItemIndex = state.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = state.firstVisibleItemScrollOffset
+            )
+        )
+    }
+    val currentPosition = ClipboardScrollControlsPosition(
+        firstVisibleItemIndex = state.firstVisibleItemIndex,
+        firstVisibleItemScrollOffset = state.firstVisibleItemScrollOffset
+    )
+
+    LaunchedEffect(currentPosition, controlsVisible) {
+        val visible = scrollControlsVisibleAfterScroll(previousPosition, currentPosition, controlsVisible)
+        previousPosition = currentPosition
+        if(visible != controlsVisible) {
+            onControlsVisibleChanged(visible)
+        }
+    }
+}
+
+@Composable
 private fun ClipboardClipsContent(
     modifier: Modifier,
+    gridState: LazyStaggeredGridState,
     visibleEntries: List<ClipboardEntry>,
     activeFilter: ClipboardHistoryFilter,
     useSingleColumn: Boolean,
@@ -601,6 +676,7 @@ private fun ClipboardClipsContent(
 
     LazyVerticalStaggeredGrid(
         modifier = modifier.fillMaxWidth(),
+        state = gridState,
         columns = if(useSingleColumn) {
             StaggeredGridCells.Fixed(1)
         } else {
@@ -657,6 +733,7 @@ private fun ClipboardClipsContent(
 @Composable
 private fun ClipboardArchivesContent(
     modifier: Modifier,
+    gridState: LazyStaggeredGridState,
     visibleArchives: List<ClipboardLinkArchive>,
     previewFilesByKey: Map<String, List<java.io.File>>,
     archiveBackfillInProgress: Boolean,
@@ -702,6 +779,7 @@ private fun ClipboardArchivesContent(
 
     LazyVerticalStaggeredGrid(
         modifier = modifier.fillMaxWidth(),
+        state = gridState,
         columns = if(useSingleColumn) {
             StaggeredGridCells.Fixed(1)
         } else {

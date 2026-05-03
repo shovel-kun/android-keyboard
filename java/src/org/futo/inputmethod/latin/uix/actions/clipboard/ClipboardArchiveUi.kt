@@ -35,6 +35,11 @@ internal enum class ClipboardArchiveDownloadRowStatus {
     Failed
 }
 
+internal data class ClipboardScrollControlsPosition(
+    val firstVisibleItemIndex: Int,
+    val firstVisibleItemScrollOffset: Int
+)
+
 internal data class ClipboardArchiveGalleryItem(
     val media: ClipboardArchiveMedia,
     val file: File?,
@@ -116,6 +121,21 @@ internal fun archiveDownloadPresentation(items: List<ClipboardArchiveDownloadLis
     )
 }
 
+internal fun scrollControlsVisibleAfterScroll(
+    previous: ClipboardScrollControlsPosition,
+    current: ClipboardScrollControlsPosition,
+    currentlyVisible: Boolean
+): Boolean {
+    if(current.firstVisibleItemIndex == 0 && current.firstVisibleItemScrollOffset == 0) return true
+    return when {
+        current.firstVisibleItemIndex > previous.firstVisibleItemIndex -> false
+        current.firstVisibleItemIndex < previous.firstVisibleItemIndex -> true
+        current.firstVisibleItemScrollOffset > previous.firstVisibleItemScrollOffset -> false
+        current.firstVisibleItemScrollOffset < previous.firstVisibleItemScrollOffset -> true
+        else -> currentlyVisible
+    }
+}
+
 internal fun sortedClipboardArchives(archives: Collection<ClipboardLinkArchive>): List<ClipboardLinkArchive> =
     archives.sortedWith(
         compareByDescending<ClipboardLinkArchive> { it.updatedAtEpochMs }
@@ -147,6 +167,7 @@ internal fun archiveDownloadItems(
     archives: Collection<ClipboardLinkArchive>,
     progressByArchiveKey: Map<String, ClipboardArchiveDownloadProgress>,
     loadingArchiveKeys: Set<String>,
+    queuedSourceUrlsByArchiveKey: Map<String, Set<String>> = emptyMap(),
     cooldownsByProvider: Map<ClipboardPreviewProvider, ClipboardPreviewProviderCooldown> = emptyMap(),
     archiveDir: File? = null,
     existingArchiveFileNames: Set<String>? = null
@@ -162,6 +183,7 @@ internal fun archiveDownloadItems(
         }
         val progress = progressByArchiveKey[archive.key]
         val archiveLoading = archive.key in loadingArchiveKeys
+        val queuedSourceUrls = queuedSourceUrlsByArchiveKey[archive.key].orEmpty()
         val cooldown = cooldownsByProvider[archive.provider]
         archive.media
             .filter {
@@ -170,6 +192,7 @@ internal fun archiveDownloadItems(
             }
             .map { media ->
                 val active = archiveLoading && progress?.sourceUrl == media.sourceUrl
+                val queued = media.sourceUrl in queuedSourceUrls
                 ClipboardArchiveDownloadListItem(
                     archiveKey = archive.key,
                     sourceUrl = media.sourceUrl,
@@ -181,6 +204,7 @@ internal fun archiveDownloadItems(
                     subtitle = archive.displaySubtitle() ?: archive.sourceUrl,
                     status = when {
                         active -> ClipboardArchiveDownloadRowStatus.Active
+                        queued -> ClipboardArchiveDownloadRowStatus.Waiting
                         media.status == ClipboardArchiveMediaStatus.Pending -> ClipboardArchiveDownloadRowStatus.Waiting
                         else -> ClipboardArchiveDownloadRowStatus.Failed
                     },
@@ -191,7 +215,7 @@ internal fun archiveDownloadItems(
                     lastAttemptAtEpochMs = media.lastAttemptAtEpochMs,
                     retryAvailableAtEpochMs = cooldown?.retryAfterEpochMs,
                     canStop = active,
-                    canRetry = !archiveLoading && cooldown == null && media.status.isRetryableArchiveMediaStatus()
+                    canRetry = !active && !queued && cooldown == null && media.status.isRetryableArchiveMediaStatus()
                 )
             }
     }.sortedWith(
@@ -458,6 +482,13 @@ internal fun ClipboardLinkArchive.matchesArchiveQuery(query: String): Boolean {
 }
 
 internal fun ClipboardLinkArchive.matchesProviderFilter(filter: ClipboardArchiveProviderFilter): Boolean =
+    when (filter) {
+        ClipboardArchiveProviderFilter.All -> true
+        ClipboardArchiveProviderFilter.Pixiv -> provider == ClipboardPreviewProvider.PIXIV
+        ClipboardArchiveProviderFilter.Twitter -> provider == ClipboardPreviewProvider.TWITTER
+    }
+
+internal fun ClipboardArchiveDownloadListItem.matchesProviderFilter(filter: ClipboardArchiveProviderFilter): Boolean =
     when (filter) {
         ClipboardArchiveProviderFilter.All -> true
         ClipboardArchiveProviderFilter.Pixiv -> provider == ClipboardPreviewProvider.PIXIV

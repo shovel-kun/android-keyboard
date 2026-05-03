@@ -221,6 +221,7 @@ class ClipboardHistoryManager(
     val clipboardIOFailure = mutableStateOf(false)
     val previewLoadingByText = mutableStateMapOf<String, Boolean>()
     private val archiveDownloadProgressByKey = mutableStateMapOf<String, ClipboardArchiveDownloadProgress>()
+    private val archiveDownloadQueuedSourceUrlsByKey = mutableStateMapOf<String, Set<String>>()
     private val archiveFileNames = mutableStateOf<Set<String>>(emptySet())
     private val providerCooldownByProvider = mutableStateMapOf<ClipboardPreviewProvider, ClipboardPreviewProviderCooldown>()
     val archiveBackfillInProgress = mutableStateOf(false)
@@ -728,6 +729,7 @@ class ClipboardHistoryManager(
             archives = linkArchives.values,
             progressByArchiveKey = archiveDownloadProgressByKey,
             loadingArchiveKeys = previewLoadingByText.filterValues { it }.keys,
+            queuedSourceUrlsByArchiveKey = archiveDownloadQueuedSourceUrlsByKey,
             cooldownsByProvider = activeProviderCooldowns(),
             existingArchiveFileNames = currentArchiveFileNames()
         )
@@ -791,7 +793,10 @@ class ClipboardHistoryManager(
         sourceUrls: Set<String>? = null,
         includeSkippedTooLarge: Boolean = true
     ) {
-        if(isArchiveDownloadActive(archive.key)) return
+        if(isArchiveDownloadActive(archive.key)) {
+            queueArchiveDownloadSourceUrls(archive, sourceUrls)
+            return
+        }
         if(isArchiveRetryBlockedByCooldown(archive)) return
 
         launchArchiveDownload(archive.key) {
@@ -806,6 +811,17 @@ class ClipboardHistoryManager(
                 refetchFallbackArchive(archive)
             }
         }
+    }
+
+    private fun queueArchiveDownloadSourceUrls(
+        archive: ClipboardLinkArchive,
+        sourceUrls: Set<String>?
+    ) {
+        if(sourceUrls?.isEmpty() == true) return
+        val queuedSourceUrls = sourceUrls ?: archive.retryableMedia().map { it.sourceUrl }.toSet()
+        if(queuedSourceUrls.isEmpty()) return
+        val current = archiveDownloadQueuedSourceUrlsByKey[archive.key].orEmpty()
+        archiveDownloadQueuedSourceUrlsByKey[archive.key] = current + queuedSourceUrls
     }
 
     private fun archiveWithCurrentStorageState(
@@ -833,6 +849,7 @@ class ClipboardHistoryManager(
 
     internal fun stopArchiveDownload(archiveKey: String) {
         val progress = archiveDownloadProgressByKey[archiveKey] ?: return
+        archiveDownloadQueuedSourceUrlsByKey.remove(archiveKey)
         archiveDownloadJobsByKey[archiveKey]?.cancel()
         val attemptedAt = System.currentTimeMillis()
         val updated = reduceArchive(
@@ -1394,6 +1411,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             }
         } finally {
             archiveDownloadJobsByKey.remove(archiveKey)
+            launchQueuedArchiveDownloadIfNeeded(archiveKey)
         }
     }
 
@@ -1407,9 +1425,19 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 withArchiveLoading(archiveKey, block)
             } finally {
                 archiveDownloadJobsByKey.remove(archiveKey)
+                launchQueuedArchiveDownloadIfNeeded(archiveKey)
             }
         }
         archiveDownloadJobsByKey[archiveKey] = job
+    }
+
+    private fun launchQueuedArchiveDownloadIfNeeded(archiveKey: String) {
+        val queuedSourceUrls = archiveDownloadQueuedSourceUrlsByKey[archiveKey].orEmpty()
+        if(queuedSourceUrls.isEmpty()) return
+        val archive = linkArchives[archiveKey]?.let {
+            archiveWithCurrentStorageState(it, currentArchiveFileNames())
+        } ?: return
+        launchArchiveRetry(archive, sourceUrls = queuedSourceUrls)
     }
 
     private fun isArchiveDownloadActive(archiveKey: String): Boolean =
@@ -1454,11 +1482,29 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                         archiveWithCurrentStorageState(it, currentArchiveFileNames())
                     }
                     if(archive?.provider?.let { providerCooldown(it) } != null) return@withContext null
+                    val queuedSourceUrls = archiveDownloadQueuedSourceUrlsByKey[archiveKey].orEmpty()
+                    val targetSourceUrls = if(onlySourceUrls == null && queuedSourceUrls.isEmpty()) {
+                        null
+                    } else {
+                        onlySourceUrls.orEmpty() + queuedSourceUrls
+                    }
                     val media = archive?.let {
-                        if(includeSkippedTooLarge) it.retryableMedia() else it.autoDownloadableMedia()
+                        if(includeSkippedTooLarge || queuedSourceUrls.isNotEmpty()) {
+                            it.retryableMedia()
+                        } else {
+                            it.autoDownloadableMedia()
+                        }
                     }?.firstOrNull {
-                        (onlySourceUrls == null || it.sourceUrl in onlySourceUrls) &&
+                        (targetSourceUrls == null || it.sourceUrl in targetSourceUrls) &&
                             attemptedSourceUrls.add(it.sourceUrl)
+                    }
+                    if(media != null && media.sourceUrl in queuedSourceUrls) {
+                        val remaining = queuedSourceUrls - media.sourceUrl
+                        if(remaining.isEmpty()) {
+                            archiveDownloadQueuedSourceUrlsByKey.remove(archiveKey)
+                        } else {
+                            archiveDownloadQueuedSourceUrlsByKey[archiveKey] = remaining
+                        }
                     }
                     media?.let { ClipboardArchiveMediaDownloadTarget(archive, it) }
                 } ?: break

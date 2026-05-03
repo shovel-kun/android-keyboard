@@ -3,6 +3,13 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,7 +35,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -51,6 +60,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,57 +93,77 @@ private sealed interface ClipboardArchiveDetailsTarget {
 @Composable
 internal fun ClipboardArchiveDownloadsScreen(
     items: List<ClipboardArchiveDownloadListItem>,
+    providerFilter: ClipboardArchiveProviderFilter,
     modifier: Modifier = Modifier,
+    onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit,
     onRetry: (ClipboardArchiveDownloadListItem) -> Unit,
     onRetryAll: (List<ClipboardArchiveDownloadListItem>) -> Unit,
     onStop: (ClipboardArchiveDownloadListItem) -> Unit,
-    onStopAll: () -> Unit
+    onStopAll: (List<ClipboardArchiveDownloadListItem>) -> Unit
 ) {
-    val presentation = archiveDownloadPresentation(items)
+    var controlsVisible by remember { mutableStateOf(true) }
+    val listState = rememberLazyListState()
+    val filteredItems = items.filter { it.matchesProviderFilter(providerFilter) }
+    val presentation = archiveDownloadPresentation(filteredItems)
+
+    LaunchedEffect(providerFilter) {
+        controlsVisible = true
+    }
+    rememberArchiveDownloadScrollControlsVisible(
+        state = listState,
+        controlsVisible = controlsVisible,
+        onControlsVisibleChanged = { controlsVisible = it }
+    )
 
     Column(
         modifier = modifier.padding(horizontal = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        ClipboardArchiveDownloadSummaryPanel(presentation.summary)
+        ClipboardArchiveDownloadControlsVisibility(visible = controlsVisible) {
+            ClipboardArchiveDownloadSummaryPanel(presentation.summary)
+            ClipboardArchiveDownloadProviderFilterRow(
+                providerFilter = providerFilter,
+                onProviderFilterSelected = onProviderFilterSelected
+            )
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedButton(
-                onClick = { onRetryAll(presentation.retryableItems) },
-                enabled = presentation.retryableItems.isNotEmpty(),
-                modifier = Modifier.weight(1f)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.refresh_cw),
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Box(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.clipboard_history_downloads_retry_all))
-            }
-            OutlinedButton(
-                onClick = onStopAll,
-                enabled = presentation.activeItems.isNotEmpty(),
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
-                )
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.close),
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Box(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.clipboard_history_downloads_stop_all))
+                OutlinedButton(
+                    onClick = { onRetryAll(presentation.retryableItems) },
+                    enabled = presentation.retryableItems.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.refresh_cw),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Box(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.clipboard_history_downloads_retry_all))
+                }
+                OutlinedButton(
+                    onClick = { onStopAll(presentation.activeItems) },
+                    enabled = presentation.activeItems.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.close),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Box(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.clipboard_history_downloads_stop_all))
+                }
             }
         }
 
-        if(items.isEmpty()) {
+        if(filteredItems.isEmpty()) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -154,6 +184,7 @@ internal fun ClipboardArchiveDownloadsScreen(
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
+                state = listState,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 archiveDownloadSection(
@@ -177,6 +208,62 @@ internal fun ClipboardArchiveDownloadsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ClipboardArchiveDownloadControlsVisibility(
+    visible: Boolean,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(expandFrom = Alignment.Top) + slideInVertically { -it } + fadeIn(),
+        exit = shrinkVertically(shrinkTowards = Alignment.Top) + slideOutVertically { -it } + fadeOut()
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun rememberArchiveDownloadScrollControlsVisible(
+    state: LazyListState,
+    controlsVisible: Boolean,
+    onControlsVisibleChanged: (Boolean) -> Unit
+) {
+    var previousPosition by remember(state) {
+        mutableStateOf(
+            ClipboardScrollControlsPosition(
+                firstVisibleItemIndex = state.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = state.firstVisibleItemScrollOffset
+            )
+        )
+    }
+    val currentPosition = ClipboardScrollControlsPosition(
+        firstVisibleItemIndex = state.firstVisibleItemIndex,
+        firstVisibleItemScrollOffset = state.firstVisibleItemScrollOffset
+    )
+
+    LaunchedEffect(currentPosition, controlsVisible) {
+        val visible = scrollControlsVisibleAfterScroll(previousPosition, currentPosition, controlsVisible)
+        previousPosition = currentPosition
+        if(visible != controlsVisible) {
+            onControlsVisibleChanged(visible)
+        }
+    }
+}
+
+@Composable
+private fun ClipboardArchiveDownloadProviderFilterRow(
+    providerFilter: ClipboardArchiveProviderFilter,
+    onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit
+) {
+    ClipboardArchiveChipRow(
+        labels = ClipboardArchiveProviderFilter.entries.map { it to it.labelText() },
+        selected = providerFilter,
+        onSelected = onProviderFilterSelected
+    )
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.archiveDownloadSection(
