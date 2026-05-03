@@ -105,6 +105,35 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun galleryItems_resolveSharedClipboardMedia() {
+        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
+        try {
+            val sharedFile = File(clipboardDir, "shared.jpg")
+            sharedFile.writeText("image")
+            val archive = sampleArchive(
+                media = listOf(
+                    ClipboardArchiveMedia(
+                        sourceUrl = "https://img.example/shared.jpg",
+                        sourceIndex = 0,
+                        fileName = "shared.jpg",
+                        status = ClipboardArchiveMediaStatus.Saved
+                    )
+                )
+            )
+
+            val item = archive.galleryItems(archiveDir, clipboardDir).single()
+
+            assertEquals(sharedFile, item.file)
+            assertTrue(item.isShareable)
+            assertEquals(ClipboardArchiveDisplayStatus.Complete, item.displayStatus)
+        } finally {
+            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun archiveDisplayStatus_usesPlainUserFacingStates() {
         val complete = sampleArchive(
             media = listOf(

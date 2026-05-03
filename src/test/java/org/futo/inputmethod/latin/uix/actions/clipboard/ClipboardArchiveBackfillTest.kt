@@ -209,7 +209,7 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
-    fun fallbackArchiveCopy_preservesClipboardPreviewFile() {
+    fun fallbackArchiveBackfill_referencesClipboardPreviewWithoutCopyingFile() {
         val clipboardDir = createTempDirectory().toFile()
         val archiveDir = createTempDirectory().toFile()
         try {
@@ -228,9 +228,10 @@ class ClipboardArchiveBackfillTest {
 
             assertEquals(1, media.size)
             assertEquals(ClipboardArchiveMediaStatus.Saved, media.single().status)
+            assertEquals("legacy.jpg", media.single().fileName)
             assertEquals("legacy bytes", File(clipboardDir, "legacy.jpg").readText())
-            assertEquals("legacy bytes", File(archiveDir, "legacy.jpg").readText())
-            assertTrue(File(archiveDir, ClipboardUtil.thumbnailForName("legacy.jpg")).isFile)
+            assertFalse(File(archiveDir, "legacy.jpg").exists())
+            assertFalse(File(archiveDir, ClipboardUtil.thumbnailForName("legacy.jpg")).exists())
         } finally {
             clipboardDir.deleteRecursively()
             archiveDir.deleteRecursively()
@@ -238,7 +239,7 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
-    fun fallbackArchiveReload_keepsSavedMediaWhenLegacyClipboardFileIsGone() {
+    fun fallbackArchiveReload_keepsSavedMediaFromSharedClipboardFile() {
         val clipboardDir = createTempDirectory().toFile()
         val archiveDir = createTempDirectory().toFile()
         try {
@@ -262,13 +263,11 @@ class ClipboardArchiveBackfillTest {
             )!!
             val encoded = encodeClipboardArchives(listOf(archive))
 
-            assertTrue(legacyFile.delete())
-            assertFalse(legacyFile.exists())
-
             val reloaded = decodeClipboardArchives(encoded)
             val reconciled = reconcileClipboardArchivesWithStorage(
                 archives = reloaded,
                 archiveDir = archiveDir,
+                clipboardDir = clipboardDir,
                 now = 40L
             )
 
@@ -281,6 +280,63 @@ class ClipboardArchiveBackfillTest {
             clipboardDir.deleteRecursively()
             archiveDir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun fallbackArchiveReload_marksMissingWhenSharedClipboardFileIsGone() {
+        val clipboardDir = createTempDirectory().toFile()
+        val archiveDir = createTempDirectory().toFile()
+        try {
+            val legacyFile = File(clipboardDir, "legacy.jpg")
+            legacyFile.writeText("legacy bytes")
+            val entry = samplePixivEntry()
+            val metadata = entry.archiveBackfillMetadata()!!
+            val archive = newFallbackArchiveFromEntry(
+                entry = entry,
+                metadata = metadata,
+                savedMedia = copyLegacyPreviewMediaToArchive(
+                    entry = entry,
+                    metadata = metadata,
+                    clipboardDir = clipboardDir,
+                    archiveDir = archiveDir,
+                    now = 20L
+                ),
+                now = 30L
+            )!!
+
+            assertTrue(legacyFile.delete())
+
+            val reconciled = reconcileClipboardArchivesWithStorage(
+                archives = listOf(archive),
+                archiveDir = archiveDir,
+                clipboardDir = clipboardDir,
+                now = 40L
+            )
+
+            assertEquals(ClipboardArchiveMediaStatus.Missing, reconciled.single().media.single().status)
+            assertEquals(ClipboardLinkArchiveStatus.Failed, reconciled.single().status)
+        } finally {
+            clipboardDir.deleteRecursively()
+            archiveDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveDeleteKeepsOnlySharedFilesStillReferencedByClips() {
+        val retainedClip = samplePixivEntry().copy(
+            previewMediaFiles = listOf(ClipboardPreviewMedia("retained.jpg")),
+            previewImageFile = null
+        )
+
+        val orphaned = orphanedSharedArchiveFileNamesAfterArchiveDelete(
+            archivedFileNames = setOf("retained.jpg", "orphaned.jpg"),
+            entries = listOf(retainedClip)
+        )
+
+        assertEquals(
+            setOf("orphaned.jpg", ClipboardUtil.thumbnailForName("orphaned.jpg")),
+            orphaned
+        )
     }
 
     @Test

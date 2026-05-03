@@ -230,12 +230,15 @@ fun ClipboardLinkArchive.withMissingArchiveFilesMarked(
     archiveDir: File,
     now: Long = System.currentTimeMillis()
 ): ClipboardLinkArchive {
-    val existingFileNames = archiveDir.listFiles()
-        ?.filter { it.isFile }
-        ?.map { it.name }
-        ?.toSet()
-        .orEmpty()
-    return withMissingArchiveFilesMarked(existingFileNames, now)
+    return withMissingArchiveFilesMarked(existingArchiveMediaFileNames(archiveDir), now)
+}
+
+fun ClipboardLinkArchive.withMissingArchiveFilesMarked(
+    archiveDir: File,
+    clipboardDir: File,
+    now: Long = System.currentTimeMillis()
+): ClipboardLinkArchive {
+    return withMissingArchiveFilesMarked(existingArchiveMediaFileNames(archiveDir, clipboardDir), now)
 }
 
 fun ClipboardLinkArchive.withMissingArchiveFilesMarked(
@@ -254,16 +257,27 @@ fun referencedClipboardArchiveFileNames(archives: Collection<ClipboardLinkArchiv
         .flatMap { listOf(it, ClipboardUtil.thumbnailForName(it)) }
         .toSet()
 
+fun existingArchiveMediaFileNames(archiveDir: File, clipboardDir: File? = null): Set<String> =
+    listOfNotNull(archiveDir, clipboardDir)
+        .flatMap { dir ->
+            dir.listFiles()
+                ?.filter { it.isFile }
+                ?.map { it.name }
+                .orEmpty()
+        }
+        .toSet()
+
+fun archiveMediaFile(archiveDir: File, clipboardDir: File, fileName: String): File? =
+    listOf(File(archiveDir, fileName), File(clipboardDir, fileName))
+        .firstOrNull { it.isFile }
+
 fun reconcileClipboardArchivesWithStorage(
     archives: Collection<ClipboardLinkArchive>,
     archiveDir: File,
+    clipboardDir: File? = null,
     now: Long = System.currentTimeMillis()
 ): List<ClipboardLinkArchive> {
-    val existingFileNames = archiveDir.listFiles()
-        ?.filter { it.isFile }
-        ?.map { it.name }
-        ?.toSet()
-        .orEmpty()
+    val existingFileNames = existingArchiveMediaFileNames(archiveDir, clipboardDir)
     return archives.mapNotNull {
         reduceArchive(it, ClipboardArchiveEvent.DiskReconciled(existingFileNames, now))
     }

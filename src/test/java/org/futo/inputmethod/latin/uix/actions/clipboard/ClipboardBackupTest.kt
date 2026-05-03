@@ -498,6 +498,39 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun reconcileClipboardArchivesWithStorage_retainsSharedClipboardMedia() {
+        val archiveDir = createTempDirectory().toFile()
+        val clipboardDir = createTempDirectory().toFile()
+        try {
+            File(clipboardDir, "shared.jpg").writeText("image")
+            val reconciled = reconcileClipboardArchivesWithStorage(
+                archives = listOf(
+                    sampleArchive(
+                        media = listOf(
+                            ClipboardArchiveMedia(
+                                sourceUrl = "https://img.example/shared.jpg",
+                                sourceIndex = 0,
+                                fileName = "shared.jpg",
+                                status = ClipboardArchiveMediaStatus.Saved
+                            )
+                        )
+                    )
+                ),
+                archiveDir = archiveDir,
+                clipboardDir = clipboardDir,
+                now = 10L
+            )
+
+            val media = reconciled.single().media.single()
+            assertEquals(ClipboardArchiveMediaStatus.Saved, media.status)
+            assertEquals(ClipboardLinkArchiveStatus.Complete, reconciled.single().status)
+        } finally {
+            archiveDir.deleteRecursively()
+            clipboardDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun reconcileClipboardArchivesWithStorage_doesNotAddPlaceholderForCurrentEmptyArchive() {
         val dir = createTempDirectory().toFile()
         try {

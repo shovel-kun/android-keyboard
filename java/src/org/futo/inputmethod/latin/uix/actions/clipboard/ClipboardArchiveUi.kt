@@ -479,7 +479,15 @@ internal fun ClipboardLinkArchive.matchesStatusFilter(filter: ClipboardArchiveSt
 
 internal fun ClipboardLinkArchive.galleryItems(archiveDir: File): List<ClipboardArchiveGalleryItem> {
     val archive = withMissingArchiveFilesMarked(archiveDir, now = updatedAtEpochMs)
-    return archive.galleryItemsFromNormalizedArchive(archiveDir)
+    return archive.galleryItemsFromNormalizedArchive { File(archiveDir, it).takeIf { file -> file.isFile } }
+}
+
+internal fun ClipboardLinkArchive.galleryItems(
+    archiveDir: File,
+    clipboardDir: File
+): List<ClipboardArchiveGalleryItem> {
+    val archive = withMissingArchiveFilesMarked(archiveDir, clipboardDir, now = updatedAtEpochMs)
+    return archive.galleryItemsFromNormalizedArchive { archiveMediaFile(archiveDir, clipboardDir, it) }
 }
 
 internal fun ClipboardLinkArchive.galleryItems(
@@ -487,18 +495,26 @@ internal fun ClipboardLinkArchive.galleryItems(
     existingArchiveFileNames: Set<String>
 ): List<ClipboardArchiveGalleryItem> {
     val archive = withMissingArchiveFilesMarked(existingArchiveFileNames, now = updatedAtEpochMs)
-    return archive.galleryItemsFromNormalizedArchive(archiveDir)
+    return archive.galleryItemsFromNormalizedArchive { File(archiveDir, it).takeIf { file -> file.isFile } }
+}
+
+internal fun ClipboardLinkArchive.galleryItems(
+    archiveDir: File,
+    clipboardDir: File,
+    existingArchiveFileNames: Set<String>
+): List<ClipboardArchiveGalleryItem> {
+    val archive = withMissingArchiveFilesMarked(existingArchiveFileNames, now = updatedAtEpochMs)
+    return archive.galleryItemsFromNormalizedArchive { archiveMediaFile(archiveDir, clipboardDir, it) }
 }
 
 private fun ClipboardLinkArchive.galleryItemsFromNormalizedArchive(
-    archiveDir: File
+    mediaFile: (String) -> File?
 ): List<ClipboardArchiveGalleryItem> {
     val sortedMedia = media.sortedBy { it.sourceIndex }
     return sortedMedia.mapIndexed { index, item ->
         val file = item.fileName
             ?.takeIf { item.status == ClipboardArchiveMediaStatus.Saved }
-            ?.let { File(archiveDir, it) }
-            ?.takeIf { it.isFile }
+            ?.let(mediaFile)
 
         ClipboardArchiveGalleryItem(
             media = item,
