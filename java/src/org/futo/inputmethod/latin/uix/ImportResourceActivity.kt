@@ -1074,6 +1074,16 @@ class ImportResourceActivity : ComponentActivity() {
         val key = getSetting(THEME_KEY)
         this.themeOption.value = getThemeOption(this, key).orDefault(this)
     }
+
+    override fun onResume() {
+        super.onResume()
+        PrivacyCover.hide(this)
+    }
+
+    override fun onPause() {
+        PrivacyCover.show(this)
+        super.onPause()
+    }
 }
 
 object MissingDictionaryHelper {

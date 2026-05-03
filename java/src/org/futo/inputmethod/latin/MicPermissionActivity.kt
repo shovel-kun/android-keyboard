@@ -31,6 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
+import org.futo.inputmethod.latin.uix.PrivacyCover
 import org.futo.inputmethod.latin.uix.settings.DataStoreCacheProvider
 import org.futo.inputmethod.latin.uix.settings.NavigationItem
 import org.futo.inputmethod.latin.uix.settings.NavigationItemStyle
@@ -121,5 +122,15 @@ class MicPermissionActivity : ComponentActivity() {
                 updateContent()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PrivacyCover.hide(this)
+    }
+
+    override fun onPause() {
+        PrivacyCover.show(this)
+        super.onPause()
     }
 }

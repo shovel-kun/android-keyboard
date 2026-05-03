@@ -67,6 +67,18 @@ public class TextEditPopupActivity extends AppCompatActivity {
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        PrivacyCover.hide(this);
+    }
+
+    @Override
+    protected void onPause() {
+        PrivacyCover.show(this);
+        super.onPause();
+    }
+
     private int dp(final int dp) {
         return Math.round(dp * getResources().getDisplayMetrics().density);
     }

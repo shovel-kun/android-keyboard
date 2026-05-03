@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.uix.dataStore
 import org.futo.inputmethod.latin.uix.getSetting
+import org.futo.inputmethod.latin.uix.PrivacyCover
 import org.futo.inputmethod.latin.uix.settings.DataStoreCacheProvider
 import org.futo.inputmethod.latin.uix.settings.NavigationItem
 import org.futo.inputmethod.latin.uix.settings.NavigationItemStyle
@@ -112,5 +113,15 @@ class PaymentCompleteActivity : ComponentActivity() {
             Log.e("PaymentCompleteActivity", "futo-keyboard launched with invalid targetData $targetData")
             finish()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PrivacyCover.hide(this)
+    }
+
+    override fun onPause() {
+        PrivacyCover.show(this)
+        super.onPause()
     }
 }

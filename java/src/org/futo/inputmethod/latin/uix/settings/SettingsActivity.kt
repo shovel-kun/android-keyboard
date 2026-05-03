@@ -41,6 +41,7 @@ import org.futo.inputmethod.latin.uix.EXPORT_SETTINGS_REQUEST
 import org.futo.inputmethod.latin.uix.IMPORT_CLIPBOARD_BACKUP_REQUEST
 import org.futo.inputmethod.latin.uix.IMPORT_SETTINGS_REQUEST
 import org.futo.inputmethod.latin.uix.ImportResourceActivity
+import org.futo.inputmethod.latin.uix.PrivacyCover
 import org.futo.inputmethod.latin.uix.SettingsExporter
 import org.futo.inputmethod.latin.uix.THEME_KEY
 import org.futo.inputmethod.latin.uix.getSettingBlocking
@@ -252,7 +253,13 @@ class SettingsActivity : ComponentActivity(), DynamicThemeProviderOwner {
     override fun onResume() {
         super.onResume()
 
+        PrivacyCover.hide(this)
         updateSystemState()
+    }
+
+    override fun onPause() {
+        PrivacyCover.show(this)
+        super.onPause()
     }
 
     override fun onRestart() {
