@@ -207,7 +207,7 @@ fun ClipboardLinkArchive.hasRetryableMedia(): Boolean =
     media.any { it.status.isRetryableArchiveMediaStatus() }
 
 fun ClipboardLinkArchive.hasAutoDownloadableMedia(): Boolean =
-    media.any { it.status.isAutoDownloadableArchiveMediaStatus() }
+    media.any { it.isAutoDownloadableArchiveMedia(this) }
 
 fun ClipboardArchiveMediaStatus.isRetryableArchiveMediaStatus(): Boolean = when (this) {
     ClipboardArchiveMediaStatus.Pending,
@@ -217,19 +217,20 @@ fun ClipboardArchiveMediaStatus.isRetryableArchiveMediaStatus(): Boolean = when 
     ClipboardArchiveMediaStatus.Saved -> false
 }
 
-fun ClipboardArchiveMediaStatus.isAutoDownloadableArchiveMediaStatus(): Boolean = when (this) {
-    ClipboardArchiveMediaStatus.Pending -> true
-    ClipboardArchiveMediaStatus.Missing,
-    ClipboardArchiveMediaStatus.Failed,
-    ClipboardArchiveMediaStatus.Saved,
-    ClipboardArchiveMediaStatus.SkippedTooLarge -> false
-}
-
 fun ClipboardLinkArchive.retryableMedia(): List<ClipboardArchiveMedia> =
     media.filter { it.status.isRetryableArchiveMediaStatus() }
 
 fun ClipboardLinkArchive.autoDownloadableMedia(): List<ClipboardArchiveMedia> =
-    media.filter { it.status.isAutoDownloadableArchiveMediaStatus() }
+    media.filter { it.isAutoDownloadableArchiveMedia(this) }
+
+private fun ClipboardArchiveMedia.isAutoDownloadableArchiveMedia(archive: ClipboardLinkArchive): Boolean = when (status) {
+    ClipboardArchiveMediaStatus.Pending -> true
+    ClipboardArchiveMediaStatus.Missing ->
+        archive.providerManifestAvailable && !ClipboardLinkPreviewFetcher.supportsPreview(sourceUrl)
+    ClipboardArchiveMediaStatus.Failed,
+    ClipboardArchiveMediaStatus.Saved,
+    ClipboardArchiveMediaStatus.SkippedTooLarge -> false
+}
 
 fun ClipboardArchiveMedia.archiveMediaKey(): String =
     "index:$sourceIndex"

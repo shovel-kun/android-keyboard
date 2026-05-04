@@ -786,6 +786,7 @@ class ClipboardBackupTest {
         assertEquals(
             listOf(
                 "https://img.example/pending.jpg",
+                "https://img.example/missing.jpg",
             ),
             archive.autoDownloadableMedia().map { it.sourceUrl }
         )

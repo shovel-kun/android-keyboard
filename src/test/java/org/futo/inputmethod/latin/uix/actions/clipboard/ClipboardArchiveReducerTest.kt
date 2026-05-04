@@ -117,6 +117,31 @@ class ClipboardArchiveReducerTest {
     }
 
     @Test
+    fun missingProviderMedia_isAutoDownloadableButSourcePageMissingIsManualOnly() {
+        val archive = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/missing.jpg",
+                    sourceIndex = 0,
+                    fileName = "missing.jpg",
+                    status = ClipboardArchiveMediaStatus.Missing
+                ),
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://www.phixiv.net/en/artworks/123",
+                    sourceIndex = 1,
+                    fileName = "placeholder.jpg",
+                    status = ClipboardArchiveMediaStatus.Missing
+                )
+            )
+        )
+
+        assertEquals(
+            listOf("https://img.example/missing.jpg"),
+            archive.autoDownloadableMedia().map { it.sourceUrl }
+        )
+    }
+
+    @Test
     fun manifestUrlChurn_preservesSavedMediaBySourceIndex() {
         val archive = sampleArchive(
             media = listOf(savedMedia(sourceUrl = "https://img.example/old.jpg"))
