@@ -68,6 +68,11 @@ val ClipboardLinkPreviewsEnabled = SettingsKey(
     true
 )
 
+val ClipboardLimitDownloadsOnMobileData = SettingsKey(
+    booleanPreferencesKey("clipboard_limit_downloads_on_mobile_data"),
+    true
+)
+
 val ClipboardEmbedDisplayModeSetting = SettingsKey(
     intPreferencesKey("clipboard_embed_display_mode"),
     ClipboardEmbedDisplayMode.ShowEmbed.storedValue
@@ -168,6 +173,11 @@ val ClipboardHistoryAction = Action(
                 title = R.string.action_clipboard_manager_settings_link_previews,
                 subtitle = R.string.action_clipboard_manager_settings_link_previews_subtitle,
                 setting = ClipboardLinkPreviewsEnabled
+            ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
+            userSettingToggleDataStore(
+                title = R.string.action_clipboard_manager_settings_limit_mobile_data,
+                subtitle = R.string.action_clipboard_manager_settings_limit_mobile_data_subtitle,
+                setting = ClipboardLimitDownloadsOnMobileData
             ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
             UserSetting(
                 name = R.string.action_clipboard_manager_settings_save_sensitive_clips,

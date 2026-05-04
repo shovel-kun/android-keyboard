@@ -553,6 +553,104 @@ class ClipboardArchiveBackfillTest {
         }
     }
 
+    @Test
+    fun deleteArchivePreviewRetention_clearsTextWhenNoMediaRemains() {
+        val entry = samplePixivEntry()
+
+        assertEquals(null, retainedPreviewTextAfterArchiveDelete(entry, retainedPreviewMedia = emptyList()))
+    }
+
+    @Test
+    fun deleteArchivePreviewRetention_keepsTextWhenClipboardOwnedMediaRemains() {
+        val entry = samplePixivEntry()
+
+        assertEquals(
+            "legacy preview",
+            retainedPreviewTextAfterArchiveDelete(
+                entry,
+                retainedPreviewMedia = listOf(
+                    ClipboardPreviewMedia(
+                        fileName = "legacy.jpg",
+                        sourceIndex = 0,
+                        mimeType = "image/jpeg"
+                    )
+                )
+            )
+        )
+    }
+
+    @Test
+    fun entryLevelDeleteTombstoneDoesNotOwnBackfillAfterCutover() {
+        val deletedEntry = samplePixivEntry().copy(
+            previewText = null,
+            previewImageFile = null,
+            previewMediaFiles = emptyList(),
+            previewMetadata = null,
+            deletedArchiveKeys = setOf("pixiv:123")
+        )
+
+        assertFalse(deletedEntry.isEligibleForArchiveBackfill(existingArchiveKeys = emptySet()))
+    }
+
+    @Test
+    fun archiveStoreTombstoneBlocksBackfill() {
+        val deletedEntry = samplePixivEntry().copy(
+            deletedArchiveKeys = setOf("pixiv:123")
+        )
+
+        assertFalse(
+            deletedEntry.isEligibleForArchiveBackfill(
+                existingArchiveKeys = emptySet(),
+                deletedArchiveKeys = setOf("pixiv:123")
+            )
+        )
+        assertTrue(
+            archiveBackfillRequests(
+                entries = listOf(samplePixivEntry()),
+                existingArchiveKeys = emptySet()
+            ).isNotEmpty()
+        )
+        assertEquals(
+            emptyList<ClipboardArchiveBackfillRequest>(),
+            archiveBackfillRequests(
+                entries = listOf(deletedEntry),
+                existingArchiveKeys = emptySet(),
+                deletedArchiveKeys = setOf("pixiv:123")
+            )
+        )
+    }
+
+    @Test
+    fun deleteArchiveMatchesEntryFromUrlWhenPreviewMetadataWasAlreadyCleared() {
+        val entry = samplePixivEntry().copy(
+            previewMetadata = null
+        )
+
+        assertTrue(entry.matchesDeletedArchiveKey("pixiv:123"))
+    }
+
+    @Test
+    fun deleteArchiveMatchesBareSupportedUrlEntry() {
+        val entry = samplePixivEntry().copy(
+            previewText = null,
+            previewMediaFiles = emptyList(),
+            previewMetadata = null,
+            previewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted
+        )
+
+        assertTrue(entry.matchesDeletedArchiveKey("pixiv:123"))
+    }
+
+    @Test
+    fun deleteArchiveDoesNotMatchPlainTextEntry() {
+        val entry = samplePixivEntry().copy(
+            text = "plain text",
+            previewMetadata = null
+        )
+
+        assertFalse(entry.matchesDeletedArchiveKey("pixiv:123"))
+    }
+
     private fun samplePixivEntry(
         metadata: ClipboardPreviewMetadata? = null
     ) = ClipboardEntry(

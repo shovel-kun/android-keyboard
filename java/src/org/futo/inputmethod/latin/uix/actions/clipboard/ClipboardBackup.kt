@@ -183,8 +183,13 @@ private fun mergeDuplicateEntries(
         previewFetchLastAttemptAt = maxOfNullable(
             winner.previewFetchLastAttemptAt,
             loser.previewFetchLastAttemptAt
-        )
+        ),
+        deletedArchiveKeys = mergeDeletedArchiveKeys(winner, loser)
     )
+}
+
+private fun mergeDeletedArchiveKeys(winner: ClipboardEntry, loser: ClipboardEntry): Set<String> {
+    return winner.deletedArchiveKeys + loser.deletedArchiveKeys
 }
 
 private fun shouldPreferIncomingEntry(

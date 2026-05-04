@@ -99,6 +99,7 @@ data class ClipboardEntry(
     val previewFetchStatus: ClipboardPreviewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted,
     val previewFetchLastAttemptAt: Long? = null,
     val previewFetchFailureDetail: String? = null,
+    val deletedArchiveKeys: Set<String> = emptySet()
 )
 
 const val ClipboardFileName = "clipboard.json"
@@ -192,7 +193,8 @@ fun ClipboardEntry.hasRetainedPreviewState(): Boolean =
 fun ClipboardEntry.canAutoFetchPreview(): Boolean =
     text != null &&
         !hasRenderablePreview() &&
-        previewFetchStatus == ClipboardPreviewFetchStatus.NeverAttempted
+        previewFetchStatus == ClipboardPreviewFetchStatus.NeverAttempted &&
+        ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text) != null
 
 fun ClipboardEntry.shouldShowManualPreviewRetry(): Boolean =
     text != null &&

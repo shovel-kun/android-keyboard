@@ -345,6 +345,275 @@ class ClipboardArchiveReducerTest {
     }
 
     @Test
+    fun fallbackArchiveWithoutSavedTwitterMediaDoesNotCreateStatusUrlPlaceholder() {
+        val entry = ClipboardEntry(
+            timestamp = 1L,
+            pinned = false,
+            text = "https://x.com/maybeurwifie/status/2048952037258215905",
+            uri = null,
+            mimeTypes = listOf("text/plain")
+        )
+        val archive = newFallbackArchiveFromEntry(
+            entry = entry,
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.TWITTER,
+                sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                sourceId = "2048952037258215905"
+            ),
+            savedMedia = emptyList(),
+            now = 10L
+        )!!
+
+        assertEquals(false, archive.providerManifestAvailable)
+        assertEquals(emptyList<ClipboardArchiveMedia>(), archive.media)
+        assertEquals(ClipboardLinkArchiveStatus.Failed, archive.status)
+        assertEquals(emptyList<ClipboardArchiveMedia>(), archive.retryableMedia())
+    }
+
+    @Test
+    fun manifestSeenWithNoTwitterMediaMarksArchiveComplete() {
+        val archive = reduceArchive(
+            archive = null,
+            event = ClipboardArchiveEvent.ManifestSeen(
+                manifest = ClipboardLinkPreviewManifest(
+                    snippet = "Fun fact:",
+                    mediaItems = emptyList(),
+                    metadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.TWITTER,
+                        sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                        sourceId = "2048952037258215905"
+                    )
+                ),
+                now = 10L
+            )
+        )!!
+
+        assertEquals(true, archive.providerManifestAvailable)
+        assertEquals(emptyList<ClipboardArchiveMedia>(), archive.media)
+        assertEquals(ClipboardLinkArchiveStatus.Complete, archive.status)
+    }
+
+    @Test
+    fun decodeClipboardArchivesDropsFailedTwitterStatusPageMediaFromBackup() {
+        val archive = ClipboardLinkArchive(
+            key = "twitter:2048952037258215905",
+            provider = ClipboardPreviewProvider.TWITTER,
+            sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+            sourceId = "2048952037258215905",
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Failed,
+                    failureDetail = "Unsupported media type"
+                )
+            ),
+            providerManifestAvailable = false,
+            createdAtEpochMs = 1L,
+            updatedAtEpochMs = 1L
+        )
+
+        val decoded = decodeClipboardArchives(encodeClipboardArchives(listOf(archive))).single()
+
+        assertEquals(emptyList<ClipboardArchiveMedia>(), decoded.media)
+        assertEquals(ClipboardLinkArchiveStatus.Failed, decoded.status)
+        assertEquals(emptyList<ClipboardArchiveDownloadListItem>(), archiveDownloadItems(listOf(decoded), emptyMap(), emptySet()))
+    }
+
+    @Test
+    fun manifestSeenWithNoMediaClearsRetryPlaceholder() {
+        val archive = ClipboardLinkArchive(
+            key = "twitter:2048952037258215905",
+            provider = ClipboardPreviewProvider.TWITTER,
+            sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+            sourceId = "2048952037258215905",
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.TWITTER,
+                sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                sourceId = "2048952037258215905"
+            ),
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Failed,
+                    failureDetail = "Unsupported media type"
+                )
+            ),
+            providerManifestAvailable = false,
+            createdAtEpochMs = 1L,
+            updatedAtEpochMs = 1L
+        )
+
+        val updated = reduceArchive(
+            archive = archive,
+            event = ClipboardArchiveEvent.ManifestSeen(
+                manifest = ClipboardLinkPreviewManifest(
+                    snippet = "Fun fact:",
+                    mediaItems = emptyList(),
+                    metadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.TWITTER,
+                        sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                        sourceId = "2048952037258215905"
+                    )
+                ),
+                now = 10L
+            )
+        )!!
+
+        assertEquals(true, updated.providerManifestAvailable)
+        assertEquals(ClipboardLinkArchiveStatus.Complete, updated.status)
+        assertEquals(emptyList<ClipboardArchiveMedia>(), updated.media)
+        assertEquals(false, updated.hasRetryableMedia())
+    }
+
+    @Test
+    fun manifestSeenWithNoMediaClearsUnsavedFailedMedia() {
+        val archive = ClipboardLinkArchive(
+            key = "twitter:2048952037258215905",
+            provider = ClipboardPreviewProvider.TWITTER,
+            sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+            sourceId = "2048952037258215905",
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.TWITTER,
+                sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                sourceId = "2048952037258215905"
+            ),
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://pbs.twimg.com/media/real.jpg",
+                    sourceIndex = 0,
+                    status = ClipboardArchiveMediaStatus.Failed,
+                    failureDetail = "timeout"
+                )
+            ),
+            providerManifestAvailable = true,
+            createdAtEpochMs = 1L,
+            updatedAtEpochMs = 1L
+        )
+
+        val updated = reduceArchive(
+            archive = archive,
+            event = ClipboardArchiveEvent.ManifestSeen(
+                manifest = ClipboardLinkPreviewManifest(
+                    snippet = "Fun fact:",
+                    mediaItems = emptyList(),
+                    metadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.TWITTER,
+                        sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
+                        sourceId = "2048952037258215905"
+                    )
+                ),
+                now = 10L
+            )
+        )!!
+
+        assertEquals(emptyList<ClipboardArchiveMedia>(), updated.media)
+        assertEquals(ClipboardLinkArchiveStatus.Complete, updated.status)
+        assertEquals(false, updated.hasAutoDownloadableMedia())
+        assertEquals(false, updated.hasRetryableMedia())
+    }
+
+    @Test
+    fun importedArchiveDoesNotRestoreDeletedMedia() {
+        val deletedMedia = ClipboardArchiveMedia(
+            sourceUrl = "https://pbs.twimg.com/media/deleted.jpg",
+            sourceIndex = 0,
+            status = ClipboardArchiveMediaStatus.Failed
+        )
+        val existing = sampleArchive(
+            media = emptyList()
+        ).copy(
+            deletedMediaKeys = setOf(deletedMedia.archiveMediaKey())
+        )
+        val imported = sampleArchive(
+            media = listOf(deletedMedia)
+        )
+
+        val merged = mergeClipboardArchives(
+            currentArchives = listOf(existing),
+            importedArchives = listOf(imported)
+        ).single()
+
+        assertEquals(emptyList<ClipboardArchiveMedia>(), merged.media)
+        assertEquals(setOf(deletedMedia.archiveMediaKey()), merged.deletedMediaKeys)
+    }
+
+    @Test
+    fun manifestSeenDoesNotRestoreDeletedMedia() {
+        val deletedMedia = ClipboardArchiveMedia(
+            sourceUrl = "https://img.example/deleted.jpg",
+            sourceIndex = 0,
+            status = ClipboardArchiveMediaStatus.Failed
+        )
+        val archive = sampleArchive(
+            media = emptyList()
+        ).copy(
+            deletedMediaKeys = setOf(deletedMedia.archiveMediaKey())
+        )
+
+        val updated = mergeArchiveWithManifest(
+            archive = archive,
+            manifest = ClipboardLinkPreviewManifest(
+                snippet = null,
+                metadata = archive.metadata,
+                mediaItems = listOf(
+                    ClipboardLinkPreviewMedia(
+                        url = deletedMedia.sourceUrl,
+                        sourceIndex = deletedMedia.sourceIndex,
+                        mimeType = "image/jpeg"
+                    )
+                )
+            ),
+            now = 20L
+        )
+
+        assertEquals(emptyList<ClipboardArchiveMedia>(), updated.media)
+        assertEquals(setOf(deletedMedia.archiveMediaKey()), updated.deletedMediaKeys)
+    }
+
+    @Test
+    fun manifestSeenDoesNotRestoreDeletedMediaWhenUrlChanges() {
+        val archive = sampleArchive(
+            media = emptyList()
+        ).copy(
+            deletedMediaKeys = setOf("index:0")
+        )
+
+        val updated = mergeArchiveWithManifest(
+            archive = archive,
+            manifest = ClipboardLinkPreviewManifest(
+                snippet = null,
+                metadata = archive.metadata,
+                mediaItems = listOf(
+                    ClipboardLinkPreviewMedia(
+                        url = "https://img.example/new-url.jpg",
+                        sourceIndex = 0,
+                        mimeType = "image/jpeg"
+                    )
+                )
+            ),
+            now = 20L
+        )
+
+        assertEquals(emptyList<ClipboardArchiveMedia>(), updated.media)
+    }
+
+    @Test
+    fun filterDeletedClipboardArchivesRemovesDeletedArchiveKeys() {
+        val kept = sampleArchive(media = emptyList()).copy(key = "pixiv:kept", sourceId = "kept")
+        val deleted = sampleArchive(media = emptyList()).copy(key = "pixiv:deleted", sourceId = "deleted")
+
+        assertEquals(
+            listOf("pixiv:kept"),
+            filterDeletedClipboardArchives(
+                archives = listOf(deleted, kept),
+                deletedArchiveKeys = setOf("pixiv:deleted")
+            ).map { it.key }
+        )
+    }
+
+    @Test
     fun importedArchive_preservesSavedMediaOverPendingOrFailedCopies() {
         val existing = sampleArchive(
             media = listOf(savedMedia())

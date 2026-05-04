@@ -11,6 +11,69 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
     @Test
+    fun clipboardArchiveTombstones_roundTripSortedByKey() {
+        val encoded = encodeClipboardArchiveTombstones(
+            listOf(
+                ClipboardArchiveTombstone(
+                    key = "twitter:2",
+                    deletedAtEpochMs = 20L,
+                    reason = "user"
+                ),
+                ClipboardArchiveTombstone(
+                    key = "pixiv:1",
+                    deletedAtEpochMs = 10L
+                )
+            )
+        )
+
+        assertEquals(
+            listOf("pixiv:1", "twitter:2"),
+            decodeClipboardArchiveTombstones(encoded).map { it.key }
+        )
+    }
+
+    @Test
+    fun mergeArchiveTombstones_migratesLegacyEntryKeys() {
+        val merged = mergeArchiveTombstones(
+            existing = listOf(
+                ClipboardArchiveTombstone(
+                    key = "pixiv:kept",
+                    deletedAtEpochMs = 5L
+                )
+            ),
+            migratedKeys = listOf("twitter:deleted", "pixiv:kept"),
+            now = 20L
+        )
+
+        assertEquals(listOf("pixiv:kept", "twitter:deleted"), merged.map { it.key })
+        assertEquals(5L, merged.first { it.key == "pixiv:kept" }.deletedAtEpochMs)
+        assertEquals(20L, merged.first { it.key == "twitter:deleted" }.deletedAtEpochMs)
+    }
+
+    @Test
+    fun tombstonesRetainedAfterArchiveImport_allowsImportedArchiveToRestoreDeletedKey() {
+        val restored = sampleArchive(media = emptyList()).copy(key = "twitter:restored")
+        val retained = ClipboardArchiveTombstone(
+            key = "pixiv:still-deleted",
+            deletedAtEpochMs = 10L
+        )
+
+        assertEquals(
+            listOf("pixiv:still-deleted"),
+            tombstonesRetainedAfterArchiveImport(
+                tombstones = listOf(
+                    ClipboardArchiveTombstone(
+                        key = "twitter:restored",
+                        deletedAtEpochMs = 5L
+                    ),
+                    retained
+                ),
+                importedArchives = listOf(restored)
+            ).map { it.key }
+        )
+    }
+
+    @Test
     fun decodeClipboardEntries_ignoresUnknownFieldsFromNewerBackups() {
         val decoded = decodeClipboardEntries(
             """
@@ -236,6 +299,38 @@ class ClipboardBackupTest {
 
         assertEquals(listOf("one.jpg", "two.jpg"), merged.single().previewMediaFileNames())
         assertFalse(merged.single().pinned)
+    }
+
+    @Test
+    fun mergeClipboardEntries_preservesDeletedArchiveKeysFromOlderDuplicate() {
+        val merged = mergeClipboardEntries(
+            currentEntries = listOf(
+                ClipboardEntry(
+                    timestamp = 2L,
+                    pinned = false,
+                    text = "https://x.com/futo/status/123",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    deletedArchiveKeys = setOf("twitter:123")
+                )
+            ),
+            importedEntries = listOf(
+                ClipboardEntry(
+                    timestamp = 1L,
+                    pinned = false,
+                    text = "https://x.com/futo/status/123",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMetadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.TWITTER,
+                        sourceUrl = "https://x.com/futo/status/123",
+                        sourceId = "123"
+                    )
+                )
+            )
+        )
+
+        assertEquals(setOf("twitter:123"), merged.single().deletedArchiveKeys)
     }
 
     @Test
@@ -641,6 +736,7 @@ class ClipboardBackupTest {
             )
 
             assertTrue(reconciled.single().media.isEmpty())
+            assertEquals(ClipboardLinkArchiveStatus.Complete, reconciled.single().status)
             assertFalse(reconciled.single().hasRetryableMedia())
         } finally {
             dir.deleteRecursively()
@@ -690,8 +786,6 @@ class ClipboardBackupTest {
         assertEquals(
             listOf(
                 "https://img.example/pending.jpg",
-                "https://img.example/failed.jpg",
-                "https://img.example/missing.jpg"
             ),
             archive.autoDownloadableMedia().map { it.sourceUrl }
         )

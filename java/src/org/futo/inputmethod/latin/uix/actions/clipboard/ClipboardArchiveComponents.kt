@@ -97,6 +97,7 @@ internal fun ClipboardArchiveDownloadsScreen(
     modifier: Modifier = Modifier,
     onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit,
     onRetry: (ClipboardArchiveDownloadListItem) -> Unit,
+    onDelete: (ClipboardArchiveDownloadListItem) -> Unit,
     onRetryAll: (List<ClipboardArchiveDownloadListItem>) -> Unit,
     onStop: (ClipboardArchiveDownloadListItem) -> Unit,
     onStopAll: (List<ClipboardArchiveDownloadListItem>) -> Unit
@@ -191,18 +192,21 @@ internal fun ClipboardArchiveDownloadsScreen(
                     title = activeTitle,
                     items = presentation.groups.active,
                     onRetry = onRetry,
+                    onDelete = onDelete,
                     onStop = onStop
                 )
                 archiveDownloadSection(
                     title = waitingTitle,
                     items = presentation.groups.waiting,
                     onRetry = onRetry,
+                    onDelete = onDelete,
                     onStop = onStop
                 )
                 archiveDownloadSection(
                     title = attentionTitle,
                     items = presentation.groups.needsAttention,
                     onRetry = onRetry,
+                    onDelete = onDelete,
                     onStop = onStop
                 )
             }
@@ -270,6 +274,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.archiveDownloadSectio
     title: String,
     items: List<ClipboardArchiveDownloadListItem>,
     onRetry: (ClipboardArchiveDownloadListItem) -> Unit,
+    onDelete: (ClipboardArchiveDownloadListItem) -> Unit,
     onStop: (ClipboardArchiveDownloadListItem) -> Unit
 ) {
     if(items.isEmpty()) return
@@ -292,6 +297,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.archiveDownloadSectio
         ClipboardArchiveDownloadRow(
             item = it,
             onRetry = { onRetry(it) },
+            onDelete = { onDelete(it) },
             onStop = { onStop(it) }
         )
     }
@@ -373,6 +379,7 @@ private fun ClipboardArchiveDownloadSummaryDivider() {
 private fun ClipboardArchiveDownloadRow(
     item: ClipboardArchiveDownloadListItem,
     onRetry: () -> Unit,
+    onDelete: () -> Unit,
     onStop: () -> Unit
 ) {
     Surface(
@@ -477,6 +484,7 @@ private fun ClipboardArchiveDownloadRow(
                 ClipboardArchiveDownloadRowAction(
                     item = item,
                     onRetry = onRetry,
+                    onDelete = onDelete,
                     onStop = onStop
                 )
             }
@@ -534,35 +542,58 @@ private fun ClipboardArchiveDownloadProviderIcon(
 private fun ClipboardArchiveDownloadRowAction(
     item: ClipboardArchiveDownloadListItem,
     onRetry: () -> Unit,
+    onDelete: () -> Unit,
     onStop: () -> Unit
 ) {
     val isActive = item.canStop
     val enabled = if(isActive) item.canStop else item.canRetry
     val color = if(isActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
 
-    Surface(
-        color = Color.Transparent,
-        contentColor = color,
-        border = BorderStroke(1.dp, color.copy(alpha = if(enabled) 0.7f else 0.3f)),
-        shape = CircleShape,
-        modifier = Modifier.size(46.dp)
-    ) {
-        IconButton(
-            onClick = if(isActive) onStop else onRetry,
-            enabled = enabled,
-            modifier = Modifier.fillMaxSize()
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(
+            color = Color.Transparent,
+            contentColor = color,
+            border = BorderStroke(1.dp, color.copy(alpha = if(enabled) 0.7f else 0.3f)),
+            shape = CircleShape,
+            modifier = Modifier.size(46.dp)
         ) {
-            Icon(
-                painter = painterResource(if(isActive) R.drawable.close else R.drawable.refresh_cw),
-                contentDescription = stringResource(
-                    if(isActive) {
-                        R.string.clipboard_history_downloads_stop
-                    } else {
-                        R.string.action_clipboard_manager_retry_preview
-                    }
-                ),
-                modifier = Modifier.size(18.dp)
-            )
+            IconButton(
+                onClick = if(isActive) onStop else onRetry,
+                enabled = enabled,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Icon(
+                    painter = painterResource(if(isActive) R.drawable.close else R.drawable.refresh_cw),
+                    contentDescription = stringResource(
+                        if(isActive) {
+                            R.string.clipboard_history_downloads_stop
+                        } else {
+                            R.string.action_clipboard_manager_retry_preview
+                        }
+                    ),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        if(item.status == ClipboardArchiveDownloadRowStatus.Failed) {
+            Surface(
+                color = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.error,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.7f)),
+                shape = CircleShape,
+                modifier = Modifier.size(46.dp)
+            ) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.trash),
+                        contentDescription = stringResource(R.string.action_clipboard_manager_remove_item),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -1016,6 +1047,9 @@ private fun ClipboardArchiveCardMedia(
     status: ClipboardArchiveDisplayStatus
 ) {
     val visibleBitmaps = bitmaps.take(4)
+    if(expectedCount == 0) {
+        return
+    }
     if(expectedCount == 1 && savedCount == 1 && visibleBitmaps.size == 1) {
         ClipboardArchiveSingleImageCardMedia(visibleBitmaps.single())
         return
@@ -1041,19 +1075,20 @@ private fun ClipboardArchiveCardMedia(
             )
         } else {
             Text(
-                text = stringResource(
-                    if(status == ClipboardArchiveDisplayStatus.Waiting || status == ClipboardArchiveDisplayStatus.Saving) {
-                        R.string.clipboard_history_archive_waiting
-                    } else {
-                        R.string.clipboard_history_archive_missing
-                    }
-                ),
+                text = stringResource(archiveCardMediaPlaceholderLabelRes(status)),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
 }
+
+internal fun archiveCardMediaPlaceholderLabelRes(status: ClipboardArchiveDisplayStatus): Int =
+    if(status == ClipboardArchiveDisplayStatus.Waiting || status == ClipboardArchiveDisplayStatus.Saving) {
+        R.string.clipboard_history_archive_waiting
+    } else {
+        R.string.clipboard_history_archive_missing
+    }
 
 @Composable
 private fun ClipboardArchiveSingleImageCardMedia(bitmap: ImageBitmap) {

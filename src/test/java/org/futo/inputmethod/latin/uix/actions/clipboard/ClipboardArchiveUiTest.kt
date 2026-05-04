@@ -179,6 +179,18 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun archiveCardPlaceholderLabel_usesOnlyMediaFailureStates() {
+        assertEquals(
+            R.string.clipboard_history_archive_waiting,
+            archiveCardMediaPlaceholderLabelRes(ClipboardArchiveDisplayStatus.Waiting)
+        )
+        assertEquals(
+            R.string.clipboard_history_archive_missing,
+            archiveCardMediaPlaceholderLabelRes(ClipboardArchiveDisplayStatus.Retry)
+        )
+    }
+
+    @Test
     fun failureSummaryLabels_areConciseAndDoNotExposeRawDetails() {
         val failed = ClipboardArchiveMedia(
             sourceUrl = "https://img.example/one.jpg",

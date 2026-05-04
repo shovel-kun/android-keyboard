@@ -300,6 +300,7 @@ object ClipboardLinkPreviewFetcher {
                     card?.objectValue("image")?.stringValue("url")
                 ).mapIndexed { index, url -> ClipboardLinkPreviewMedia(url = url, sourceIndex = index) }
             }
+            .withoutTwitterStatusPageUrls()
 
         val author = tweet.objectValue("author")
         val metadata = ClipboardPreviewMetadata(
@@ -467,10 +468,13 @@ object ClipboardLinkPreviewFetcher {
             snippet = snippet,
             mediaItems = listOfNotNull(mediaUrl).map {
                 ClipboardLinkPreviewMedia(url = it, sourceIndex = 0, mimeType = it.guessedClipboardMimeType())
-            },
+            }.withoutTwitterStatusPageUrls(),
             metadata = metadata
         )
     }
+
+    private fun List<ClipboardLinkPreviewMedia>.withoutTwitterStatusPageUrls(): List<ClipboardLinkPreviewMedia> =
+        filterNot { parseTwitterStatusUrl(it.url) != null }
 
     private fun requestPixivPreview(artworkUrl: PixivArtworkUrl): JsonObject? {
         val requestUrl = "https://www.phixiv.net/api/info?id=${artworkUrl.id}&language=${artworkUrl.language}"

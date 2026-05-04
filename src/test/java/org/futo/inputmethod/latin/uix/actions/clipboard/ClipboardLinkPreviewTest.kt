@@ -146,6 +146,30 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parseTwitterApiPreviewMediaUrls_ignoresStatusPageUrls() {
+        val urls = parseTwitterApiPreviewMediaUrlsForTest(
+            """
+            {
+              "tweet": {
+                "id": "123",
+                "media": {
+                  "photos": [
+                    {"url": "https://x.com/com/status/1234567890"},
+                    {"url": "https://pbs.twimg.com/media/a.jpg"}
+                  ]
+                },
+                "card": {
+                  "image": {"url": "https://x.com/com/status/1234567890"}
+                }
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("https://pbs.twimg.com/media/a.jpg?name=orig"), urls)
+    }
+
+    @Test
     fun parseTwitterHtmlPreviewMediaUrls_returnsSingleOpenGraphMedia() {
         val urls = parseTwitterHtmlPreviewMediaUrlsForTest(
             """
@@ -159,6 +183,22 @@ class ClipboardLinkPreviewTest {
         )
 
         assertEquals(listOf("https://pbs.twimg.com/card.jpg"), urls)
+    }
+
+    @Test
+    fun parseTwitterHtmlPreviewMediaUrls_ignoresStatusPageUrls() {
+        val urls = parseTwitterHtmlPreviewMediaUrlsForTest(
+            """
+            <html>
+              <head>
+                <meta property="og:description" content="hello" />
+                <meta property="og:image" content="https://x.com/com/status/1234567890" />
+              </head>
+            </html>
+            """.trimIndent()
+        )
+
+        assertEquals(emptyList<String>(), urls)
     }
 
     @Test

@@ -180,7 +180,7 @@ internal fun archiveDownloadItems(
             )
             clipboardDir != null -> rawArchive.withMissingArchiveFilesMarked(clipboardDir, now = rawArchive.updatedAtEpochMs)
             else -> rawArchive
-        }
+        }.withNormalizedArchiveMedia()
         val progress = progressByArchiveKey[archive.key]
         val archiveLoading = archive.key in loadingArchiveKeys
         val queuedSourceUrls = queuedSourceUrlsByArchiveKey[archive.key].orEmpty()
@@ -239,7 +239,8 @@ internal fun archiveDownloadActionCount(
         val archive = existingArchiveFileNames
             ?.let { rawArchive.withMissingArchiveFilesMarked(it, now = rawArchive.updatedAtEpochMs) }
             ?: rawArchive
-        archive.media.count { it.status.isRetryableArchiveMediaStatus() }
+        val normalizedArchive = archive.withNormalizedArchiveMedia()
+        normalizedArchive.media.count { it.status.isRetryableArchiveMediaStatus() }
     }
 
 internal fun ClipboardLinkArchive.failureSummaryLabelRes(): Int? =

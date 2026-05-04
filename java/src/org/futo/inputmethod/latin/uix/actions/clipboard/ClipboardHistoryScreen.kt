@@ -306,9 +306,10 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                     modifier = Modifier.weight(1f),
                     onProviderFilterSelected = { archiveDownloadProviderFilter = it },
                     onRetry = { manager.retryArchiveMedia(it) },
+                    onDelete = { manager.deleteArchiveDownload(it) },
                     onRetryAll = { manager.retryAllArchiveDownloads(it) },
-                    onStop = { manager.stopArchiveDownload(it.archiveKey) },
-                    onStopAll = { items -> items.forEach { manager.stopArchiveDownload(it.archiveKey) } }
+                    onStop = { manager.stopArchiveDownload(it) },
+                    onStopAll = { items -> items.forEach { manager.stopArchiveDownload(it) } }
                 )
             }
 
