@@ -11,6 +11,80 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
     @Test
+    fun shouldObserveScreenshots_requiresAllGates() {
+        assertFalse(
+            shouldObserveScreenshots(
+                historyEnabled = false,
+                incognitoMode = false,
+                saveScreenshots = true,
+                hasPermission = true
+            )
+        )
+        assertFalse(
+            shouldObserveScreenshots(
+                historyEnabled = true,
+                incognitoMode = true,
+                saveScreenshots = true,
+                hasPermission = true
+            )
+        )
+        assertFalse(
+            shouldObserveScreenshots(
+                historyEnabled = true,
+                incognitoMode = false,
+                saveScreenshots = false,
+                hasPermission = true
+            )
+        )
+        assertFalse(
+            shouldObserveScreenshots(
+                historyEnabled = true,
+                incognitoMode = false,
+                saveScreenshots = true,
+                hasPermission = false
+            )
+        )
+        assertTrue(
+            shouldObserveScreenshots(
+                historyEnabled = true,
+                incognitoMode = false,
+                saveScreenshots = true,
+                hasPermission = true
+            )
+        )
+    }
+
+    @Test
+    fun upsertClipboardMediaEntry_deduplicatesBackingFileAndPreservesPinnedState() {
+        val entries = mutableListOf(
+            ClipboardEntry(
+                timestamp = 1L,
+                pinned = true,
+                text = null,
+                uri = null,
+                backingFile = "screenshot.png",
+                mimeTypes = listOf("image/png")
+            )
+        )
+
+        upsertClipboardMediaEntry(
+            entries,
+            ClipboardEntry(
+                timestamp = 2L,
+                pinned = false,
+                text = null,
+                uri = null,
+                backingFile = "screenshot.png",
+                mimeTypes = listOf("image/png")
+            )
+        )
+
+        assertEquals(1, entries.size)
+        assertEquals(2L, entries.single().timestamp)
+        assertTrue(entries.single().pinned)
+    }
+
+    @Test
     fun clipboardArchiveTombstones_roundTripSortedByKey() {
         val encoded = encodeClipboardArchiveTombstones(
             listOf(

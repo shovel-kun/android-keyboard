@@ -1,11 +1,16 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import kotlinx.coroutines.launch
@@ -17,8 +22,10 @@ import org.futo.inputmethod.latin.uix.SettingsExporter
 import org.futo.inputmethod.latin.uix.SettingsKey
 import org.futo.inputmethod.latin.uix.actions.PasteAction
 import org.futo.inputmethod.latin.uix.settings.SettingToggleDataStore
+import org.futo.inputmethod.latin.uix.settings.SettingToggleRaw
 import org.futo.inputmethod.latin.uix.settings.UserSetting
 import org.futo.inputmethod.latin.uix.settings.UserSettingsMenu
+import org.futo.inputmethod.latin.uix.settings.useDataStore
 import org.futo.inputmethod.latin.uix.settings.useDataStoreValue
 import org.futo.inputmethod.latin.uix.settings.userSettingNavigationItem
 import org.futo.inputmethod.latin.uix.settings.userSettingToggleDataStore
@@ -61,6 +68,11 @@ val ClipboardSkipDeleteConfirmation = SettingsKey(
 val ClipboardSaveImages = SettingsKey(
     booleanPreferencesKey("clipboard_save_images"),
     true
+)
+
+val ClipboardSaveScreenshots = SettingsKey(
+    booleanPreferencesKey("clipboard_save_screenshots"),
+    false
 )
 
 val ClipboardLinkPreviewsEnabled = SettingsKey(
@@ -169,6 +181,38 @@ val ClipboardHistoryAction = Action(
                 title = R.string.action_clipboard_manager_settings_save_images,
                 setting = ClipboardSaveImages
             ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_save_screenshots,
+                subtitle = R.string.action_clipboard_manager_settings_save_screenshots_subtitle,
+                component = {
+                    val context = LocalContext.current
+                    val (enabled, setEnabled) = useDataStore(ClipboardSaveScreenshots)
+                    val launcher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestPermission()
+                    ) { granted ->
+                        setEnabled(granted)
+                    }
+                    SettingToggleRaw(
+                        title = stringResource(R.string.action_clipboard_manager_settings_save_screenshots),
+                        enabled = enabled,
+                        setValue = { requested ->
+                            if(!requested) {
+                                setEnabled(false)
+                            } else if(ContextCompat.checkSelfPermission(
+                                    context,
+                                    ScreenshotHelper.permission
+                                ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                setEnabled(true)
+                            } else {
+                                launcher.launch(ScreenshotHelper.permission)
+                            }
+                        },
+                        subtitle = stringResource(R.string.action_clipboard_manager_settings_save_screenshots_subtitle)
+                    )
+                },
+                visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }
+            ),
             userSettingToggleDataStore(
                 title = R.string.action_clipboard_manager_settings_link_previews,
                 subtitle = R.string.action_clipboard_manager_settings_link_previews_subtitle,

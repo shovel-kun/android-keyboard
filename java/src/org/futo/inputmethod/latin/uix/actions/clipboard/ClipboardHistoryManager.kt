@@ -3,6 +3,7 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -231,6 +232,16 @@ internal fun orphanedSharedArchiveFileNamesAfterArchiveDelete(
         .toSet()
 }
 
+internal fun upsertClipboardMediaEntry(
+    entries: MutableList<ClipboardEntry>,
+    entry: ClipboardEntry
+) {
+    val backingFile = entry.backingFile ?: return
+    val wasPinned = entries.any { it.backingFile == backingFile && it.pinned }
+    entries.removeAll { it.backingFile == backingFile }
+    entries.add(entry.copy(pinned = entry.pinned || wasPinned))
+}
+
 class ClipboardHistoryManager(
     val context: Context,
     val coroutineScope: LifecycleCoroutineScope
@@ -274,6 +285,16 @@ class ClipboardHistoryManager(
     private var archiveBackfillCompletionPending = false
     private var archiveBackfillBlockedByCooldown = false
     private val archiveDownloadJobsByKey = mutableMapOf<String, Job>()
+
+    private val screenshotHelper = ScreenshotHelper(
+        context = context,
+        lifecycleScope = coroutineScope,
+        listener = object : ScreenshotListener {
+            override fun onScreenshotAdded(mime: String, uri: Uri) {
+                importScreenshotEntry(mime, uri)
+            }
+        }
+    )
 
     override suspend fun onDeviceUnlocked() {
         loadClipboard()
@@ -376,10 +397,34 @@ class ClipboardHistoryManager(
         saveClipboard()
     }
 
-    private fun importMediaEntry(timestamp: Long, uri: android.net.Uri, mimeTypes: List<String>) {
+    private fun importScreenshotEntry(mime: String, uri: Uri) {
+        if(!shouldObserveScreenshots(
+                historyEnabled = context.getSettingBlocking(ClipboardHistoryEnabled),
+                incognitoMode = context.getSettingBlocking(ClipboardIncognitoMode),
+                saveScreenshots = context.getSettingBlocking(ClipboardSaveScreenshots),
+                hasPermission = true
+            )
+        ) {
+            return
+        }
+
+        importMediaEntry(
+            timestamp = System.currentTimeMillis(),
+            uri = uri,
+            mimeTypes = listOf(mime),
+            imagesOnly = true
+        )
+    }
+
+    private fun importMediaEntry(
+        timestamp: Long,
+        uri: Uri,
+        mimeTypes: List<String>,
+        imagesOnly: Boolean = false
+    ) {
         try {
             val targetMime = mimeTypes.firstOrNull {
-                it.startsWith("image/") || it.startsWith("video/")
+                it.startsWith("image/") || (!imagesOnly && it.startsWith("video/"))
             }
                 ?: return
 
@@ -420,15 +465,11 @@ class ClipboardHistoryManager(
                 tempFile.delete()
             }
 
-            val isAlreadyPinned = clipboardHistory.firstOrNull {
-                it.backingFile == finalFile.name && it.pinned
-            }?.pinned == true
-
-            clipboardHistory.removeAll { it.backingFile == finalFile.name }
-            clipboardHistory.add(
+            upsertClipboardMediaEntry(
+                clipboardHistory,
                 ClipboardEntry(
                     timestamp = timestamp,
-                    pinned = isAlreadyPinned,
+                    pinned = false,
                     text = null,
                     uri = null,
                     backingFile = finalFile.name,
@@ -1128,6 +1169,7 @@ class ClipboardHistoryManager(
 
     override fun close() {
         clipboardManager.removePrimaryClipChangedListener(primaryClipChangedListener)
+        screenshotHelper.onDestroy()
     }
 
     private fun currentPreviewState(): ClipboardPreviewState =
