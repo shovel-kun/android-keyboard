@@ -61,6 +61,38 @@ fun referencedClipboardFileNames(entries: List<ClipboardEntry>): Set<String> =
         .flatMap { listOf(it, ClipboardUtil.thumbnailForName(it)) }
         .toSet()
 
+fun clipboardArchivesFromPreviewEntries(
+    entries: Collection<ClipboardEntry>,
+    now: Long = System.currentTimeMillis()
+): List<ClipboardLinkArchive> {
+    val recoveredArchives = entries.mapNotNull { entry ->
+        val metadata = entry.archiveBackfillMetadata() ?: return@mapNotNull null
+        val fallbackSourceUrl = metadata.sourceUrl ?: entry.text ?: return@mapNotNull null
+        val savedMedia = entry.previewMedia().map { media ->
+            ClipboardArchiveMedia(
+                sourceUrl = media.sourceUrl ?: "$fallbackSourceUrl#legacy-media-${media.sourceIndex}",
+                sourceIndex = media.sourceIndex,
+                mimeType = media.mimeType ?: media.fileName.guessedClipboardMimeType(),
+                fileName = media.fileName,
+                status = ClipboardArchiveMediaStatus.Saved,
+                lastAttemptAtEpochMs = now
+            )
+        }
+
+        newFallbackArchiveFromEntry(
+            entry = entry,
+            metadata = metadata,
+            savedMedia = savedMedia,
+            now = now
+        )
+    }
+
+    return mergeClipboardArchives(
+        currentArchives = emptyList(),
+        importedArchives = recoveredArchives
+    )
+}
+
 fun reconcileClipboardEntriesWithStorage(
     entries: List<ClipboardEntry>,
     clipboardDir: File
@@ -227,7 +259,7 @@ private fun comparePreviewFieldRichness(a: ClipboardEntry, b: ClipboardEntry): I
     previewFieldScore(a).compareTo(previewFieldScore(b))
 
 private fun previewFieldScore(entry: ClipboardEntry): Int =
-    entry.previewMedia().size.coerceAtMost(100) * 1000 +
+    entry.previewMedia().size * 1000 +
         if(entry.previewText.isNullOrBlank()) 0 else 100 + entry.previewText.length.coerceAtMost(200)
 
 private fun richerPreviewMedia(

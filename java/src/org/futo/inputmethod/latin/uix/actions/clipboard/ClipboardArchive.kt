@@ -321,7 +321,7 @@ fun migrateLegacyArchiveMediaFiles(
         if(!legacyFile.isFile) return@forEach
 
         val destination = File(clipboardDir, legacyFile.name)
-        if(legacyFile.name in referencedFileNames && !destination.exists()) {
+        if(!destination.exists()) {
             legacyFile.copyTo(destination, overwrite = false)
         }
         legacyFile.delete()

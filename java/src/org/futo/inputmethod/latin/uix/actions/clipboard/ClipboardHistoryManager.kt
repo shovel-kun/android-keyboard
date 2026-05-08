@@ -525,15 +525,6 @@ class ClipboardHistoryManager(
             }
         }
 
-        val clipReferencedFileNames = referencedClipboardFileNames(clipboardHistory)
-        val stillReferenced = clipReferencedFileNames + referencedClipboardArchiveFileNames(linkArchives.values)
-
-        context.clipboardDir.listFiles()?.forEach {
-            if(it.name !in stillReferenced) {
-                it.delete()
-            }
-        }
-
         reconcileArchiveStorage()
     }
 

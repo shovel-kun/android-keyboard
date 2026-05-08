@@ -440,6 +440,77 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun deduplicateClipboardEntries_keepsRicherPreviewMediaListAboveOneHundredItems() {
+        val fullMedia = List(650) { index ->
+            ClipboardPreviewMedia("full-$index.jpg", sourceIndex = index)
+        }
+        val partialMedia = List(100) { index ->
+            ClipboardPreviewMedia("partial-$index.jpg", sourceIndex = index)
+        }
+        val deduplicated = deduplicateClipboardEntries(
+            listOf(
+                ClipboardEntry(
+                    timestamp = 1L,
+                    pinned = false,
+                    text = "https://www.pixiv.net/en/artworks/107946644",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMediaFiles = fullMedia
+                ),
+                ClipboardEntry(
+                    timestamp = 2L,
+                    pinned = false,
+                    text = "https://www.pixiv.net/en/artworks/107946644",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMediaFiles = partialMedia
+                )
+            )
+        )
+
+        assertEquals(1, deduplicated.size)
+        assertEquals(650, deduplicated.single().previewMedia().size)
+        assertEquals(fullMedia.map { it.fileName }, deduplicated.single().previewMediaFileNames())
+    }
+
+    @Test
+    fun clipboardArchivesFromPreviewEntries_recoversArchiveRecordsFromSavedPreviewMedia() {
+        val archives = clipboardArchivesFromPreviewEntries(
+            entries = listOf(
+                ClipboardEntry(
+                    timestamp = 1L,
+                    pinned = false,
+                    text = "https://www.pixiv.net/en/artworks/107946644",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMediaFiles = List(650) { index ->
+                        ClipboardPreviewMedia(
+                            fileName = "preview-$index.jpg",
+                            sourceUrl = "https://img.example/$index.jpg",
+                            sourceIndex = index,
+                            mimeType = "image/jpeg"
+                        )
+                    },
+                    previewMetadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.PIXIV,
+                        sourceUrl = "https://www.pixiv.net/en/artworks/107946644",
+                        sourceId = "107946644",
+                        imageCount = 650
+                    )
+                )
+            ),
+            now = 10L
+        )
+
+        val archive = archives.single()
+        assertEquals("pixiv:107946644", archive.key)
+        assertEquals(650, archive.media.size)
+        assertEquals(650, archive.savedMediaCount())
+        assertEquals(ClipboardLinkArchiveStatus.Complete, archive.status)
+        assertFalse(archive.providerManifestAvailable)
+    }
+
+    @Test
     fun newArchiveFromManifest_recordsAllExpectedMedia() {
         val archive = newArchiveFromManifest(
             ClipboardLinkPreviewManifest(
@@ -723,7 +794,7 @@ class ClipboardBackupTest {
     }
 
     @Test
-    fun migrateLegacyArchiveMediaFiles_movesReferencedMediaToClipboardStore() {
+    fun migrateLegacyArchiveMediaFiles_preservesUnreferencedMediaInClipboardStore() {
         val archiveDir = createTempDirectory().toFile()
         val clipboardDir = createTempDirectory().toFile()
         try {
@@ -739,7 +810,7 @@ class ClipboardBackupTest {
 
             assertEquals("archive bytes", File(clipboardDir, "saved.jpg").readText())
             assertEquals("thumb", File(clipboardDir, ClipboardUtil.thumbnailForName("saved.jpg")).readText())
-            assertFalse(File(clipboardDir, "unreferenced.jpg").exists())
+            assertEquals("unused", File(clipboardDir, "unreferenced.jpg").readText())
             assertFalse(archiveDir.exists())
         } finally {
             archiveDir.deleteRecursively()
@@ -778,6 +849,7 @@ class ClipboardBackupTest {
             val clipFile = File(clipboardDir, "clip.jpg").apply { writeText("clip") }
             File(archiveDir, "clip.jpg").writeText("duplicate")
             val archiveOnlyFile = File(archiveDir, "archive-only.jpg").apply { writeText("archive") }
+            val orphanFile = File(clipboardDir, "orphan.jpg").apply { writeText("orphan") }
 
             val entries = clipboardBackupMediaFiles(
                 referencedFiles = setOf("clip.jpg"),
@@ -787,11 +859,12 @@ class ClipboardBackupTest {
             )
 
             assertEquals(
-                listOf(
+                setOf(
                     "clipboardfiles/clip.jpg" to clipFile,
-                    "clipboardfiles/archive-only.jpg" to archiveOnlyFile
+                    "clipboardfiles/archive-only.jpg" to archiveOnlyFile,
+                    "clipboardfiles/orphan.jpg" to orphanFile
                 ),
-                entries
+                entries.toSet()
             )
         } finally {
             archiveDir.deleteRecursively()
