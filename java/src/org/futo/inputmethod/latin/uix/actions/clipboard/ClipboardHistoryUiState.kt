@@ -48,6 +48,9 @@ internal data class ClipboardPreviewState(
 
     val shouldFetchPreviews: Boolean
         get() = linkPreviewsEnabled && showsEmbed
+
+    val shouldArchivePreviews: Boolean
+        get() = linkPreviewsEnabled
 }
 
 internal data class ClipboardUiState(

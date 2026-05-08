@@ -589,7 +589,7 @@ class ClipboardHistoryManager(
 
     fun refreshMissingLinkPreviews(forceArchiveBackfill: Boolean = false) {
         if(context.getSetting(ClipboardIncognitoMode)) return
-        if(!currentPreviewState().shouldFetchPreviews) return
+        if(!currentPreviewState().shouldArchivePreviews) return
         if(!canRunAutomaticClipboardNetworkDownloads()) return
 
         clipboardHistory.toList().forEach { entry ->
@@ -622,7 +622,7 @@ class ClipboardHistoryManager(
         if(archiveBackfillInProgress.value) return
         if(!canRunAutomaticClipboardNetworkDownloads()) return
         val incognito = context.getSetting(ClipboardIncognitoMode)
-        val previewsEnabled = currentPreviewState().shouldFetchPreviews
+        val previewsEnabled = currentPreviewState().shouldArchivePreviews
         if(!shouldRunArchiveBackfill(
             completedVersion = context.getSetting(ClipboardArchiveBackfillCompletedVersion),
             currentVersion = ClipboardArchiveBackfillVersion,
@@ -673,7 +673,7 @@ class ClipboardHistoryManager(
 
     private fun fetchArchiveForEntry(request: ClipboardArchiveBackfillRequest): Boolean {
         if(context.getSetting(ClipboardIncognitoMode)) return false
-        if(!currentPreviewState().shouldFetchPreviews) return false
+        if(!currentPreviewState().shouldArchivePreviews) return false
         if(!canRunAutomaticClipboardNetworkDownloads()) return false
         val text = request.entry.text ?: return false
         val archiveKey = request.archiveKey
@@ -1203,6 +1203,31 @@ class ClipboardHistoryManager(
         clipboardIOFailure.value = false
     }
 
+    private fun recoverArchivesFromLocalPreviewEntries() {
+        val recoveredArchives = clipboardArchivesFromLocalPreviewEntries(
+            entries = clipboardHistory.toList(),
+            clipboardDir = context.clipboardDir,
+            existingArchiveKeys = linkArchives.keys,
+            deletedArchiveKeys = deletedArchiveKeys
+        )
+        if(recoveredArchives.isEmpty()) return
+
+        val mergedArchives = mergeClipboardArchives(
+            currentArchives = linkArchives.values,
+            importedArchives = recoveredArchives
+        )
+        val mergedByKey = mergedArchives.associateBy { it.key }
+        val changedArchives = mergedByKey.filter { (key, archive) ->
+            linkArchives[key] != archive
+        }.values
+        if(changedArchives.isEmpty()) return
+
+        linkArchives.clear()
+        linkArchives.putAll(mergedByKey)
+        changedArchives.forEach(::saveArchive)
+        refreshArchiveFileNames()
+    }
+
     private suspend fun publishClipboardLoadFailure(reason: String) = withContext(Dispatchers.Main) {
         clipboardIOFailureReason = reason
         clipboardIOFailure.value = true
@@ -1280,6 +1305,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             )
 
             publishClipboardLoaded(activeEntries, loadedArchives, migratedTombstones)
+            recoverArchivesFromLocalPreviewEntries()
             if(activeEntries != loadedEntries) {
                 saveClipboard()
             }
@@ -1451,7 +1477,6 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 
         val previewState = currentPreviewState()
         if(!previewState.linkPreviewsEnabled) return null
-        if(!manualRetry && !previewState.shouldFetchPreviews) return null
         if(!manualRetry && !canRunAutomaticClipboardNetworkDownloads()) return null
         if(!ClipboardLinkPreviewFetcher.supportsPreview(text)) return null
         if(previewLoadingByText[text] == true) return null

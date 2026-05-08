@@ -93,6 +93,47 @@ fun clipboardArchivesFromPreviewEntries(
     )
 }
 
+fun clipboardArchivesFromLocalPreviewEntries(
+    entries: Collection<ClipboardEntry>,
+    clipboardDir: File,
+    existingArchiveKeys: Set<String>,
+    deletedArchiveKeys: Set<String>,
+    now: Long = System.currentTimeMillis()
+): List<ClipboardLinkArchive> {
+    val recoveredArchives = entries.mapNotNull { entry ->
+        val metadata = entry.archiveBackfillMetadata() ?: return@mapNotNull null
+        val archiveKey = metadata.archiveKey() ?: return@mapNotNull null
+        if(archiveKey in existingArchiveKeys || archiveKey in deletedArchiveKeys) return@mapNotNull null
+        val fallbackSourceUrl = metadata.sourceUrl ?: entry.text ?: return@mapNotNull null
+        val savedMedia = entry.previewMedia().mapNotNull { media ->
+            val file = File(clipboardDir, media.fileName)
+            if(!file.isFile) return@mapNotNull null
+
+            ClipboardArchiveMedia(
+                sourceUrl = media.sourceUrl ?: "$fallbackSourceUrl#legacy-media-${media.sourceIndex}",
+                sourceIndex = media.sourceIndex,
+                mimeType = media.mimeType ?: media.fileName.guessedClipboardMimeType(),
+                fileName = media.fileName,
+                status = ClipboardArchiveMediaStatus.Saved,
+                lastAttemptAtEpochMs = now
+            )
+        }
+        if(savedMedia.isEmpty()) return@mapNotNull null
+
+        newFallbackArchiveFromEntry(
+            entry = entry,
+            metadata = metadata,
+            savedMedia = savedMedia,
+            now = now
+        )
+    }
+
+    return mergeClipboardArchives(
+        currentArchives = emptyList(),
+        importedArchives = recoveredArchives
+    )
+}
+
 fun reconcileClipboardEntriesWithStorage(
     entries: List<ClipboardEntry>,
     clipboardDir: File

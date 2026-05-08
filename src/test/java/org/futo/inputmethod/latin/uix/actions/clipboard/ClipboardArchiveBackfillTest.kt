@@ -9,6 +9,28 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardArchiveBackfillTest {
     @Test
+    fun rawClipboardDisplayModeStillAllowsArchivePreviewIngestion() {
+        val state = previewState(
+            linkPreviewsEnabled = true,
+            storedEmbedDisplayMode = ClipboardEmbedDisplayMode.ShowRawClipboard.storedValue
+        )
+
+        assertFalse(state.shouldFetchPreviews)
+        assertTrue(state.shouldArchivePreviews)
+    }
+
+    @Test
+    fun disabledLinkPreviewsDisableArchivePreviewIngestion() {
+        val state = previewState(
+            linkPreviewsEnabled = false,
+            storedEmbedDisplayMode = ClipboardEmbedDisplayMode.ShowEmbed.storedValue
+        )
+
+        assertFalse(state.shouldFetchPreviews)
+        assertFalse(state.shouldArchivePreviews)
+    }
+
+    @Test
     fun legacyPreviewedSupportedClip_isEligibleForArchiveBackfill() {
         val entry = samplePixivEntry()
 
@@ -72,6 +94,87 @@ class ClipboardArchiveBackfillTest {
 
         assertTrue(firstPass.isEmpty())
         assertEquals(listOf("pixiv:123"), secondPass.map { it.archiveKey })
+    }
+
+    @Test
+    fun localPreviewArchiveRecovery_addsMissingArchiveFromExistingClipMedia() {
+        val dir = createTempDirectory().toFile()
+        try {
+            File(dir, "legacy.jpg").writeText("image")
+
+            val recovered = clipboardArchivesFromLocalPreviewEntries(
+                entries = listOf(samplePixivEntry()),
+                clipboardDir = dir,
+                existingArchiveKeys = emptySet(),
+                deletedArchiveKeys = emptySet(),
+                now = 10L
+            )
+
+            val archive = recovered.single()
+            assertEquals("pixiv:123", archive.key)
+            assertEquals(ClipboardLinkArchiveStatus.Complete, archive.status)
+            assertEquals(listOf("legacy.jpg"), archive.savedPreviewMedia().map { it.fileName })
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun localPreviewArchiveRecovery_skipsTombstonedArchiveKey() {
+        val dir = createTempDirectory().toFile()
+        try {
+            File(dir, "legacy.jpg").writeText("image")
+
+            val recovered = clipboardArchivesFromLocalPreviewEntries(
+                entries = listOf(samplePixivEntry()),
+                clipboardDir = dir,
+                existingArchiveKeys = emptySet(),
+                deletedArchiveKeys = setOf("pixiv:123"),
+                now = 10L
+            )
+
+            assertTrue(recovered.isEmpty())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun localPreviewArchiveRecovery_skipsExistingArchiveKey() {
+        val dir = createTempDirectory().toFile()
+        try {
+            File(dir, "legacy.jpg").writeText("image")
+
+            val recovered = clipboardArchivesFromLocalPreviewEntries(
+                entries = listOf(samplePixivEntry()),
+                clipboardDir = dir,
+                existingArchiveKeys = setOf("pixiv:123"),
+                deletedArchiveKeys = emptySet(),
+                now = 10L
+            )
+
+            assertTrue(recovered.isEmpty())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun localPreviewArchiveRecovery_ignoresMissingLocalPreviewFile() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val recovered = clipboardArchivesFromLocalPreviewEntries(
+                entries = listOf(samplePixivEntry()),
+                clipboardDir = dir,
+                existingArchiveKeys = emptySet(),
+                deletedArchiveKeys = emptySet(),
+                now = 10L
+            )
+
+            assertTrue(recovered.isEmpty())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
