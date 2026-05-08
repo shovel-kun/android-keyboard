@@ -173,6 +173,12 @@
     <string name="clipboard_history_archive_filters_title">Archive filters</string>
     <string name="clipboard_history_archive_filter_provider">Provider</string>
     <string name="clipboard_history_archive_filter_status">Status</string>
+    <string name="clipboard_history_archive_filter_sort">Sort</string>
+    <string name="clipboard_history_archive_sort_clip_date">Clip date</string>
+    <string name="clipboard_history_archive_sort_archive_added">Archive added</string>
+    <string name="clipboard_history_archive_sort_last_updated">Last updated</string>
+    <string name="clipboard_history_archive_sort_post_date">Post date</string>
+    <string name="clipboard_history_archive_sort_status">Status</string>
     <string name="clipboard_history_archive_filter_done">Done</string>
     <string name="clipboard_history_archive_reset_filters">Reset archive filters</string>
     <string name="clipboard_history_archive_status_complete">Complete</string>

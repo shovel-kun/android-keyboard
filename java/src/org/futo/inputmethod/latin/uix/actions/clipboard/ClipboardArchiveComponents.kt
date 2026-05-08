@@ -706,13 +706,16 @@ internal fun ClipboardArchiveFilterButton(
 internal fun ClipboardArchiveFilterSheet(
     providerFilter: ClipboardArchiveProviderFilter,
     statusFilter: ClipboardArchiveStatusFilter,
+    sortMode: ClipboardArchiveSortMode,
     onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit,
     onStatusFilterSelected: (ClipboardArchiveStatusFilter) -> Unit,
+    onSortModeSelected: (ClipboardArchiveSortMode) -> Unit,
     onResetFilters: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val filtersActive = providerFilter != ClipboardArchiveProviderFilter.All ||
-        statusFilter != ClipboardArchiveStatusFilter.All
+        statusFilter != ClipboardArchiveStatusFilter.All ||
+        sortMode != ClipboardArchiveSortMode.ClipDate
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -743,6 +746,12 @@ internal fun ClipboardArchiveFilterSheet(
                 labels = ClipboardArchiveStatusFilter.entries.map { it to it.labelText() },
                 selected = statusFilter,
                 onSelected = onStatusFilterSelected
+            )
+            ClipboardArchiveFilterGroup(
+                title = stringResource(R.string.clipboard_history_archive_filter_sort),
+                labels = ClipboardArchiveSortMode.entries.map { it to it.labelText() },
+                selected = sortMode,
+                onSelected = onSortModeSelected
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -821,6 +830,15 @@ private fun ClipboardArchiveStatusFilter.labelText(): String = when (this) {
     ClipboardArchiveStatusFilter.Complete -> stringResource(R.string.clipboard_history_archive_filter_complete)
     ClipboardArchiveStatusFilter.Partial -> stringResource(R.string.clipboard_history_archive_filter_partial)
     ClipboardArchiveStatusFilter.FailedInProgress -> stringResource(R.string.clipboard_history_archive_filter_attention)
+}
+
+@Composable
+private fun ClipboardArchiveSortMode.labelText(): String = when (this) {
+    ClipboardArchiveSortMode.ClipDate -> stringResource(R.string.clipboard_history_archive_sort_clip_date)
+    ClipboardArchiveSortMode.ArchiveAdded -> stringResource(R.string.clipboard_history_archive_sort_archive_added)
+    ClipboardArchiveSortMode.LastUpdated -> stringResource(R.string.clipboard_history_archive_sort_last_updated)
+    ClipboardArchiveSortMode.PostDate -> stringResource(R.string.clipboard_history_archive_sort_post_date)
+    ClipboardArchiveSortMode.Status -> stringResource(R.string.clipboard_history_archive_sort_status)
 }
 
 @Composable

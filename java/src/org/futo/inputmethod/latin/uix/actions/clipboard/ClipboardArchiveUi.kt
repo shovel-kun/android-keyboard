@@ -1,9 +1,13 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
 import java.io.File
+import java.text.ParseException
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.format.DateTimeParseException
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.roundToInt
 import org.futo.inputmethod.latin.R
 
@@ -18,6 +22,19 @@ internal enum class ClipboardArchiveStatusFilter {
     Complete,
     Partial,
     FailedInProgress
+}
+
+internal enum class ClipboardArchiveSortMode(val storedValue: Int) {
+    ClipDate(0),
+    ArchiveAdded(1),
+    LastUpdated(2),
+    PostDate(3),
+    Status(4);
+
+    companion object {
+        fun fromStoredValue(value: Int): ClipboardArchiveSortMode =
+            entries.firstOrNull { it.storedValue == value } ?: ClipDate
+    }
 }
 
 internal enum class ClipboardArchiveDisplayStatus {
@@ -137,11 +154,80 @@ internal fun scrollControlsVisibleAfterScroll(
 }
 
 internal fun sortedClipboardArchives(archives: Collection<ClipboardLinkArchive>): List<ClipboardLinkArchive> =
-    archives.sortedWith(
-        compareByDescending<ClipboardLinkArchive> { it.updatedAtEpochMs }
-            .thenByDescending { it.createdAtEpochMs }
-            .thenBy { it.key }
+    sortedClipboardArchives(
+        archives = archives,
+        entries = emptyList(),
+        sortMode = ClipboardArchiveSortMode.LastUpdated
     )
+
+internal fun sortedClipboardArchives(
+    archives: Collection<ClipboardLinkArchive>,
+    entries: Collection<ClipboardEntry>,
+    sortMode: ClipboardArchiveSortMode
+): List<ClipboardLinkArchive> {
+    val clipDateByArchiveKey = entries.mapNotNull { entry ->
+        val key = entry.archiveBackfillKey() ?: return@mapNotNull null
+        key to entry.timestamp
+    }.groupingBy { it.first }.fold(0L) { newest, item ->
+        maxOf(newest, item.second)
+    }
+
+    fun clipDate(archive: ClipboardLinkArchive): Long =
+        clipDateByArchiveKey[archive.key] ?: archive.createdAtEpochMs
+
+    fun stableDateComparator(primaryDate: (ClipboardLinkArchive) -> Long): Comparator<ClipboardLinkArchive> =
+        compareByDescending<ClipboardLinkArchive>(primaryDate)
+            .thenByDescending { it.createdAtEpochMs }
+            .thenByDescending { it.updatedAtEpochMs }
+            .thenBy { it.key }
+
+    return when (sortMode) {
+        ClipboardArchiveSortMode.ClipDate -> archives.sortedWith(stableDateComparator(::clipDate))
+        ClipboardArchiveSortMode.ArchiveAdded -> archives.sortedWith(stableDateComparator { it.createdAtEpochMs })
+        ClipboardArchiveSortMode.LastUpdated -> archives.sortedWith(stableDateComparator { it.updatedAtEpochMs })
+        ClipboardArchiveSortMode.PostDate -> archives.sortedWith(
+            compareByDescending<ClipboardLinkArchive> { it.metadata?.createdAt?.parseArchivePostDateEpochMs() ?: clipDate(it) }
+                .thenByDescending { clipDate(it) }
+                .thenByDescending { it.createdAtEpochMs }
+                .thenByDescending { it.updatedAtEpochMs }
+                .thenBy { it.key }
+        )
+        ClipboardArchiveSortMode.Status -> archives.sortedWith(
+            compareBy<ClipboardLinkArchive> { it.archiveSortStatusRank() }
+                .thenByDescending { clipDate(it) }
+                .thenByDescending { it.createdAtEpochMs }
+                .thenByDescending { it.updatedAtEpochMs }
+                .thenBy { it.key }
+        )
+    }
+}
+
+private fun String.parseArchivePostDateEpochMs(): Long? =
+    try {
+        Instant.parse(this).toEpochMilli()
+    } catch (_: DateTimeParseException) {
+        parseTwitterArchivePostDateEpochMs()
+    }
+
+private fun String.parseTwitterArchivePostDateEpochMs(): Long? =
+    try {
+        SimpleDateFormat("EEE MMM dd HH:mm:ss Z yyyy", Locale.US)
+            .apply { timeZone = TimeZone.getTimeZone("UTC") }
+            .parse(this)
+            ?.time
+    } catch (_: ParseException) {
+        null
+    }
+
+private fun ClipboardLinkArchive.archiveSortStatusRank(): Int = when {
+    status in setOf(
+        ClipboardLinkArchiveStatus.Pending,
+        ClipboardLinkArchiveStatus.InProgress,
+        ClipboardLinkArchiveStatus.Failed
+    ) -> 0
+    status == ClipboardLinkArchiveStatus.Partial -> 1
+    else -> 2
+}
 
 internal fun ClipboardLinkArchive.savedMediaCount(): Int =
     media.count { it.status == ClipboardArchiveMediaStatus.Saved && it.fileName != null }

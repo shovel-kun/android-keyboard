@@ -12,20 +12,108 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardArchiveUiTest {
     @Test
-    fun sortedClipboardArchives_usesNewestArchiveFirst() {
-        val oldest = sampleArchive(
-            media = emptyList()
-        ).copy(key = "pixiv:old", updatedAtEpochMs = 10L, createdAtEpochMs = 10L)
-        val newest = sampleArchive(
-            media = emptyList()
-        ).copy(key = "pixiv:new", updatedAtEpochMs = 30L, createdAtEpochMs = 20L)
-        val middle = sampleArchive(
-            media = emptyList()
-        ).copy(key = "twitter:middle", updatedAtEpochMs = 20L, createdAtEpochMs = 30L)
+    fun sortedClipboardArchives_clipDateUsesMatchingCurrentClipTimestamp() {
+        val oldClipArchive = sampleTwitterArchive("1").copy(createdAtEpochMs = 100L, updatedAtEpochMs = 900L)
+        val newClipArchive = sampleTwitterArchive("2").copy(createdAtEpochMs = 200L, updatedAtEpochMs = 100L)
+        val entries = listOf(
+            sampleTwitterEntry("1", timestamp = 10L),
+            sampleTwitterEntry("2", timestamp = 20L)
+        )
 
         assertEquals(
-            listOf("pixiv:new", "twitter:middle", "pixiv:old"),
-            sortedClipboardArchives(listOf(oldest, newest, middle)).map { it.key }
+            listOf("twitter:2", "twitter:1"),
+            sortedClipboardArchives(
+                archives = listOf(oldClipArchive, newClipArchive),
+                entries = entries,
+                sortMode = ClipboardArchiveSortMode.ClipDate
+            ).map { it.key }
+        )
+    }
+
+    @Test
+    fun sortedClipboardArchives_clipDateFallsBackToArchiveCreatedForArchiveOnlyRecords() {
+        val olderArchiveOnly = sampleTwitterArchive("1").copy(createdAtEpochMs = 10L)
+        val newerArchiveOnly = sampleTwitterArchive("2").copy(createdAtEpochMs = 20L)
+
+        assertEquals(
+            listOf("twitter:2", "twitter:1"),
+            sortedClipboardArchives(
+                archives = listOf(olderArchiveOnly, newerArchiveOnly),
+                entries = emptyList(),
+                sortMode = ClipboardArchiveSortMode.ClipDate
+            ).map { it.key }
+        )
+    }
+
+    @Test
+    fun sortedClipboardArchives_archiveAddedAndLastUpdatedUseArchiveFields() {
+        val oldestCreatedNewestUpdated = sampleTwitterArchive("1").copy(createdAtEpochMs = 10L, updatedAtEpochMs = 30L)
+        val newestCreatedOldestUpdated = sampleTwitterArchive("2").copy(createdAtEpochMs = 30L, updatedAtEpochMs = 10L)
+
+        assertEquals(
+            listOf("twitter:2", "twitter:1"),
+            sortedClipboardArchives(
+                archives = listOf(oldestCreatedNewestUpdated, newestCreatedOldestUpdated),
+                entries = emptyList(),
+                sortMode = ClipboardArchiveSortMode.ArchiveAdded
+            ).map { it.key }
+        )
+        assertEquals(
+            listOf("twitter:1", "twitter:2"),
+            sortedClipboardArchives(
+                archives = listOf(oldestCreatedNewestUpdated, newestCreatedOldestUpdated),
+                entries = emptyList(),
+                sortMode = ClipboardArchiveSortMode.LastUpdated
+            ).map { it.key }
+        )
+    }
+
+    @Test
+    fun sortedClipboardArchives_statusPutsNeedsAttentionBeforePartialAndComplete() {
+        val complete = sampleTwitterArchive("complete").copy(
+            media = listOf(savedArchiveMedia()),
+            createdAtEpochMs = 30L
+        )
+        val partial = sampleTwitterArchive("partial").copy(
+            media = listOf(savedArchiveMedia(), failedArchiveMedia()),
+            createdAtEpochMs = 20L
+        )
+        val pending = sampleTwitterArchive("pending").copy(
+            media = listOf(ClipboardArchiveMedia("https://img.example/pending.jpg", 0)),
+            createdAtEpochMs = 10L
+        )
+
+        assertEquals(
+            listOf("twitter:pending", "twitter:partial", "twitter:complete"),
+            sortedClipboardArchives(
+                archives = listOf(complete, partial, pending),
+                entries = emptyList(),
+                sortMode = ClipboardArchiveSortMode.Status
+            ).map { it.key }
+        )
+    }
+
+    @Test
+    fun sortedClipboardArchives_postDateFallsBackWithoutDroppingArchive() {
+        val dated = sampleTwitterArchive("dated").copy(
+            metadata = sampleTwitterMetadata("dated").copy(createdAt = "2026-05-08T01:00:00Z")
+        )
+        val invalidDate = sampleTwitterArchive("invalid").copy(
+            metadata = sampleTwitterMetadata("invalid").copy(createdAt = "not-a-date"),
+            createdAtEpochMs = 20L
+        )
+        val missingDate = sampleTwitterArchive("missing").copy(
+            metadata = sampleTwitterMetadata("missing").copy(createdAt = null),
+            createdAtEpochMs = 10L
+        )
+
+        assertEquals(
+            listOf("twitter:dated", "twitter:invalid", "twitter:missing"),
+            sortedClipboardArchives(
+                archives = listOf(missingDate, invalidDate, dated),
+                entries = emptyList(),
+                sortMode = ClipboardArchiveSortMode.PostDate
+            ).map { it.key }
         )
     }
 
@@ -1125,6 +1213,45 @@ class ClipboardArchiveUiTest {
         media = media,
         createdAtEpochMs = 1L,
         updatedAtEpochMs = 1L
+    )
+
+    private fun sampleTwitterEntry(id: String, timestamp: Long) = ClipboardEntry(
+        timestamp = timestamp,
+        pinned = false,
+        text = "https://x.com/example/status/$id",
+        uri = null,
+        mimeTypes = listOf("text/plain")
+    )
+
+    private fun sampleTwitterMetadata(id: String) = ClipboardPreviewMetadata(
+        provider = ClipboardPreviewProvider.TWITTER,
+        sourceUrl = "https://x.com/example/status/$id",
+        sourceId = id,
+        authorHandle = "example"
+    )
+
+    private fun sampleTwitterArchive(id: String) = ClipboardLinkArchive(
+        key = "twitter:$id",
+        provider = ClipboardPreviewProvider.TWITTER,
+        sourceUrl = "https://x.com/example/status/$id",
+        sourceId = id,
+        metadata = sampleTwitterMetadata(id),
+        media = listOf(savedArchiveMedia()),
+        createdAtEpochMs = 1L,
+        updatedAtEpochMs = 1L
+    )
+
+    private fun savedArchiveMedia() = ClipboardArchiveMedia(
+        sourceUrl = "https://img.example/saved.jpg",
+        sourceIndex = 0,
+        fileName = "saved.jpg",
+        status = ClipboardArchiveMediaStatus.Saved
+    )
+
+    private fun failedArchiveMedia() = ClipboardArchiveMedia(
+        sourceUrl = "https://img.example/failed.jpg",
+        sourceIndex = 1,
+        status = ClipboardArchiveMediaStatus.Failed
     )
 
     private fun sampleDownloadItem(provider: ClipboardPreviewProvider) = ClipboardArchiveDownloadListItem(

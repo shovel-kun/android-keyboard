@@ -90,6 +90,11 @@ val ClipboardEmbedDisplayModeSetting = SettingsKey(
     ClipboardEmbedDisplayMode.ShowEmbed.storedValue
 )
 
+val ClipboardArchiveSortModeSetting = SettingsKey(
+    intPreferencesKey("clipboard_archive_sort_mode"),
+    ClipboardArchiveSortMode.ClipDate.storedValue
+)
+
 internal const val ClipboardArchiveBackfillVersion = 1
 
 val ClipboardArchiveBackfillCompletedVersion = SettingsKey(

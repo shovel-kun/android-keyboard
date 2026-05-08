@@ -144,7 +144,7 @@ internal fun ClipboardEntry.isEligibleForArchiveBackfill(
     return archiveKey !in existingArchiveKeys
 }
 
-private fun ClipboardEntry.archiveBackfillKey(): String? {
+internal fun ClipboardEntry.archiveBackfillKey(): String? {
     if(!hasRenderablePreview() && previewMetadata == null) return null
     val metadata = archiveBackfillMetadata() ?: return null
     return metadata.archiveKey()
@@ -755,11 +755,9 @@ class ClipboardHistoryManager(
 
     internal fun archiveRecords(): List<ClipboardLinkArchive> {
         val existingArchiveFileNames = currentArchiveFileNames()
-        return sortedClipboardArchives(
-            linkArchives.values.map {
-                archiveWithCurrentStorageState(it, existingArchiveFileNames)
-            }
-        )
+        return linkArchives.values.map {
+            archiveWithCurrentStorageState(it, existingArchiveFileNames)
+        }
     }
 
     internal fun archivePreviewFiles(archive: ClipboardLinkArchive): List<File> =

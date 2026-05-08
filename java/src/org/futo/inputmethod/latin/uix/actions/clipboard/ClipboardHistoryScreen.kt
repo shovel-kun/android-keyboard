@@ -66,6 +66,8 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val showPinnedOnTop = useDataStoreValue(ClipboardShowPinnedOnTop)
     val useSingleColumn = useDataStoreValue(ClipboardSingleColumn)
     val skipDeleteConfirmation = useDataStoreValue(ClipboardSkipDeleteConfirmation)
+    val archiveSortModeSetting = useDataStore(ClipboardArchiveSortModeSetting)
+    val archiveSortMode = ClipboardArchiveSortMode.fromStoredValue(archiveSortModeSetting.value)
 
     val query = remember { mutableStateOf("") }
     var activeFilter by remember { mutableStateOf(ClipboardHistoryFilter.All) }
@@ -102,8 +104,14 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             ).filter { it != DefaultClipboardEntry }
         }
     }
-    val allArchives by remember {
-        derivedStateOf { manager.archiveRecords() }
+    val allArchives by remember(archiveSortMode) {
+        derivedStateOf {
+            sortedClipboardArchives(
+                archives = manager.archiveRecords(),
+                entries = manager.clipboardHistory.toList(),
+                sortMode = archiveSortMode
+            )
+        }
     }
     val hasHistoryEntries by remember {
         derivedStateOf { allEntries.isNotEmpty() }
@@ -157,10 +165,11 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             }
         }
     }
-    val archiveFiltersActive by remember {
+    val archiveFiltersActive by remember(archiveSortMode) {
         derivedStateOf {
             archiveProviderFilter != ClipboardArchiveProviderFilter.All ||
-                archiveStatusFilter != ClipboardArchiveStatusFilter.All
+                archiveStatusFilter != ClipboardArchiveStatusFilter.All ||
+                archiveSortMode != ClipboardArchiveSortMode.ClipDate
         }
     }
     val visibleKeySet by remember {
@@ -202,7 +211,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         }
     }
 
-    LaunchedEffect(activeMode, activeFilter, archiveProviderFilter, archiveStatusFilter, selectionMode, query.value, downloadsVisible) {
+    LaunchedEffect(activeMode, activeFilter, archiveProviderFilter, archiveStatusFilter, archiveSortMode, selectionMode, query.value, downloadsVisible) {
         clipboardControlsVisible = true
     }
 
@@ -486,6 +495,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         onResetFilters = {
                             archiveProviderFilter = ClipboardArchiveProviderFilter.All
                             archiveStatusFilter = ClipboardArchiveStatusFilter.All
+                            archiveSortModeSetting.setValue(ClipboardArchiveSortMode.ClipDate.storedValue)
                         },
                         onOpen = { previewArchiveKey = it.key },
                         onRetry = { manager.retryArchive(it) },
@@ -585,11 +595,14 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         ClipboardArchiveFilterSheet(
             providerFilter = archiveProviderFilter,
             statusFilter = archiveStatusFilter,
+            sortMode = archiveSortMode,
             onProviderFilterSelected = { archiveProviderFilter = it },
             onStatusFilterSelected = { archiveStatusFilter = it },
+            onSortModeSelected = { archiveSortModeSetting.setValue(it.storedValue) },
             onResetFilters = {
                 archiveProviderFilter = ClipboardArchiveProviderFilter.All
                 archiveStatusFilter = ClipboardArchiveStatusFilter.All
+                archiveSortModeSetting.setValue(ClipboardArchiveSortMode.ClipDate.storedValue)
             },
             onDismiss = { archiveFiltersVisible = false }
         )
