@@ -686,6 +686,32 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun savedMediaMissingOnDiskUsesSameRetrySourceInDownloadsAndRetryableMedia() {
+        val archive = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/missing.jpg",
+                    sourceIndex = 0,
+                    fileName = "missing.jpg",
+                    status = ClipboardArchiveMediaStatus.Saved
+                )
+            )
+        )
+        val existingArchiveFileNames = emptySet<String>()
+        val currentArchive = archive.withMissingArchiveFilesMarked(existingArchiveFileNames)
+
+        val item = archiveDownloadItems(
+            archives = listOf(archive),
+            progressByArchiveKey = emptyMap(),
+            loadingArchiveKeys = emptySet(),
+            existingArchiveFileNames = existingArchiveFileNames
+        ).single()
+
+        assertEquals(currentArchive.retryableMedia().single().sourceUrl, item.sourceUrl)
+        assertTrue(item.canRetry)
+    }
+
+    @Test
     fun savedMediaPresentOnDiskStaysOutOfDownloads() {
         val clipboardDir = createTempDirectory().toFile()
         try {
@@ -712,6 +738,83 @@ class ClipboardArchiveUiTest {
         } finally {
             clipboardDir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun retryableQueuedArchiveSourceUrlsKeepsOnlyReconciledRetryableMedia() {
+        val archive = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/missing.jpg",
+                    sourceIndex = 0,
+                    fileName = "missing.jpg",
+                    status = ClipboardArchiveMediaStatus.Saved
+                ),
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/complete.jpg",
+                    sourceIndex = 1,
+                    fileName = "complete.jpg",
+                    status = ClipboardArchiveMediaStatus.Saved
+                ),
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/failed.jpg",
+                    sourceIndex = 2,
+                    status = ClipboardArchiveMediaStatus.Failed
+                )
+            )
+        ).withMissingArchiveFilesMarked(existingFileNames = setOf("complete.jpg"))
+
+        val retryable = retryableQueuedArchiveSourceUrls(
+            archive = archive,
+            queuedSourceUrls = setOf(
+                "https://img.example/missing.jpg",
+                "https://img.example/complete.jpg",
+                "https://img.example/failed.jpg",
+                "https://img.example/stale.jpg"
+            )
+        )
+
+        assertEquals(
+            setOf(
+                "https://img.example/missing.jpg",
+                "https://img.example/failed.jpg"
+            ),
+            retryable
+        )
+    }
+
+    @Test
+    fun providerArchiveDownloadResumeKeysUsesReconciledMissingMedia() {
+        val complete = sampleArchive(
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/complete.jpg",
+                    sourceIndex = 0,
+                    fileName = "complete.jpg",
+                    status = ClipboardArchiveMediaStatus.Saved
+                )
+            )
+        ).copy(key = "pixiv:complete")
+        val missing = complete.copy(
+            key = "pixiv:missing",
+            media = listOf(
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/missing.jpg",
+                    sourceIndex = 0,
+                    fileName = "missing.jpg",
+                    status = ClipboardArchiveMediaStatus.Saved
+                )
+            )
+        )
+        val blocked = missing.copy(key = "pixiv:blocked")
+
+        val keys = providerArchiveDownloadResumeKeys(
+            archives = listOf(complete, missing, blocked),
+            existingArchiveFileNames = setOf("complete.jpg"),
+            isRetryBlocked = { it.key == blocked.key }
+        )
+
+        assertEquals(listOf(missing.key), keys)
     }
 
     @Test

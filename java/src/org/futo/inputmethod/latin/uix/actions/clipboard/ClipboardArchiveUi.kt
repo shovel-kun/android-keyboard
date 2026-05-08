@@ -329,6 +329,23 @@ internal fun archiveDownloadActionCount(
         normalizedArchive.media.count { it.status.isRetryableArchiveMediaStatus() }
     }
 
+internal fun providerArchiveDownloadResumeKeys(
+    archives: Collection<ClipboardLinkArchive>,
+    existingArchiveFileNames: Set<String>,
+    isRetryBlocked: (ClipboardLinkArchive) -> Boolean = { false }
+): List<String> =
+    archives.map {
+        it.withMissingArchiveFilesMarked(existingArchiveFileNames, now = it.updatedAtEpochMs)
+    }.filter {
+        it.providerManifestAvailable && it.hasAutoDownloadableMedia() && !isRetryBlocked(it)
+    }.map { it.key }
+
+internal fun retryableQueuedArchiveSourceUrls(
+    archive: ClipboardLinkArchive,
+    queuedSourceUrls: Set<String>
+): Set<String> =
+    queuedSourceUrls.intersect(archive.retryableMedia().map { it.sourceUrl }.toSet())
+
 internal fun ClipboardLinkArchive.failureSummaryLabelRes(): Int? =
     media.firstNotNullOfOrNull { it.failureSummaryLabelRes() }
 

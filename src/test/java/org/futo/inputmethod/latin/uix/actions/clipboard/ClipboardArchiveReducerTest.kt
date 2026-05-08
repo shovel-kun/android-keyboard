@@ -90,6 +90,43 @@ class ClipboardArchiveReducerTest {
     }
 
     @Test
+    fun diskReconcileMarksSavedMediaMissingWhenFileIsGone() {
+        val archive = sampleArchive(
+            media = listOf(savedMedia(fileName = "missing.jpg"))
+        )
+
+        val updated = reduceArchive(
+            archive = archive,
+            event = ClipboardArchiveEvent.DiskReconciled(
+                existingFileNames = emptySet(),
+                now = 20L
+            )
+        )!!
+
+        assertEquals(ClipboardArchiveMediaStatus.Missing, updated.media.single().status)
+        assertEquals("missing.jpg", updated.media.single().fileName)
+        assertEquals(20L, updated.media.single().lastAttemptAtEpochMs)
+        assertEquals("Saved archive file is missing from disk: missing.jpg", updated.media.single().failureDetail)
+    }
+
+    @Test
+    fun manifestSeenPreservesReconciledMissingMediaBySourceIndex() {
+        val archive = sampleArchive(
+            media = listOf(savedMedia(sourceUrl = "https://img.example/old.jpg", fileName = "missing.jpg"))
+        ).withMissingArchiveFilesMarked(existingFileNames = emptySet(), now = 15L)
+
+        val updated = mergeArchiveWithManifest(
+            archive = archive,
+            manifest = sampleManifest(url = "https://img.example/new.jpg"),
+            now = 20L
+        )
+
+        assertEquals("https://img.example/new.jpg", updated.media.single().sourceUrl)
+        assertEquals(ClipboardArchiveMediaStatus.Missing, updated.media.single().status)
+        assertEquals("missing.jpg", updated.media.single().fileName)
+    }
+
+    @Test
     fun mediaFailures_storeDetailsAndSuccessClearsThem() {
         val archive = sampleArchive(
             media = listOf(ClipboardArchiveMedia("https://img.example/one.jpg", 0))
