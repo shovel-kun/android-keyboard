@@ -817,14 +817,14 @@ class ClipboardHistoryManager(
         providerCooldown(archive.provider) != null
 
     internal fun retryArchive(archive: ClipboardLinkArchive) {
-        val retryArchive = archiveWithCurrentStorageState(archive, currentArchiveFileNames(forceRefresh = true))
+        val retryArchive = updateArchiveWithCurrentStorageState(archive, currentArchiveFileNames(forceRefresh = true))
         if(!retryArchive.hasRetryableMedia()) return
 
         launchArchiveRetry(retryArchive)
     }
 
     internal fun retryArchiveMedia(item: ClipboardArchiveDownloadListItem) {
-        val archive = archiveWithCurrentStorageState(
+        val archive = updateArchiveWithCurrentStorageState(
             linkArchives[item.archiveKey] ?: return,
             currentArchiveFileNames(forceRefresh = true)
         )
@@ -839,7 +839,7 @@ class ClipboardHistoryManager(
             .filter { it.canRetry }
             .groupBy { it.archiveKey }
             .forEach { (archiveKey, archiveItems) ->
-                val archive = archiveWithCurrentStorageState(
+                val archive = updateArchiveWithCurrentStorageState(
                     linkArchives[archiveKey] ?: return@forEach,
                     existingArchiveFileNames
                 )
@@ -892,6 +892,20 @@ class ClipboardHistoryManager(
         existingArchiveFileNames: Set<String>
     ): ClipboardLinkArchive =
         archive.withMissingArchiveFilesMarked(existingArchiveFileNames, now = archive.updatedAtEpochMs)
+
+    private fun updateArchiveWithCurrentStorageState(
+        archive: ClipboardLinkArchive,
+        existingArchiveFileNames: Set<String>
+    ): ClipboardLinkArchive {
+        val updated = archive.withMissingArchiveFilesMarked(existingArchiveFileNames)
+        if(updated != archive) {
+            linkArchives[updated.key] = updated
+            updateEntriesPreviewFromArchiveNow(updated)
+            saveArchive(updated)
+            saveClipboard()
+        }
+        return updated
+    }
 
     private fun scanArchiveFileNames(): Set<String> =
         existingClipboardMediaFileNames(context.clipboardDir, context.clipboardArchiveDir)
@@ -1690,7 +1704,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         val queuedSourceUrls = archiveDownloadQueuedSourceUrlsByKey[archiveKey].orEmpty()
         if(queuedSourceUrls.isEmpty()) return
         val archive = linkArchives[archiveKey]?.let {
-            archiveWithCurrentStorageState(it, currentArchiveFileNames(forceRefresh = true))
+            updateArchiveWithCurrentStorageState(it, currentArchiveFileNames(forceRefresh = true))
         } ?: return
         val retryableQueuedSourceUrls = queuedSourceUrls.intersect(archive.retryableMedia().map { it.sourceUrl }.toSet())
         if(retryableQueuedSourceUrls.isEmpty()) {
@@ -1742,7 +1756,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             while(true) {
                 val target = withContext(Dispatchers.Main) {
                     val archive = linkArchives[archiveKey]?.let {
-                        archiveWithCurrentStorageState(it, currentArchiveFileNames(forceRefresh = true))
+                        updateArchiveWithCurrentStorageState(it, currentArchiveFileNames(forceRefresh = true))
                     }
                     if(archive?.provider?.let { providerCooldown(it) } != null) return@withContext null
                     val queuedSourceUrls = archiveDownloadQueuedSourceUrlsByKey[archiveKey].orEmpty()

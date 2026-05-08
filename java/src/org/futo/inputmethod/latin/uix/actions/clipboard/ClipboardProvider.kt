@@ -5,8 +5,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.UriMatcher
 import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import androidx.core.net.toUri
 import org.futo.inputmethod.latin.BuildConfig
 import java.io.File
@@ -51,6 +53,13 @@ object ClipboardProviderState {
 
         return request.mimeType
     }
+
+    fun getRequest(context: Context, uuid: UUID): ClipboardPasteRequest {
+        val request = requests[uuid] ?: throw IllegalArgumentException("Invalid request")
+        if(System.currentTimeMillis() > request.expiration) throw IllegalArgumentException("Invalid request")
+
+        return request
+    }
 }
 
 fun createClipboardContentUri(
@@ -80,8 +89,19 @@ class ClipboardProvider: ContentProvider() {
         selection: String?,
         selectionArgs: Array<out String?>?,
         sortOrder: String?
-    ): Cursor? {
-        return null
+    ): Cursor {
+        val request = ClipboardProviderState.getRequest(context!!, getUUID(uri))
+        val columns = projection?.takeIf { it.isNotEmpty() }
+            ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
+        return MatrixCursor(columns).apply {
+            addRow(columns.map { column ->
+                when (column) {
+                    OpenableColumns.DISPLAY_NAME -> request.file.name
+                    OpenableColumns.SIZE -> request.file.length()
+                    else -> null
+                }
+            })
+        }
     }
 
     private fun getUUID(uri: Uri): UUID {

@@ -4,11 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.media.MediaPlayer
 import android.view.ViewGroup
-import android.widget.MediaController
 import android.widget.Toast
-import android.widget.VideoView
+import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -56,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,6 +85,11 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import androidx.core.net.toUri
 import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
@@ -980,39 +984,45 @@ internal fun ClipboardHistoryImagePreviewDialog(
 }
 
 @Composable
+@OptIn(UnstableApi::class)
 internal fun ClipboardHistoryVideoPreview(
     mediaFile: File,
     modifier: Modifier = Modifier,
     paused: Boolean = false
 ) {
+    val context = LocalContext.current
+    val mediaUri = remember(mediaFile) { mediaFile.toUri() }
+    val player = remember(mediaUri) {
+        ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ONE
+            setMediaItem(MediaItem.fromUri(mediaUri))
+            prepare()
+        }
+    }
+
+    DisposableEffect(player) {
+        onDispose { player.release() }
+    }
+
+    LaunchedEffect(player, paused) {
+        player.playWhenReady = !paused
+    }
+
     AndroidView(
         modifier = modifier,
         factory = { viewContext ->
-            VideoView(viewContext).apply {
-                val mediaController = MediaController(viewContext)
-                mediaController.setAnchorView(this)
-                setMediaController(mediaController)
-                setVideoURI(mediaFile.toUri())
-                setOnPreparedListener { player: MediaPlayer ->
-                    player.isLooping = true
-                    if(!paused) start()
-                }
+            PlayerView(viewContext).apply {
+                this.player = player
+                useController = true
             }
         },
-        update = { videoView ->
-            if(paused) {
-                videoView.pause()
-            } else if(videoView.tag != mediaFile.absolutePath) {
-                videoView.tag = mediaFile.absolutePath
-                videoView.setVideoURI(mediaFile.toUri())
-                videoView.start()
-            } else if(!videoView.isPlaying) {
-                videoView.start()
-            }
+        update = { playerView ->
+            playerView.player = player
+            player.playWhenReady = !paused
         },
-        onRelease = { videoView ->
-            videoView.stopPlayback()
-            (videoView.parent as? ViewGroup)?.removeView(videoView)
+        onRelease = { playerView ->
+            playerView.player = null
+            (playerView.parent as? ViewGroup)?.removeView(playerView)
         }
     )
 }

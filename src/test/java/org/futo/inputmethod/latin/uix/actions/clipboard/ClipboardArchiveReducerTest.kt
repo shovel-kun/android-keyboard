@@ -68,6 +68,28 @@ class ClipboardArchiveReducerTest {
     }
 
     @Test
+    fun mediaDownloadFailure_updatesReconciledMissingMedia() {
+        val archive = sampleArchive(
+            media = listOf(savedMedia())
+        )
+        val missing = archive.withMissingArchiveFilesMarked(existingFileNames = emptySet(), now = 15L)
+
+        val failed = reduceArchive(
+            archive = missing,
+            event = ClipboardArchiveEvent.MediaDownloadFailed(
+                sourceUrl = "https://img.example/one.jpg",
+                now = 20L,
+                failureDetail = "network failed"
+            )
+        )!!
+
+        assertEquals(ClipboardArchiveMediaStatus.Failed, failed.media.single().status)
+        assertEquals("one.jpg", failed.media.single().fileName)
+        assertEquals(20L, failed.media.single().lastAttemptAtEpochMs)
+        assertEquals("network failed", failed.media.single().failureDetail)
+    }
+
+    @Test
     fun mediaFailures_storeDetailsAndSuccessClearsThem() {
         val archive = sampleArchive(
             media = listOf(ClipboardArchiveMedia("https://img.example/one.jpg", 0))
@@ -189,7 +211,7 @@ class ClipboardArchiveReducerTest {
     }
 
     @Test
-    fun diskReconcile_isOnlyReducerPathFromSavedToMissing() {
+    fun diskReconcile_movesBetweenSavedAndMissingWhenFileStateChanges() {
         val archive = sampleArchive(
             media = listOf(savedMedia())
         )
@@ -210,6 +232,16 @@ class ClipboardArchiveReducerTest {
         assertEquals(ClipboardArchiveMediaStatus.Saved, refreshed.media.single().status)
         assertEquals(ClipboardArchiveMediaStatus.Saved, reconciledPresent.media.single().status)
         assertEquals(ClipboardArchiveMediaStatus.Missing, reconciledMissing.media.single().status)
+
+        val restored = reduceArchive(
+            archive = reconciledMissing,
+            event = ClipboardArchiveEvent.DiskReconciled(existingFileNames = setOf("one.jpg"), now = 50L)
+        )!!
+
+        assertEquals(ClipboardArchiveMediaStatus.Saved, restored.media.single().status)
+        assertEquals("one.jpg", restored.media.single().fileName)
+        assertEquals(50L, restored.media.single().lastAttemptAtEpochMs)
+        assertEquals(null, restored.media.single().failureDetail)
     }
 
     @Test

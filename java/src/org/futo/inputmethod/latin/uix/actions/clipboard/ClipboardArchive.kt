@@ -507,16 +507,22 @@ fun reduceArchive(
     }
     is ClipboardArchiveEvent.DiskReconciled -> archive?.let {
         val reconciledMedia = it.media.map { media ->
-            if(media.status == ClipboardArchiveMediaStatus.Saved &&
-                media.fileName?.let { fileName -> fileName !in event.existingFileNames } != false
-            ) {
-                media.copy(
-                    status = ClipboardArchiveMediaStatus.Missing,
-                    lastAttemptAtEpochMs = event.now,
-                    failureDetail = "Saved archive file is missing from disk: ${media.fileName}"
-                )
-            } else {
-                media
+            when {
+                media.status == ClipboardArchiveMediaStatus.Saved &&
+                    media.fileName?.let { fileName -> fileName !in event.existingFileNames } != false ->
+                    media.copy(
+                        status = ClipboardArchiveMediaStatus.Missing,
+                        lastAttemptAtEpochMs = event.now,
+                        failureDetail = "Saved archive file is missing from disk: ${media.fileName}"
+                    )
+                media.status == ClipboardArchiveMediaStatus.Missing &&
+                    media.fileName?.let { fileName -> fileName in event.existingFileNames } == true ->
+                    media.copy(
+                        status = ClipboardArchiveMediaStatus.Saved,
+                        lastAttemptAtEpochMs = event.now,
+                        failureDetail = null
+                    )
+                else -> media
             }
         }
         it.copy(
