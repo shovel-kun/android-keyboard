@@ -166,6 +166,7 @@
     <string name="clipboard_history_archive_filter_all">All</string>
     <string name="clipboard_history_archive_filter_pixiv">Pixiv</string>
     <string name="clipboard_history_archive_filter_twitter">Twitter/X</string>
+    <string name="clipboard_history_archive_filter_reddit">Reddit</string>
     <string name="clipboard_history_archive_filter_complete">Complete</string>
     <string name="clipboard_history_archive_filter_partial">Partial</string>
     <string name="clipboard_history_archive_filter_attention">Needs attention</string>

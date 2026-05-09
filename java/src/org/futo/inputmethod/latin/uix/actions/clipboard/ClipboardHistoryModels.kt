@@ -27,7 +27,8 @@ object UriSerializer : KSerializer<Uri> {
 @Serializable
 enum class ClipboardPreviewProvider {
     TWITTER,
-    PIXIV
+    PIXIV,
+    REDDIT
 }
 
 @Serializable

@@ -526,12 +526,7 @@ private fun ClipboardArchiveDownloadProviderIcon(
     providerLabel: String
 ) {
     Image(
-        painter = painterResource(
-            when(provider) {
-                ClipboardPreviewProvider.PIXIV -> R.drawable.provider_pixiv
-                ClipboardPreviewProvider.TWITTER -> R.drawable.provider_x
-            }
-        ),
+        painter = painterResource(provider.providerIconRes()),
         contentDescription = providerLabel,
         colorFilter = null,
         modifier = Modifier.size(22.dp)
@@ -818,11 +813,7 @@ internal fun ClipboardArchiveFilterRow(
 }
 
 @Composable
-private fun ClipboardArchiveProviderFilter.labelText(): String = when (this) {
-    ClipboardArchiveProviderFilter.All -> stringResource(R.string.clipboard_history_archive_filter_all)
-    ClipboardArchiveProviderFilter.Pixiv -> stringResource(R.string.clipboard_history_archive_filter_pixiv)
-    ClipboardArchiveProviderFilter.Twitter -> stringResource(R.string.clipboard_history_archive_filter_twitter)
-}
+private fun ClipboardArchiveProviderFilter.labelText(): String = stringResource(labelRes())
 
 @Composable
 private fun ClipboardArchiveStatusFilter.labelText(): String = when (this) {

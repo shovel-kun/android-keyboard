@@ -11,10 +11,11 @@ import java.util.TimeZone
 import kotlin.math.roundToInt
 import org.futo.inputmethod.latin.R
 
-internal enum class ClipboardArchiveProviderFilter {
-    All,
-    Pixiv,
-    Twitter
+internal enum class ClipboardArchiveProviderFilter(val provider: ClipboardPreviewProvider?) {
+    All(null),
+    Pixiv(ClipboardPreviewProvider.PIXIV),
+    Twitter(ClipboardPreviewProvider.TWITTER),
+    Reddit(ClipboardPreviewProvider.REDDIT)
 }
 
 internal enum class ClipboardArchiveStatusFilter {
@@ -366,10 +367,31 @@ private fun String?.isRateLimitFailureDetail(): Boolean =
     this?.contains("Rate limited", ignoreCase = true) == true ||
         this?.contains("HTTP 429", ignoreCase = true) == true
 
-internal fun ClipboardLinkArchive.providerLabel(): String = when (provider) {
+internal fun ClipboardPreviewProvider.providerLabel(): String = when (this) {
     ClipboardPreviewProvider.PIXIV -> "Pixiv"
     ClipboardPreviewProvider.TWITTER -> "Twitter/X"
+    ClipboardPreviewProvider.REDDIT -> "Reddit"
 }
+
+internal fun ClipboardPreviewProvider.providerIconRes(): Int = when (this) {
+    ClipboardPreviewProvider.PIXIV -> R.drawable.provider_pixiv
+    ClipboardPreviewProvider.TWITTER -> R.drawable.provider_x
+    ClipboardPreviewProvider.REDDIT -> R.drawable.link
+}
+
+internal fun ClipboardArchiveProviderFilter.labelRes(): Int =
+    when (this) {
+        ClipboardArchiveProviderFilter.All -> R.string.clipboard_history_archive_filter_all
+        else -> provider?.providerFilterLabelRes() ?: R.string.clipboard_history_archive_filter_all
+    }
+
+private fun ClipboardPreviewProvider.providerFilterLabelRes(): Int = when (this) {
+    ClipboardPreviewProvider.PIXIV -> R.string.clipboard_history_archive_filter_pixiv
+    ClipboardPreviewProvider.TWITTER -> R.string.clipboard_history_archive_filter_twitter
+    ClipboardPreviewProvider.REDDIT -> R.string.clipboard_history_archive_filter_reddit
+}
+
+internal fun ClipboardLinkArchive.providerLabel(): String = provider.providerLabel()
 
 internal fun ClipboardLinkArchive.displayTitle(): String =
     metadata?.title
@@ -586,18 +608,10 @@ internal fun ClipboardLinkArchive.matchesArchiveQuery(query: String): Boolean {
 }
 
 internal fun ClipboardLinkArchive.matchesProviderFilter(filter: ClipboardArchiveProviderFilter): Boolean =
-    when (filter) {
-        ClipboardArchiveProviderFilter.All -> true
-        ClipboardArchiveProviderFilter.Pixiv -> provider == ClipboardPreviewProvider.PIXIV
-        ClipboardArchiveProviderFilter.Twitter -> provider == ClipboardPreviewProvider.TWITTER
-    }
+    filter.provider?.let { provider == it } ?: true
 
 internal fun ClipboardArchiveDownloadListItem.matchesProviderFilter(filter: ClipboardArchiveProviderFilter): Boolean =
-    when (filter) {
-        ClipboardArchiveProviderFilter.All -> true
-        ClipboardArchiveProviderFilter.Pixiv -> provider == ClipboardPreviewProvider.PIXIV
-        ClipboardArchiveProviderFilter.Twitter -> provider == ClipboardPreviewProvider.TWITTER
-    }
+    filter.provider?.let { provider == it } ?: true
 
 internal fun ClipboardLinkArchive.matchesStatusFilter(filter: ClipboardArchiveStatusFilter): Boolean =
     when (filter) {

@@ -202,6 +202,72 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun metadataForSupportedUrl_normalizesRedditPostToRxddit() {
+        val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://www.reddit.com/r/futo/comments/abc123/a_title/"
+        )
+
+        assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
+        assertEquals("https://rxddit.com/r/futo/comments/abc123/a_title", metadata?.sourceUrl)
+        assertEquals("abc123", metadata?.sourceId)
+        assertEquals("reddit:abc123", metadata?.archiveKey())
+    }
+
+    @Test
+    fun metadataForSupportedUrl_normalizesRedditCommentToStableKey() {
+        val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://old.reddit.com/r/futo/comments/abc123/a_title/def456?context=3"
+        )
+
+        assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
+        assertEquals("https://rxddit.com/r/futo/comments/abc123/a_title/def456", metadata?.sourceUrl)
+        assertEquals("abc123:def456", metadata?.sourceId)
+        assertEquals("reddit:abc123:def456", metadata?.archiveKey())
+    }
+
+    @Test
+    fun metadataForSupportedUrl_supportsRedditShortLinks() {
+        val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://redd.it/abc123")
+
+        assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
+        assertEquals("https://rxddit.com/abc123", metadata?.sourceUrl)
+        assertEquals("abc123", metadata?.sourceId)
+    }
+
+    @Test
+    fun metadataForSupportedUrl_ignoresRedditListingUrls() {
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.reddit.com/r/futo/")
+        )
+    }
+
+    @Test
+    fun parseRedditHtmlPreviewMediaUrls_returnsCardMediaInOrder() {
+        val urls = parseRedditHtmlPreviewMediaUrlsForTest(
+            """
+            <html>
+              <head>
+                <meta property="og:description" content="hello" />
+                <meta property="og:image" content="https://i.redd.it/one.jpg" />
+                <meta name="twitter:image" content="https://i.redd.it/two.jpg" />
+                <meta property="og:video" content="https://v.redd.it/clip/DASH_720.mp4" />
+              </head>
+            </html>
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf(
+                "https://v.redd.it/clip/DASH_720.mp4",
+                "https://i.redd.it/one.jpg",
+                "https://i.redd.it/two.jpg"
+            ),
+            urls
+        )
+    }
+
+    @Test
     fun previewRequestCatching_preservesRateLimitFailure() {
         assertEquals(
             null,
@@ -229,6 +295,20 @@ class ClipboardLinkPreviewTest {
 
         assertEquals(null, result.manifest)
         assertTrue(result.failureDetail?.contains("Unsupported preview URL") == true)
+    }
+
+    @Test
+    fun metadataForSupportedUrl_routesToProviderAdapters() {
+        val twitter = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://x.com/futo/status/1234567890")
+        val pixiv = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.pixiv.net/en/artworks/107946644")
+        val reddit = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.reddit.com/r/futo/comments/abc123/title/")
+
+        assertEquals(ClipboardPreviewProvider.TWITTER, twitter?.provider)
+        assertEquals("1234567890", twitter?.sourceId)
+        assertEquals(ClipboardPreviewProvider.PIXIV, pixiv?.provider)
+        assertEquals("107946644", pixiv?.sourceId)
+        assertEquals(ClipboardPreviewProvider.REDDIT, reddit?.provider)
+        assertEquals("abc123", reddit?.sourceId)
     }
 
     @Test

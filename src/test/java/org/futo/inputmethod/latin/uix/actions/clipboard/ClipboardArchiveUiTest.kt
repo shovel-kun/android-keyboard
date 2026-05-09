@@ -151,9 +151,15 @@ class ClipboardArchiveUiTest {
             key = "twitter:789",
             media = listOf(ClipboardArchiveMedia("https://img.example/pending.jpg", 0))
         )
+        val redditArchive = partialTwitter.copy(
+            key = "reddit:abc123",
+            provider = ClipboardPreviewProvider.REDDIT
+        )
 
         assertTrue(completePixiv.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertFalse(completePixiv.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
+        assertTrue(redditArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Reddit))
+        assertFalse(redditArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertTrue(partialTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.Partial))
         assertTrue(partialTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
         assertTrue(pendingTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
@@ -614,12 +620,15 @@ class ClipboardArchiveUiTest {
     fun archiveDownloadItems_matchProviderFilter() {
         val pixivItem = sampleDownloadItem(ClipboardPreviewProvider.PIXIV)
         val twitterItem = sampleDownloadItem(ClipboardPreviewProvider.TWITTER)
+        val redditItem = sampleDownloadItem(ClipboardPreviewProvider.REDDIT)
 
         assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.All))
         assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertFalse(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
         assertTrue(twitterItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
         assertFalse(twitterItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
+        assertTrue(redditItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Reddit))
+        assertFalse(redditItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
     }
 
     @Test

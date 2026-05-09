@@ -122,6 +122,19 @@ private val SupportedPixivHosts = setOf(
     "www.phixiv.net"
 )
 
+private val SupportedRedditHosts = setOf(
+    "reddit.com",
+    "www.reddit.com",
+    "old.reddit.com",
+    "new.reddit.com",
+    "m.reddit.com",
+    "rxddit.com",
+    "www.rxddit.com",
+    "old.rxddit.com",
+    "redd.it",
+    "www.redd.it"
+)
+
 private const val PreviewConnectTimeoutMillis = 5_000
 private const val PreviewReadTimeoutMillis = 10_000
 private const val MaxPreviewJsonBytes = 1_000_000
@@ -134,24 +147,10 @@ object ClipboardLinkPreviewFetcher {
         extractPreviewRequest(rawText) != null
 
     fun metadataForSupportedUrl(rawText: String): ClipboardPreviewMetadata? =
-        when (val request = extractPreviewRequest(rawText)) {
-            is TwitterStatusUrl -> ClipboardPreviewMetadata(
-                provider = ClipboardPreviewProvider.TWITTER,
-                sourceUrl = request.canonicalUrl(),
-                sourceId = request.id,
-                authorHandle = request.handle
-            )
-            is PixivArtworkUrl -> ClipboardPreviewMetadata(
-                provider = ClipboardPreviewProvider.PIXIV,
-                sourceUrl = request.canonicalUrl(),
-                sourceId = request.id,
-                selectedImageIndex = request.pageIndex
-            )
-            null -> null
-        }
+        extractPreviewRequest(rawText)?.seedMetadata()
 
     fun prefersImagePreview(rawText: String): Boolean =
-        extractPreviewRequest(rawText) is PixivArtworkUrl
+        extractPreviewRequest(rawText)?.prefersImagePreview() == true
 
     fun fetchManifest(rawText: String): ClipboardLinkPreviewManifest? {
         return fetchManifestResult(rawText).manifest
@@ -163,10 +162,7 @@ object ClipboardLinkPreviewFetcher {
             failureDetail = "Unsupported preview URL: $rawText"
         )
         return try {
-            when (request) {
-                is TwitterStatusUrl -> fetchTwitterPreview(request)
-                is PixivArtworkUrl -> fetchPixivPreview(request)
-            }
+            request.fetchPreview()
         } catch (e: ClipboardPreviewRateLimitedException) {
             val provider = request.provider()
             val detail = "Rate limited by ${provider.name} while fetching preview manifest for $rawText. Retry after ${e.retryAfterEpochMs}. ${e.message}"
@@ -253,6 +249,15 @@ object ClipboardLinkPreviewFetcher {
             statusUrl = TwitterStatusUrl(handle = "futo", id = "123")
         )?.mediaItems?.map { it.url }.orEmpty()
 
+    internal fun parseRedditHtmlPreviewMediaUrlsForTest(html: String): List<String> =
+        parseRedditHtmlPreview(
+            html = html,
+            redditUrl = RedditPostUrl(
+                pathSegments = listOf("r", "futo", "comments", "abc123", "title"),
+                postId = "abc123"
+            )
+        )?.mediaItems?.map { it.url }.orEmpty()
+
     internal fun previewRateLimitedExceptionForTest(retryAfterEpochMs: Long, message: String): Exception =
         ClipboardPreviewRateLimitedException(retryAfterEpochMs, message)
 
@@ -279,6 +284,111 @@ object ClipboardLinkPreviewFetcher {
             request = TwitterStatusUrl(handle = "futo", id = "123"),
             rawText = "https://x.com/futo/status/123"
         )
+
+    private interface ClipboardPreviewProviderAdapter {
+        val provider: ClipboardPreviewProvider
+        fun parse(url: String): PreviewRequest?
+        fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata
+        fun fetch(request: PreviewRequest): RemotePreviewData?
+        fun canonicalSourceUrl(request: PreviewRequest): String
+        fun ownsMediaHost(host: String): Boolean
+        fun prefersImagePreview(request: PreviewRequest): Boolean = false
+    }
+
+    private val PreviewProviders = listOf(
+        TwitterPreviewProvider,
+        PixivPreviewProvider,
+        RedditPreviewProvider
+    )
+
+    private object TwitterPreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.TWITTER
+
+        override fun parse(url: String): PreviewRequest? =
+            parseTwitterStatusUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val statusUrl = request as TwitterStatusUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = statusUrl.canonicalUrl(),
+                sourceId = statusUrl.id,
+                authorHandle = statusUrl.handle
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchTwitterPreview(request as TwitterStatusUrl)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as TwitterStatusUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean =
+            SupportedTwitterHosts.contains(host) ||
+                host.endsWith(".twimg.com") ||
+                host.endsWith(".twitter.com") ||
+                host.endsWith(".x.com")
+    }
+
+    private object PixivPreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.PIXIV
+
+        override fun parse(url: String): PreviewRequest? =
+            parsePixivArtworkUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val artworkUrl = request as PixivArtworkUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = artworkUrl.canonicalUrl(),
+                sourceId = artworkUrl.id,
+                selectedImageIndex = artworkUrl.pageIndex
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchPixivPreview(request as PixivArtworkUrl)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as PixivArtworkUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean =
+            SupportedPixivHosts.contains(host) ||
+                host.endsWith(".pximg.net") ||
+                host.endsWith(".pixiv.net") ||
+                host.endsWith(".phixiv.net")
+
+        override fun prefersImagePreview(request: PreviewRequest): Boolean = true
+    }
+
+    private object RedditPreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.REDDIT
+
+        override fun parse(url: String): PreviewRequest? =
+            parseRedditPostUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val redditUrl = request as RedditPostUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = redditUrl.canonicalUrl(),
+                sourceId = redditUrl.sourceId()
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchRedditPreview(request as RedditPostUrl)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as RedditPostUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean =
+            SupportedRedditHosts.contains(host) ||
+                host.endsWith(".reddit.com") ||
+                host.endsWith(".rxddit.com") ||
+                host.endsWith(".redd.it") ||
+                host.endsWith(".redditmedia.com")
+    }
 
     private fun fetchTwitterPreview(statusUrl: TwitterStatusUrl): RemotePreviewData? {
         return requestTwitterPreview(statusUrl)
@@ -428,34 +538,28 @@ object ClipboardLinkPreviewFetcher {
         html: String,
         statusUrl: TwitterStatusUrl
     ): RemotePreviewData? {
-        val snippet = html.htmlMetaContent("og:description")
+        val card = html.htmlPreviewCard()
+        val snippet = card.description
             ?.stripSimpleHtml()
             ?.takeIf { it.isNotBlank() }
             ?.let { sanitizeClipboardText(it, 160) }
 
-        val authorHandle = sequenceOf("twitter:creator", "twitter:site")
-            .mapNotNull { html.htmlMetaContent(it) }
+        val authorHandle = card.authorHandles
             .map { it.removePrefix("@").trim() }
             .firstOrNull { it.isNotBlank() }
 
-        val authorName = html.htmlMetaContent("og:title")
+        val authorName = card.title
             ?.stripSimpleHtml()
             ?.substringBefore(" (@")
             ?.trim()
             ?.takeIf { it.isNotBlank() }
 
-        val mediaUrl = sequenceOf(
-            "og:video:secure_url",
-            "og:video",
-            "twitter:player:stream",
-            "og:image"
-        )
-            .mapNotNull { html.htmlMetaContent(it) }
+        val mediaUrl = card.mediaUrls
             .firstOrNull { it.isNotBlank() && !it.contains("/profile_images/") }
 
         val metadata = ClipboardPreviewMetadata(
             provider = ClipboardPreviewProvider.TWITTER,
-            sourceUrl = html.htmlCanonicalUrl() ?: statusUrl.canonicalUrl(),
+            sourceUrl = card.canonicalUrl ?: statusUrl.canonicalUrl(),
             sourceId = statusUrl.id,
             bodyText = snippet,
             authorName = authorName,
@@ -479,6 +583,61 @@ object ClipboardLinkPreviewFetcher {
     private fun requestPixivPreview(artworkUrl: PixivArtworkUrl): JsonObject? {
         val requestUrl = "https://www.phixiv.net/api/info?id=${artworkUrl.id}&language=${artworkUrl.language}"
         return requestJsonObject(requestUrl, MaxPreviewJsonBytes)
+    }
+
+    private fun fetchRedditPreview(redditUrl: RedditPostUrl): RemotePreviewData? {
+        val html = runPreviewRequestCatching {
+            requestText(redditUrl.canonicalUrl(), MaxPreviewJsonBytes)
+        } ?: return null
+
+        return parseRedditHtmlPreview(html, redditUrl)
+    }
+
+    private fun parseRedditHtmlPreview(
+        html: String,
+        redditUrl: RedditPostUrl
+    ): RemotePreviewData? {
+        val card = html.htmlPreviewCard()
+        val snippet = card.description
+            ?.stripSimpleHtml()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { sanitizeClipboardText(it, 160) }
+
+        val title = card.title
+            ?.stripSimpleHtml()
+            ?.takeIf { it.isNotBlank() }
+
+        val authorHandle = card.authorHandles.firstOrNull()
+            ?.removePrefix("@")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
+        val mediaItems = card.mediaUrls
+            .mapIndexed { index, url ->
+                ClipboardLinkPreviewMedia(
+                    url = url,
+                    sourceIndex = index,
+                    mimeType = url.guessedClipboardMimeType()
+                )
+            }
+
+        val metadata = ClipboardPreviewMetadata(
+            provider = ClipboardPreviewProvider.REDDIT,
+            sourceUrl = redditUrl.canonicalUrl(),
+            sourceId = redditUrl.sourceId(),
+            title = title,
+            bodyText = snippet,
+            authorHandle = authorHandle,
+            selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() }
+        ).nullIfEmpty()
+
+        if (snippet == null && title == null && mediaItems.isEmpty() && metadata == null) return null
+
+        return RemotePreviewData(
+            snippet = snippet,
+            mediaItems = mediaItems,
+            metadata = metadata
+        )
     }
 
     fun cachePreviewMedia(
@@ -614,14 +773,25 @@ object ClipboardLinkPreviewFetcher {
     }
 
     private fun PreviewRequest.provider(): ClipboardPreviewProvider = when (this) {
-        is TwitterStatusUrl -> ClipboardPreviewProvider.TWITTER
-        is PixivArtworkUrl -> ClipboardPreviewProvider.PIXIV
+        is TwitterStatusUrl -> TwitterPreviewProvider.provider
+        is PixivArtworkUrl -> PixivPreviewProvider.provider
+        is RedditPostUrl -> RedditPreviewProvider.provider
     }
 
-    private fun PreviewRequest.canonicalSourceUrl(): String = when (this) {
-        is TwitterStatusUrl -> canonicalUrl()
-        is PixivArtworkUrl -> canonicalUrl()
-    }
+    private fun PreviewRequest.seedMetadata(): ClipboardPreviewMetadata =
+        previewProvider().seedMetadata(this)
+
+    private fun PreviewRequest.fetchPreview(): RemotePreviewData? =
+        previewProvider().fetch(this)
+
+    private fun PreviewRequest.prefersImagePreview(): Boolean =
+        previewProvider().prefersImagePreview(this)
+
+    private fun PreviewRequest.canonicalSourceUrl(): String =
+        previewProvider().canonicalSourceUrl(this)
+
+    private fun PreviewRequest.previewProvider(): ClipboardPreviewProviderAdapter =
+        PreviewProviders.first { it.provider == provider() }
 
     private fun ClipboardLinkPreviewManifest.unavailablePreviewFailure(
         request: PreviewRequest,
@@ -645,17 +815,7 @@ object ClipboardLinkPreviewFetcher {
 
     private fun providerForUrl(url: String): ClipboardPreviewProvider? {
         val host = runCatching { URL(url).host.lowercase() }.getOrNull() ?: return null
-        return when {
-            SupportedTwitterHosts.contains(host) ||
-                host.endsWith(".twimg.com") ||
-                host.endsWith(".twitter.com") ||
-                host.endsWith(".x.com") -> ClipboardPreviewProvider.TWITTER
-            SupportedPixivHosts.contains(host) ||
-                host.endsWith(".pximg.net") ||
-                host.endsWith(".pixiv.net") ||
-                host.endsWith(".phixiv.net") -> ClipboardPreviewProvider.PIXIV
-            else -> null
-        }
+        return PreviewProviders.firstOrNull { it.ownsMediaHost(host) }?.provider
     }
 
     private fun HttpURLConnection.rateLimitedException(url: String): ClipboardPreviewRateLimitedException {
@@ -671,7 +831,7 @@ object ClipboardLinkPreviewFetcher {
     private fun extractPreviewRequest(rawText: String): PreviewRequest? {
         return LinkPreviewUrlRegex.findAll(rawText).firstNotNullOfOrNull { match ->
             val url = match.value.trimEnd('.', ',', ';', ':', ')', ']', '}')
-            parseTwitterStatusUrl(url) ?: parsePixivArtworkUrl(url)
+            PreviewProviders.firstNotNullOfOrNull { it.parse(url) }
         }
     }
 
@@ -729,6 +889,45 @@ object ClipboardLinkPreviewFetcher {
         return parsed.copy(
             id = id,
             language = parsed.language.ifBlank { "en" }
+        )
+    }
+
+    private fun parseRedditPostUrl(url: String): RedditPostUrl? {
+        val uri = runCatching { URL(url).toURI() }.getOrNull() ?: return null
+        val host = uri.host?.lowercase() ?: return null
+        if (!SupportedRedditHosts.contains(host)) return null
+
+        val segments = uri.path.split('/').filter { it.isNotBlank() }
+        val parsed = when {
+            (host == "redd.it" || host == "www.redd.it") && segments.isNotEmpty() ->
+                RedditPostUrl(pathSegments = listOf(segments[0]), postId = segments[0])
+            segments.size >= 4 && segments[0] in setOf("r", "u", "user") && segments[2] == "comments" ->
+                RedditPostUrl(
+                    pathSegments = segments,
+                    postId = segments[3],
+                    commentId = segments.getOrNull(5)
+                )
+            segments.size >= 2 && segments[0] == "comments" ->
+                RedditPostUrl(
+                    pathSegments = segments,
+                    postId = segments[1],
+                    commentId = segments.getOrNull(3)
+                )
+            host.endsWith("rxddit.com") && segments.isNotEmpty() ->
+                RedditPostUrl(pathSegments = segments, postId = segments[0])
+            else -> null
+        } ?: return null
+
+        val postId = parsed.postId.takeWhile { it.isLetterOrDigit() || it == '_' || it == '-' }
+        if (postId.length < 2) return null
+
+        val commentId = parsed.commentId
+            ?.takeWhile { it.isLetterOrDigit() || it == '_' || it == '-' }
+            ?.takeIf { it.length >= 2 }
+
+        return parsed.copy(
+            postId = postId,
+            commentId = commentId
         )
     }
 }
@@ -791,6 +990,9 @@ internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: 
 
 internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String> =
     ClipboardLinkPreviewFetcher.parseTwitterHtmlPreviewMediaUrlsForTest(html)
+
+internal fun parseRedditHtmlPreviewMediaUrlsForTest(html: String): List<String> =
+    ClipboardLinkPreviewFetcher.parseRedditHtmlPreviewMediaUrlsForTest(html)
 
 internal fun unavailablePreviewFailureForTest(
     snippet: String?,
@@ -901,6 +1103,58 @@ private fun String.htmlMetaContent(property: String): String? {
     }
 }
 
+private fun String.htmlMetaContents(property: String): List<String> {
+    val propertyPatterns = listOf(
+        """<meta\b[^>]*\bproperty=["']${Regex.escape(property)}["'][^>]*\bcontent=["']([^"']*)["'][^>]*>""",
+        """<meta\b[^>]*\bcontent=["']([^"']*)["'][^>]*\bproperty=["']${Regex.escape(property)}["'][^>]*>""",
+        """<meta\b[^>]*\bname=["']${Regex.escape(property)}["'][^>]*\bcontent=["']([^"']*)["'][^>]*>""",
+        """<meta\b[^>]*\bcontent=["']([^"']*)["'][^>]*\bname=["']${Regex.escape(property)}["'][^>]*>"""
+    )
+
+    return propertyPatterns.flatMap { pattern ->
+        Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .findAll(this)
+            .mapNotNull {
+                it.groupValues
+                    .getOrNull(1)
+                    ?.stripSimpleHtml()
+                    ?.takeIf { value -> value.isNotBlank() }
+            }
+            .toList()
+    }
+}
+
+private fun String.htmlPreviewMediaUrls(): List<String> =
+    listOf(
+        "og:video:secure_url",
+        "og:video",
+        "twitter:player:stream",
+        "og:image",
+        "twitter:image",
+        "twitter:image:src"
+    )
+        .flatMap(::htmlMetaContents)
+        .distinct()
+
+private data class HtmlPreviewCard(
+    val title: String?,
+    val description: String?,
+    val canonicalUrl: String?,
+    val authorHandles: List<String>,
+    val mediaUrls: List<String>
+)
+
+private fun String.htmlPreviewCard(): HtmlPreviewCard =
+    HtmlPreviewCard(
+        title = htmlMetaContent("og:title"),
+        description = htmlMetaContent("og:description"),
+        canonicalUrl = htmlCanonicalUrl(),
+        authorHandles = listOf("twitter:creator", "twitter:site")
+            .flatMap(::htmlMetaContents)
+            .distinct(),
+        mediaUrls = htmlPreviewMediaUrls()
+    )
+
 private fun String.htmlCanonicalUrl(): String? {
     val patterns = listOf(
         """<link\b[^>]*\brel=["']canonical["'][^>]*\bhref=["']([^"']+)["'][^>]*>""",
@@ -997,6 +1251,15 @@ private data class PixivArtworkUrl(
     val language: String
 ) : PreviewRequest {
     fun canonicalUrl(): String = "https://www.phixiv.net/$language/artworks/$id"
+}
+
+private data class RedditPostUrl(
+    val pathSegments: List<String>,
+    val postId: String,
+    val commentId: String? = null
+) : PreviewRequest {
+    fun canonicalUrl(): String = "https://rxddit.com/${pathSegments.joinToString("/")}"
+    fun sourceId(): String = listOfNotNull(postId, commentId).joinToString(":")
 }
 
 private data class RemotePreviewData(
