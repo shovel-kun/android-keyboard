@@ -16,6 +16,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -133,6 +134,17 @@ private val SupportedRedditHosts = setOf(
     "old.rxddit.com",
     "redd.it",
     "www.redd.it"
+)
+
+private val SupportedYouTubeHosts = setOf(
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+    "youtu.be",
+    "www.youtu.be"
 )
 
 private const val PreviewConnectTimeoutMillis = 5_000
@@ -258,6 +270,18 @@ object ClipboardLinkPreviewFetcher {
             )
         )?.mediaItems?.map { it.url }.orEmpty()
 
+    internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+        parseYouTubeOEmbedPreview(
+            response = LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
+            videoUrl = YouTubeVideoUrl(id = "dQw4w9WgXcQ")
+        )?.let { preview ->
+            ClipboardLinkPreviewManifest(
+                snippet = preview.snippet,
+                mediaItems = preview.mediaItems,
+                metadata = preview.metadata
+            )
+        }
+
     internal fun previewRateLimitedExceptionForTest(retryAfterEpochMs: Long, message: String): Exception =
         ClipboardPreviewRateLimitedException(retryAfterEpochMs, message)
 
@@ -298,7 +322,8 @@ object ClipboardLinkPreviewFetcher {
     private val PreviewProviders = listOf(
         TwitterPreviewProvider,
         PixivPreviewProvider,
-        RedditPreviewProvider
+        RedditPreviewProvider,
+        YouTubePreviewProvider
     )
 
     private object TwitterPreviewProvider : ClipboardPreviewProviderAdapter {
@@ -388,6 +413,34 @@ object ClipboardLinkPreviewFetcher {
                 host.endsWith(".rxddit.com") ||
                 host.endsWith(".redd.it") ||
                 host.endsWith(".redditmedia.com")
+    }
+
+    private object YouTubePreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.YOUTUBE
+
+        override fun parse(url: String): PreviewRequest? =
+            parseYouTubeVideoUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val videoUrl = request as YouTubeVideoUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = videoUrl.canonicalUrl(),
+                sourceId = videoUrl.id
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchYouTubePreview(request as YouTubeVideoUrl)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as YouTubeVideoUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean =
+            SupportedYouTubeHosts.contains(host) ||
+                host.endsWith(".youtube.com") ||
+                host.endsWith(".youtube-nocookie.com") ||
+                host.endsWith(".ytimg.com")
     }
 
     private fun fetchTwitterPreview(statusUrl: TwitterStatusUrl): RemotePreviewData? {
@@ -640,6 +693,52 @@ object ClipboardLinkPreviewFetcher {
         )
     }
 
+    private fun fetchYouTubePreview(videoUrl: YouTubeVideoUrl): RemotePreviewData? {
+        val response = runPreviewRequestCatching {
+            requestJsonObject(videoUrl.oEmbedUrl(), MaxPreviewJsonBytes)
+        } ?: return null
+
+        return parseYouTubeOEmbedPreview(response, videoUrl)
+    }
+
+    private fun parseYouTubeOEmbedPreview(
+        response: JsonObject,
+        videoUrl: YouTubeVideoUrl
+    ): RemotePreviewData? {
+        val title = response.stringValue("title")
+            ?.stripSimpleHtml()
+            ?.takeIf { it.isNotBlank() }
+        val thumbnailUrl = response.stringValue("thumbnail_url")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val mediaItems = listOfNotNull(thumbnailUrl)
+            .map {
+                ClipboardLinkPreviewMedia(
+                    url = it,
+                    sourceIndex = 0,
+                    mimeType = it.guessedClipboardMimeType()
+                )
+            }
+
+        if(title == null && mediaItems.isEmpty()) return null
+
+        val metadata = ClipboardPreviewMetadata(
+            provider = ClipboardPreviewProvider.YOUTUBE,
+            sourceUrl = videoUrl.canonicalUrl(),
+            sourceId = videoUrl.id,
+            title = title,
+            authorName = response.stringValue("author_name")?.trim()?.takeIf { it.isNotBlank() },
+            imageCount = 1.takeIf { mediaItems.isNotEmpty() },
+            selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() }
+        ).nullIfEmpty()
+
+        return RemotePreviewData(
+            snippet = title?.let { sanitizeClipboardText(it, 160) },
+            mediaItems = mediaItems,
+            metadata = metadata
+        )
+    }
+
     fun cachePreviewMedia(
         context: Context,
         mediaUrl: String,
@@ -776,6 +875,7 @@ object ClipboardLinkPreviewFetcher {
         is TwitterStatusUrl -> TwitterPreviewProvider.provider
         is PixivArtworkUrl -> PixivPreviewProvider.provider
         is RedditPostUrl -> RedditPreviewProvider.provider
+        is YouTubeVideoUrl -> YouTubePreviewProvider.provider
     }
 
     private fun PreviewRequest.seedMetadata(): ClipboardPreviewMetadata =
@@ -930,6 +1030,23 @@ object ClipboardLinkPreviewFetcher {
             commentId = commentId
         )
     }
+
+    private fun parseYouTubeVideoUrl(url: String): YouTubeVideoUrl? {
+        val uri = runCatching { URL(url).toURI() }.getOrNull() ?: return null
+        val host = uri.host?.lowercase() ?: return null
+        if (!SupportedYouTubeHosts.contains(host)) return null
+
+        val segments = uri.path.split('/').filter { it.isNotBlank() }
+        val rawId = when {
+            host == "youtu.be" || host == "www.youtu.be" -> segments.firstOrNull()
+            segments.size >= 2 && segments[0] in setOf("shorts", "embed", "live", "v") -> segments[1]
+            else -> uri.queryParameters()["v"]
+        } ?: return null
+
+        val id = rawId.takeWhile { it.isLetterOrDigit() || it == '_' || it == '-' }
+        if (!id.isValidYouTubeVideoId()) return null
+        return YouTubeVideoUrl(id)
+    }
 }
 
 internal fun isUnavailablePreviewText(text: String?): Boolean {
@@ -993,6 +1110,9 @@ internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String>
 
 internal fun parseRedditHtmlPreviewMediaUrlsForTest(html: String): List<String> =
     ClipboardLinkPreviewFetcher.parseRedditHtmlPreviewMediaUrlsForTest(html)
+
+internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseYouTubeOEmbedPreviewForTest(responseText)
 
 internal fun unavailablePreviewFailureForTest(
     snippet: String?,
@@ -1227,6 +1347,9 @@ private fun String.fileExtensionForMimeType(): String? = when (normalizedMimeTyp
     else -> null
 }
 
+private fun String.isValidYouTubeVideoId(): Boolean =
+    length >= 6 && all { it.isLetterOrDigit() || it == '_' || it == '-' }
+
 private fun findCachedPreviewFile(directory: File, fileBaseName: String): File? =
     directory.listFiles()
         ?.firstOrNull { file ->
@@ -1260,6 +1383,14 @@ private data class RedditPostUrl(
 ) : PreviewRequest {
     fun canonicalUrl(): String = "https://rxddit.com/${pathSegments.joinToString("/")}"
     fun sourceId(): String = listOfNotNull(postId, commentId).joinToString(":")
+}
+
+private data class YouTubeVideoUrl(
+    val id: String
+) : PreviewRequest {
+    fun canonicalUrl(): String = "https://www.youtube.com/watch?v=$id"
+    fun oEmbedUrl(): String =
+        "https://www.youtube.com/oembed?url=${URLEncoder.encode(canonicalUrl(), "UTF-8")}&format=json"
 }
 
 private data class RemotePreviewData(

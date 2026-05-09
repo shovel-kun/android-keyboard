@@ -235,6 +235,42 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun metadataForSupportedUrl_normalizesYouTubeVideoUrls() {
+        val watch = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=playlist"
+        )
+        val short = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://youtu.be/dQw4w9WgXcQ?si=share"
+        )
+        val shorts = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://m.youtube.com/shorts/dQw4w9WgXcQ"
+        )
+        val music = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+        )
+
+        assertEquals(ClipboardPreviewProvider.YOUTUBE, watch?.provider)
+        assertEquals("https://www.youtube.com/watch?v=dQw4w9WgXcQ", watch?.sourceUrl)
+        assertEquals("dQw4w9WgXcQ", watch?.sourceId)
+        assertEquals("youtube:dQw4w9WgXcQ", watch?.archiveKey())
+        assertEquals(watch, short)
+        assertEquals(watch, shorts)
+        assertEquals(watch, music)
+    }
+
+    @Test
+    fun metadataForSupportedUrl_ignoresYouTubeUrlsWithoutVideoId() {
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.youtube.com/@futo")
+        )
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.youtube.com/playlist?list=abc123")
+        )
+    }
+
+    @Test
     fun metadataForSupportedUrl_ignoresRedditListingUrls() {
         assertEquals(
             null,
@@ -265,6 +301,37 @@ class ClipboardLinkPreviewTest {
             ),
             urls
         )
+    }
+
+    @Test
+    fun parseYouTubeOEmbedPreview_returnsTitleAndThumbnailOnly() {
+        val manifest = parseYouTubeOEmbedPreviewForTest(
+            """
+            {
+              "version": "1.0",
+              "type": "video",
+              "provider_name": "YouTube",
+              "title": "Keyboard preview demo",
+              "author_name": "FUTO",
+              "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+              "html": "<iframe src=\"https://www.youtube.com/embed/dQw4w9WgXcQ\"></iframe>"
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("Keyboard preview demo", manifest?.snippet)
+        assertEquals(
+            listOf("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"),
+            manifest?.mediaItems?.map { it.url }
+        )
+        assertEquals(listOf("image/jpeg"), manifest?.mediaItems?.map { it.mimeType })
+        assertEquals(ClipboardPreviewProvider.YOUTUBE, manifest?.metadata?.provider)
+        assertEquals("https://www.youtube.com/watch?v=dQw4w9WgXcQ", manifest?.metadata?.sourceUrl)
+        assertEquals("dQw4w9WgXcQ", manifest?.metadata?.sourceId)
+        assertEquals("Keyboard preview demo", manifest?.metadata?.title)
+        assertEquals("FUTO", manifest?.metadata?.authorName)
+        assertEquals(1, manifest?.metadata?.imageCount)
+        assertEquals(0, manifest?.metadata?.selectedImageIndex)
     }
 
     @Test
@@ -302,6 +369,7 @@ class ClipboardLinkPreviewTest {
         val twitter = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://x.com/futo/status/1234567890")
         val pixiv = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.pixiv.net/en/artworks/107946644")
         val reddit = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.reddit.com/r/futo/comments/abc123/title/")
+        val youtube = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.youtube.com/embed/dQw4w9WgXcQ")
 
         assertEquals(ClipboardPreviewProvider.TWITTER, twitter?.provider)
         assertEquals("1234567890", twitter?.sourceId)
@@ -309,6 +377,8 @@ class ClipboardLinkPreviewTest {
         assertEquals("107946644", pixiv?.sourceId)
         assertEquals(ClipboardPreviewProvider.REDDIT, reddit?.provider)
         assertEquals("abc123", reddit?.sourceId)
+        assertEquals(ClipboardPreviewProvider.YOUTUBE, youtube?.provider)
+        assertEquals("dQw4w9WgXcQ", youtube?.sourceId)
     }
 
     @Test

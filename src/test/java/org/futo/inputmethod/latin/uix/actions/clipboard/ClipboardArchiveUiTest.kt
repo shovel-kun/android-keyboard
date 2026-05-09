@@ -155,15 +155,31 @@ class ClipboardArchiveUiTest {
             key = "reddit:abc123",
             provider = ClipboardPreviewProvider.REDDIT
         )
+        val youTubeArchive = partialTwitter.copy(
+            key = "youtube:dQw4w9WgXcQ",
+            provider = ClipboardPreviewProvider.YOUTUBE
+        )
 
         assertTrue(completePixiv.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertFalse(completePixiv.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
         assertTrue(redditArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Reddit))
         assertFalse(redditArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
+        assertTrue(youTubeArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.YouTube))
+        assertFalse(youTubeArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Reddit))
         assertTrue(partialTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.Partial))
         assertTrue(partialTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
         assertTrue(pendingTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
         assertFalse(completePixiv.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
+    }
+
+    @Test
+    fun providerPresentation_includesYouTube() {
+        assertEquals("YouTube", ClipboardPreviewProvider.YOUTUBE.providerLabel())
+        assertEquals(R.drawable.provider_youtube, ClipboardPreviewProvider.YOUTUBE.providerIconRes())
+        assertEquals(
+            R.string.clipboard_history_archive_filter_youtube,
+            ClipboardArchiveProviderFilter.YouTube.labelRes()
+        )
     }
 
     @Test
@@ -621,6 +637,7 @@ class ClipboardArchiveUiTest {
         val pixivItem = sampleDownloadItem(ClipboardPreviewProvider.PIXIV)
         val twitterItem = sampleDownloadItem(ClipboardPreviewProvider.TWITTER)
         val redditItem = sampleDownloadItem(ClipboardPreviewProvider.REDDIT)
+        val youTubeItem = sampleDownloadItem(ClipboardPreviewProvider.YOUTUBE)
 
         assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.All))
         assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
@@ -629,6 +646,8 @@ class ClipboardArchiveUiTest {
         assertFalse(twitterItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertTrue(redditItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Reddit))
         assertFalse(redditItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
+        assertTrue(youTubeItem.matchesProviderFilter(ClipboardArchiveProviderFilter.YouTube))
+        assertFalse(youTubeItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
     }
 
     @Test
