@@ -169,6 +169,22 @@ internal fun ClipboardEntry.matchesDeletedArchiveKey(archiveKey: String): Boolea
     previewMetadata?.archiveKey() == archiveKey ||
         archiveBackfillMetadata()?.archiveKey() == archiveKey
 
+internal fun deletedArchiveKeysAfterTextImport(
+    text: String,
+    deletedArchiveKeys: Set<String>
+): Set<String> {
+    val archiveKey = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text)?.archiveKey() ?: return deletedArchiveKeys
+    return deletedArchiveKeys - archiveKey
+}
+
+internal fun deletedArchiveKeysAfterPreviewManifest(
+    manifest: ClipboardLinkPreviewManifest,
+    deletedArchiveKeys: Set<String>
+): Set<String> {
+    val archiveKey = manifest.archiveKey() ?: return deletedArchiveKeys
+    return deletedArchiveKeys - archiveKey
+}
+
 internal fun shouldRunArchiveBackfill(
     completedVersion: Int,
     currentVersion: Int,
@@ -372,6 +388,7 @@ class ClipboardHistoryManager(
         val preservedEntry = existingEntries.lastOrNull { it.hasRetainedPreviewState() }
             ?: existingEntries.lastOrNull()
         val isAlreadyPinned = existingEntries.any { it.pinned }
+        reviveDeletedArchiveForImportedText(text)
 
         clipboardHistory.removeAll { it.text == text }
         val newEntry = ClipboardEntry(
@@ -395,6 +412,24 @@ class ClipboardHistoryManager(
         }
 
         saveClipboard()
+    }
+
+    private fun reviveDeletedArchiveForImportedText(text: String) {
+        reviveDeletedArchiveKeys(deletedArchiveKeysAfterTextImport(text, deletedArchiveKeys))
+    }
+
+    private fun reviveDeletedArchiveForPreviewManifest(manifest: ClipboardLinkPreviewManifest) {
+        reviveDeletedArchiveKeys(deletedArchiveKeysAfterPreviewManifest(manifest, deletedArchiveKeys))
+    }
+
+    private fun reviveDeletedArchiveKeys(updatedKeys: Set<String>) {
+        if(updatedKeys == deletedArchiveKeys) return
+
+        val revivedKeys = deletedArchiveKeys - updatedKeys
+        deletedArchiveKeys.clear()
+        deletedArchiveKeys.addAll(updatedKeys)
+        revivedKeys.forEach(archiveTombstonesByKey::remove)
+        saveArchiveTombstones(archiveTombstonesByKey.values)
     }
 
     private fun importScreenshotEntry(mime: String, uri: Uri) {
@@ -1431,11 +1466,9 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 
                     if(manifest != null && (manifest.snippet != null || manifest.mediaItems.isNotEmpty() || manifest.metadata != null)) {
                         val attemptedAt = System.currentTimeMillis()
-                        val archiveKey = manifest.archiveKey()
-                        val previewWasDeleted = withContext(Dispatchers.Main) {
-                            archiveKey != null && archiveKey in deletedArchiveKeys
+                        withContext(Dispatchers.Main) {
+                            reviveDeletedArchiveForPreviewManifest(manifest)
                         }
-                        if(previewWasDeleted) break
                         val archive = createOrUpdateArchive(manifest, attemptedAt)
                         val initialMedia = archive?.savedPreviewMedia().orEmpty()
                         val updated = updateLatestTextEntry(request.text) { current ->

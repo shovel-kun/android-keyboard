@@ -724,6 +724,50 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
+    fun textImportRevivesMatchingDeletedArchiveKey() {
+        assertEquals(
+            setOf("pixiv:456"),
+            deletedArchiveKeysAfterTextImport(
+                text = "https://www.pixiv.net/en/artworks/123",
+                deletedArchiveKeys = setOf("pixiv:123", "pixiv:456")
+            )
+        )
+    }
+
+    @Test
+    fun textImportKeepsUnrelatedDeletedArchiveKeys() {
+        assertEquals(
+            setOf("pixiv:123"),
+            deletedArchiveKeysAfterTextImport(
+                text = "plain text",
+                deletedArchiveKeys = setOf("pixiv:123")
+            )
+        )
+    }
+
+    @Test
+    fun previewManifestRevivesResolvedDeletedArchiveKey() {
+        val manifest = ClipboardLinkPreviewManifest(
+            snippet = "is there a way",
+            mediaItems = emptyList(),
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.REDDIT,
+                sourceUrl = "https://rxddit.com/r/ComedyHell/comments/1t4mfwe/is_there_a_way",
+                sourceId = "1t4mfwe",
+                title = "is there a way"
+            )
+        )
+
+        assertEquals(
+            setOf("reddit:j7xGCXRsdR"),
+            deletedArchiveKeysAfterPreviewManifest(
+                manifest = manifest,
+                deletedArchiveKeys = setOf("reddit:j7xGCXRsdR", "reddit:1t4mfwe")
+            )
+        )
+    }
+
+    @Test
     fun deleteArchiveMatchesEntryFromUrlWhenPreviewMetadataWasAlreadyCleared() {
         val entry = samplePixivEntry().copy(
             previewMetadata = null

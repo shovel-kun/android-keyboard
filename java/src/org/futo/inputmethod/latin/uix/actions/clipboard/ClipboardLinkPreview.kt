@@ -688,6 +688,7 @@ object ClipboardLinkPreviewFetcher {
             ?.takeIf { it.isNotBlank() }
 
         val mediaItems = card.mediaUrls
+            .distinctBy { it.redditPreviewMediaIdentity() }
             .mapIndexed { index, url ->
                 ClipboardLinkPreviewMedia(
                     url = url,
@@ -1248,41 +1249,32 @@ private fun JsonArray.firstObject(): JsonObject? =
     firstOrNull() as? JsonObject
 
 private fun String.htmlMetaContent(property: String): String? {
-    val propertyPatterns = listOf(
-        """<meta\b[^>]*\bproperty=["']${Regex.escape(property)}["'][^>]*\bcontent=["']([^"']*)["'][^>]*>""",
-        """<meta\b[^>]*\bcontent=["']([^"']*)["'][^>]*\bproperty=["']${Regex.escape(property)}["'][^>]*>"""
-    )
-
-    return propertyPatterns.firstNotNullOfOrNull { pattern ->
-        Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            .find(this)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.stripSimpleHtml()
-            ?.takeIf { it.isNotBlank() }
-    }
+    return htmlMetaContents(property).firstOrNull()
 }
 
-private fun String.htmlMetaContents(property: String): List<String> {
-    val propertyPatterns = listOf(
-        """<meta\b[^>]*\bproperty=["']${Regex.escape(property)}["'][^>]*\bcontent=["']([^"']*)["'][^>]*>""",
-        """<meta\b[^>]*\bcontent=["']([^"']*)["'][^>]*\bproperty=["']${Regex.escape(property)}["'][^>]*>""",
-        """<meta\b[^>]*\bname=["']${Regex.escape(property)}["'][^>]*\bcontent=["']([^"']*)["'][^>]*>""",
-        """<meta\b[^>]*\bcontent=["']([^"']*)["'][^>]*\bname=["']${Regex.escape(property)}["'][^>]*>"""
-    )
+private fun String.htmlMetaContents(property: String): List<String> =
+    htmlMetaAttributes()
+        .mapNotNull { attributes ->
+            val key = attributes["property"] ?: attributes["name"] ?: return@mapNotNull null
+            if(!key.equals(property, ignoreCase = true)) return@mapNotNull null
+            attributes["content"]
+                ?.stripSimpleHtml()
+                ?.takeIf { value -> value.isNotBlank() }
+        }
+        .toList()
 
-    return propertyPatterns.flatMap { pattern ->
-        Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-            .findAll(this)
-            .mapNotNull {
-                it.groupValues
-                    .getOrNull(1)
-                    ?.stripSimpleHtml()
-                    ?.takeIf { value -> value.isNotBlank() }
-            }
-            .toList()
-    }
-}
+private fun String.htmlMetaAttributes(): Sequence<Map<String, String>> =
+    Regex("""<meta\b[^>]*>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .findAll(this)
+        .map { match ->
+            HtmlAttributeRegex.findAll(match.value)
+                .associate { attribute ->
+                    attribute.groupValues[1].lowercase() to attribute.groupValues[3]
+                }
+        }
+
+private val HtmlAttributeRegex =
+    Regex("""\b([A-Za-z_:.-]+)=(["'])(.*?)\2""", RegexOption.DOT_MATCHES_ALL)
 
 private fun String.htmlPreviewMediaUrls(): List<String> =
     listOf(
@@ -1295,6 +1287,12 @@ private fun String.htmlPreviewMediaUrls(): List<String> =
     )
         .flatMap(::htmlMetaContents)
         .distinct()
+
+private fun String.redditPreviewMediaIdentity(): String =
+    runCatching {
+        val url = URL(this)
+        "${url.host.lowercase()}${url.path}"
+    }.getOrDefault(this)
 
 private data class HtmlPreviewCard(
     val title: String?,

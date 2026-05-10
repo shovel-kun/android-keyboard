@@ -316,6 +316,25 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parseRedditHtmlPreviewMediaUrls_deduplicatesSamePreviewImageWithDifferentSizingParams() {
+        val urls = parseRedditHtmlPreviewMediaUrlsForTest(
+            """
+            <html>
+              <head>
+                <meta property="og:image" content="https://preview.redd.it/post.jpeg?width=959&amp;height=502&amp;auto=webp" />
+                <meta property="twitter:image" content="https://preview.redd.it/post.jpeg?width=600&amp;height=300&amp;auto=webp" />
+              </head>
+            </html>
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf("https://preview.redd.it/post.jpeg?width=959&amp;height=502&amp;auto=webp"),
+            urls
+        )
+    }
+
+    @Test
     fun parseRedditHtmlPreview_usesPostTitleAsSnippet() {
         val manifest = parseRedditHtmlPreviewForTest(
             """
@@ -335,6 +354,23 @@ class ClipboardLinkPreviewTest {
             "Posted in r/ComedyHell by u/IloveRamen99 • 19,533 points and 835 comments",
             manifest?.metadata?.bodyText
         )
+    }
+
+    @Test
+    fun parseRedditHtmlPreview_keepsApostrophesInDoubleQuotedTitle() {
+        val manifest = parseRedditHtmlPreviewForTest(
+            """
+            <html>
+              <head>
+                <meta property="og:title" content="I'm hungry" />
+                <meta property="og:image" content="https://i.redd.it/post.jpg" />
+              </head>
+            </html>
+            """.trimIndent()
+        )
+
+        assertEquals("I'm hungry", manifest?.snippet)
+        assertEquals("I'm hungry", manifest?.metadata?.title)
     }
 
     @Test
