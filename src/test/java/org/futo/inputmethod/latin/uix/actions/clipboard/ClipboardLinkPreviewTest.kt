@@ -235,6 +235,18 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun metadataForSupportedUrl_supportsRedditShareLinks() {
+        val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://www.reddit.com/r/ComedyHell/s/j7xGCXRsdR"
+        )
+
+        assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
+        assertEquals("https://rxddit.com/r/ComedyHell/s/j7xGCXRsdR", metadata?.sourceUrl)
+        assertEquals("j7xGCXRsdR", metadata?.sourceId)
+        assertEquals("reddit:j7xGCXRsdR", metadata?.archiveKey())
+    }
+
+    @Test
     fun metadataForSupportedUrl_normalizesYouTubeVideoUrls() {
         val watch = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=playlist"
@@ -300,6 +312,28 @@ class ClipboardLinkPreviewTest {
                 "https://i.redd.it/two.jpg"
             ),
             urls
+        )
+    }
+
+    @Test
+    fun parseRedditHtmlPreview_usesPostTitleAsSnippet() {
+        val manifest = parseRedditHtmlPreviewForTest(
+            """
+            <html>
+              <head>
+                <meta property="og:title" content="is there a way" />
+                <meta property="og:description" content="Posted in r/ComedyHell by u/IloveRamen99 • 19,533 points and 835 comments" />
+                <meta property="og:image" content="https://i.redd.it/post.jpg" />
+              </head>
+            </html>
+            """.trimIndent()
+        )
+
+        assertEquals("is there a way", manifest?.snippet)
+        assertEquals("is there a way", manifest?.metadata?.title)
+        assertEquals(
+            "Posted in r/ComedyHell by u/IloveRamen99 • 19,533 points and 835 comments",
+            manifest?.metadata?.bodyText
         )
     }
 

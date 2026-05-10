@@ -270,6 +270,21 @@ object ClipboardLinkPreviewFetcher {
             )
         )?.mediaItems?.map { it.url }.orEmpty()
 
+    internal fun parseRedditHtmlPreviewForTest(html: String): ClipboardLinkPreviewManifest? =
+        parseRedditHtmlPreview(
+            html = html,
+            redditUrl = RedditPostUrl(
+                pathSegments = listOf("r", "futo", "comments", "abc123", "title"),
+                postId = "abc123"
+            )
+        )?.let { preview ->
+            ClipboardLinkPreviewManifest(
+                snippet = preview.snippet,
+                mediaItems = preview.mediaItems,
+                metadata = preview.metadata
+            )
+        }
+
     internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
         parseYouTubeOEmbedPreview(
             response = LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
@@ -639,11 +654,18 @@ object ClipboardLinkPreviewFetcher {
     }
 
     private fun fetchRedditPreview(redditUrl: RedditPostUrl): RemotePreviewData? {
+        val resolvedUrl = redditUrl.redirectUrl?.let { redirectUrl ->
+            runPreviewRequestCatching {
+                requestFinalUrl(redirectUrl)
+            }?.let(::parseRedditPostUrl)
+                ?.takeIf { it.redirectUrl == null }
+        }
+        val previewUrl = resolvedUrl ?: redditUrl
         val html = runPreviewRequestCatching {
-            requestText(redditUrl.canonicalUrl(), MaxPreviewJsonBytes)
+            requestText(previewUrl.oldRedditUrl(), MaxPreviewJsonBytes)
         } ?: return null
 
-        return parseRedditHtmlPreview(html, redditUrl)
+        return parseRedditHtmlPreview(html, previewUrl)
     }
 
     private fun parseRedditHtmlPreview(
@@ -651,14 +673,14 @@ object ClipboardLinkPreviewFetcher {
         redditUrl: RedditPostUrl
     ): RemotePreviewData? {
         val card = html.htmlPreviewCard()
-        val snippet = card.description
+        val description = card.description
             ?.stripSimpleHtml()
             ?.takeIf { it.isNotBlank() }
-            ?.let { sanitizeClipboardText(it, 160) }
 
         val title = card.title
             ?.stripSimpleHtml()
             ?.takeIf { it.isNotBlank() }
+        val snippet = title?.let { sanitizeClipboardText(it, 160) }
 
         val authorHandle = card.authorHandles.firstOrNull()
             ?.removePrefix("@")
@@ -679,7 +701,7 @@ object ClipboardLinkPreviewFetcher {
             sourceUrl = redditUrl.canonicalUrl(),
             sourceId = redditUrl.sourceId(),
             title = title,
-            bodyText = snippet,
+            bodyText = description,
             authorHandle = authorHandle,
             selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() }
         ).nullIfEmpty()
@@ -849,6 +871,11 @@ object ClipboardLinkPreviewFetcher {
             }
         }
 
+    private fun requestFinalUrl(url: String): String =
+        withConnection(url) { connection ->
+            connection.url.toString()
+        }
+
     private inline fun <T> withConnection(url: String, block: (HttpURLConnection) -> T): T {
         val connection = openConnection(url)
         return try {
@@ -1000,12 +1027,22 @@ object ClipboardLinkPreviewFetcher {
         val segments = uri.path.split('/').filter { it.isNotBlank() }
         val parsed = when {
             (host == "redd.it" || host == "www.redd.it") && segments.isNotEmpty() ->
-                RedditPostUrl(pathSegments = listOf(segments[0]), postId = segments[0])
+                RedditPostUrl(
+                    pathSegments = listOf(segments[0]),
+                    postId = segments[0],
+                    redirectUrl = "https://redd.it/${segments[0]}"
+                )
             segments.size >= 4 && segments[0] in setOf("r", "u", "user") && segments[2] == "comments" ->
                 RedditPostUrl(
                     pathSegments = segments,
                     postId = segments[3],
                     commentId = segments.getOrNull(5)
+                )
+            segments.size >= 4 && segments[0] in setOf("r", "u", "user") && segments[2] == "s" ->
+                RedditPostUrl(
+                    pathSegments = segments,
+                    postId = segments[3],
+                    redirectUrl = "https://www.reddit.com/${segments.joinToString("/")}"
                 )
             segments.size >= 2 && segments[0] == "comments" ->
                 RedditPostUrl(
@@ -1110,6 +1147,9 @@ internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String>
 
 internal fun parseRedditHtmlPreviewMediaUrlsForTest(html: String): List<String> =
     ClipboardLinkPreviewFetcher.parseRedditHtmlPreviewMediaUrlsForTest(html)
+
+internal fun parseRedditHtmlPreviewForTest(html: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseRedditHtmlPreviewForTest(html)
 
 internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
     ClipboardLinkPreviewFetcher.parseYouTubeOEmbedPreviewForTest(responseText)
@@ -1379,9 +1419,11 @@ private data class PixivArtworkUrl(
 private data class RedditPostUrl(
     val pathSegments: List<String>,
     val postId: String,
-    val commentId: String? = null
+    val commentId: String? = null,
+    val redirectUrl: String? = null
 ) : PreviewRequest {
     fun canonicalUrl(): String = "https://rxddit.com/${pathSegments.joinToString("/")}"
+    fun oldRedditUrl(): String = "https://old.reddit.com/${pathSegments.joinToString("/")}"
     fun sourceId(): String = listOfNotNull(postId, commentId).joinToString(":")
 }
 
