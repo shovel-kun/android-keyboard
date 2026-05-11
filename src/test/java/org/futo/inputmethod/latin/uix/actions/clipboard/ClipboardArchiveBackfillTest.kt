@@ -798,6 +798,67 @@ class ClipboardArchiveBackfillTest {
         assertFalse(entry.matchesDeletedArchiveKey("pixiv:123"))
     }
 
+    @Test
+    fun startupPreviewFetchTexts_boundsNewestSupportedClipsOnly() {
+        val ids = (101..110).toList()
+        val entries = ids.mapIndexed { index, id ->
+            samplePixivEntry().copy(
+                timestamp = index.toLong(),
+                text = "https://www.pixiv.net/artworks/$id",
+                previewText = null,
+                previewMediaFiles = emptyList(),
+                previewMetadata = null,
+                previewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted
+            )
+        } + listOf(
+            samplePixivEntry().copy(
+                timestamp = 11L,
+                text = "plain text",
+                previewText = null,
+                previewMediaFiles = emptyList(),
+                previewMetadata = null,
+                previewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted
+            )
+        )
+
+        assertEquals(
+            listOf(
+                "https://www.pixiv.net/artworks/110",
+                "https://www.pixiv.net/artworks/109",
+                "https://www.pixiv.net/artworks/108"
+            ),
+            startupPreviewFetchTexts(entries = entries, limit = 3)
+        )
+    }
+
+    @Test
+    fun archiveBackfillRequests_stayUnboundedWhenStartupPreviewFetchIsBounded() {
+        val ids = (101..110).toList()
+        val entries = ids.mapIndexed { index, id ->
+            samplePixivEntry().copy(
+                timestamp = index.toLong(),
+                text = "https://www.pixiv.net/artworks/$id"
+            )
+        }
+        val previewFetchEntries = entries.map {
+            it.copy(
+                previewText = null,
+                previewMediaFiles = emptyList(),
+                previewMetadata = null,
+                previewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted
+            )
+        }
+
+        assertEquals(3, startupPreviewFetchTexts(entries = previewFetchEntries, limit = 3).size)
+        assertEquals(
+            ids.map { "pixiv:$it" },
+            archiveBackfillRequests(
+                entries = entries,
+                existingArchiveKeys = emptySet()
+            ).map { it.archiveKey }
+        )
+    }
+
     private fun samplePixivEntry(
         metadata: ClipboardPreviewMetadata? = null
     ) = ClipboardEntry(

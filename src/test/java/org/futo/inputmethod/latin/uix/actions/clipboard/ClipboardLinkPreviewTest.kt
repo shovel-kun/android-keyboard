@@ -214,6 +214,18 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun previewCandidate_matchesExistingSupportMetadataAndImagePreferenceHelpers() {
+        val text = "saved this https://www.pixiv.net/en/artworks/107946644"
+        val candidate = ClipboardLinkPreviewFetcher.previewCandidateFor(text)
+
+        assertTrue(ClipboardLinkPreviewFetcher.supportsPreview(text))
+        assertEquals(ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text), candidate?.metadata)
+        assertEquals(ClipboardLinkPreviewFetcher.prefersImagePreview(text), candidate?.prefersImagePreview)
+        assertEquals(ClipboardPreviewProvider.PIXIV, candidate?.provider)
+        assertEquals("pixiv:107946644", candidate?.archiveKey)
+    }
+
+    @Test
     fun metadataForSupportedUrl_normalizesRedditCommentToStableKey() {
         val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
             "https://old.reddit.com/r/futo/comments/abc123/a_title/def456?context=3"
@@ -312,6 +324,37 @@ class ClipboardLinkPreviewTest {
                 "https://i.redd.it/two.jpg"
             ),
             urls
+        )
+    }
+
+    @Test
+    fun parseRedditHtmlPreview_preservesOnePassMetaOrderingAndApostrophes() {
+        val manifest = parseRedditHtmlPreviewForTest(
+            """
+            <html>
+              <head>
+                <meta property="og:title" content="I'm hungry" />
+                <meta name="twitter:site" content="@futo" />
+                <meta property="og:description" content="Posted by u/test" />
+                <meta name="twitter:image" content="https://i.redd.it/two.jpg" />
+                <meta property="og:image" content="https://i.redd.it/one.jpg" />
+                <meta property="og:video" content="https://v.redd.it/clip/DASH_720.mp4" />
+              </head>
+            </html>
+            """.trimIndent()
+        )
+
+        assertEquals("I'm hungry", manifest?.snippet)
+        assertEquals("I'm hungry", manifest?.metadata?.title)
+        assertEquals("Posted by u/test", manifest?.metadata?.bodyText)
+        assertEquals("futo", manifest?.metadata?.authorHandle)
+        assertEquals(
+            listOf(
+                "https://v.redd.it/clip/DASH_720.mp4",
+                "https://i.redd.it/one.jpg",
+                "https://i.redd.it/two.jpg"
+            ),
+            manifest?.mediaItems?.map { it.url }
         )
     }
 

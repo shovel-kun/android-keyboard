@@ -440,6 +440,55 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun deduplicateClipboardEntries_preservesDuplicatePositionAndArchiveMetadata() {
+        val deduplicated = deduplicateClipboardEntries(
+            listOf(
+                ClipboardEntry(
+                    timestamp = 1L,
+                    pinned = false,
+                    text = "https://x.com/futo/status/123",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMediaFiles = listOf(ClipboardPreviewMedia("one.jpg")),
+                    deletedArchiveKeys = setOf("twitter:old")
+                ),
+                ClipboardEntry(
+                    timestamp = 2L,
+                    pinned = false,
+                    text = "middle",
+                    uri = null,
+                    mimeTypes = listOf("text/plain")
+                ),
+                ClipboardEntry(
+                    timestamp = 3L,
+                    pinned = true,
+                    text = "https://x.com/futo/status/123",
+                    uri = null,
+                    mimeTypes = listOf("text/plain"),
+                    previewMediaFiles = listOf(
+                        ClipboardPreviewMedia("one.jpg"),
+                        ClipboardPreviewMedia("two.jpg")
+                    ),
+                    previewMetadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.TWITTER,
+                        sourceUrl = "https://x.com/futo/status/123",
+                        sourceId = "123"
+                    ),
+                    deletedArchiveKeys = setOf("twitter:new")
+                )
+            )
+        )
+
+        assertEquals(listOf("https://x.com/futo/status/123", "middle"), deduplicated.map { it.text })
+        val merged = deduplicated.first()
+        assertEquals(3L, merged.timestamp)
+        assertTrue(merged.pinned)
+        assertEquals(listOf("one.jpg", "two.jpg"), merged.previewMediaFileNames())
+        assertEquals("123", merged.previewMetadata?.sourceId)
+        assertEquals(setOf("twitter:old", "twitter:new"), merged.deletedArchiveKeys)
+    }
+
+    @Test
     fun deduplicateClipboardEntries_keepsRicherPreviewMediaListAboveOneHundredItems() {
         val fullMedia = List(650) { index ->
             ClipboardPreviewMedia("full-$index.jpg", sourceIndex = index)

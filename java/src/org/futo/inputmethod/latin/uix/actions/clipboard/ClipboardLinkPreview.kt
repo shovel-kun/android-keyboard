@@ -72,6 +72,14 @@ data class ClipboardLinkPreviewManifestResult(
     val failure: ClipboardPreviewFetchFailure? = null
 )
 
+internal data class ClipboardPreviewCandidate(
+    val request: PreviewRequest,
+    val provider: ClipboardPreviewProvider,
+    val metadata: ClipboardPreviewMetadata,
+    val archiveKey: String?,
+    val prefersImagePreview: Boolean
+)
+
 sealed interface ClipboardPreviewFetchFailure {
     data class RateLimited(
         val provider: ClipboardPreviewProvider,
@@ -156,27 +164,41 @@ internal const val DefaultPreviewRateLimitCooldownMillis = 15L * 60L * 1000L
 
 object ClipboardLinkPreviewFetcher {
     fun supportsPreview(rawText: String): Boolean =
-        extractPreviewRequest(rawText) != null
+        previewCandidateFor(rawText) != null
 
     fun metadataForSupportedUrl(rawText: String): ClipboardPreviewMetadata? =
-        extractPreviewRequest(rawText)?.seedMetadata()
+        previewCandidateFor(rawText)?.metadata
 
     fun prefersImagePreview(rawText: String): Boolean =
-        extractPreviewRequest(rawText)?.prefersImagePreview() == true
+        previewCandidateFor(rawText)?.prefersImagePreview == true
+
+    internal fun previewCandidateFor(rawText: String): ClipboardPreviewCandidate? =
+        extractPreviewRequest(rawText)?.toCandidate()
 
     fun fetchManifest(rawText: String): ClipboardLinkPreviewManifest? {
         return fetchManifestResult(rawText).manifest
     }
 
     fun fetchManifestResult(rawText: String): ClipboardLinkPreviewManifestResult {
-        val request = extractPreviewRequest(rawText) ?: return ClipboardLinkPreviewManifestResult(
+        val candidate = previewCandidateFor(rawText) ?: return ClipboardLinkPreviewManifestResult(
             manifest = null,
             failureDetail = "Unsupported preview URL: $rawText"
         )
+        return fetchManifestResult(candidate, rawText)
+    }
+
+    internal fun fetchManifestResult(candidate: ClipboardPreviewCandidate): ClipboardLinkPreviewManifestResult =
+        fetchManifestResult(candidate, candidate.metadata.sourceUrl ?: candidate.archiveKey.orEmpty())
+
+    private fun fetchManifestResult(
+        candidate: ClipboardPreviewCandidate,
+        rawText: String
+    ): ClipboardLinkPreviewManifestResult {
+        val request = candidate.request
         return try {
             request.fetchPreview()
         } catch (e: ClipboardPreviewRateLimitedException) {
-            val provider = request.provider()
+            val provider = candidate.provider
             val detail = "Rate limited by ${provider.name} while fetching preview manifest for $rawText. Retry after ${e.retryAfterEpochMs}. ${e.message}"
             return ClipboardLinkPreviewManifestResult(
                 manifest = null,
@@ -915,6 +937,17 @@ object ClipboardLinkPreviewFetcher {
     private fun PreviewRequest.prefersImagePreview(): Boolean =
         previewProvider().prefersImagePreview(this)
 
+    private fun PreviewRequest.toCandidate(): ClipboardPreviewCandidate {
+        val metadata = seedMetadata()
+        return ClipboardPreviewCandidate(
+            request = this,
+            provider = provider(),
+            metadata = metadata,
+            archiveKey = metadata.archiveKey(),
+            prefersImagePreview = prefersImagePreview()
+        )
+    }
+
     private fun PreviewRequest.canonicalSourceUrl(): String =
         previewProvider().canonicalSourceUrl(this)
 
@@ -1248,35 +1281,46 @@ private fun JsonObject.stringArrayValue(key: String): List<String> =
 private fun JsonArray.firstObject(): JsonObject? =
     firstOrNull() as? JsonObject
 
-private fun String.htmlMetaContent(property: String): String? {
-    return htmlMetaContents(property).firstOrNull()
-}
+private fun HtmlPreviewDocument.htmlMetaContent(property: String): String? =
+    htmlMetaContents(property).firstOrNull()
 
-private fun String.htmlMetaContents(property: String): List<String> =
-    htmlMetaAttributes()
-        .mapNotNull { attributes ->
-            val key = attributes["property"] ?: attributes["name"] ?: return@mapNotNull null
-            if(!key.equals(property, ignoreCase = true)) return@mapNotNull null
-            attributes["content"]
-                ?.stripSimpleHtml()
-                ?.takeIf { value -> value.isNotBlank() }
-        }
-        .toList()
+private fun HtmlPreviewDocument.htmlMetaContents(property: String): List<String> =
+    metaContents[property.lowercase()].orEmpty()
 
 private fun String.htmlMetaAttributes(): Sequence<Map<String, String>> =
     Regex("""<meta\b[^>]*>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         .findAll(this)
-        .map { match ->
-            HtmlAttributeRegex.findAll(match.value)
+        .mapNotNull { attributes ->
+            HtmlAttributeRegex.findAll(attributes.value)
                 .associate { attribute ->
                     attribute.groupValues[1].lowercase() to attribute.groupValues[3]
                 }
         }
 
+private fun String.htmlPreviewDocument(): HtmlPreviewDocument {
+    val metaContents = htmlMetaAttributes()
+        .mapNotNull { attributes ->
+            val key = attributes["property"] ?: attributes["name"] ?: return@mapNotNull null
+            val value = attributes["content"]
+                ?.stripSimpleHtml()
+                ?.takeIf { content -> content.isNotBlank() }
+                ?: return@mapNotNull null
+            key.lowercase() to value
+        }
+        .groupBy(
+            keySelector = { it.first },
+            valueTransform = { it.second }
+        )
+    return HtmlPreviewDocument(
+        metaContents = metaContents,
+        canonicalUrl = htmlCanonicalUrl()
+    )
+}
+
 private val HtmlAttributeRegex =
     Regex("""\b([A-Za-z_:.-]+)=(["'])(.*?)\2""", RegexOption.DOT_MATCHES_ALL)
 
-private fun String.htmlPreviewMediaUrls(): List<String> =
+private fun HtmlPreviewDocument.htmlPreviewMediaUrls(): List<String> =
     listOf(
         "og:video:secure_url",
         "og:video",
@@ -1302,16 +1346,23 @@ private data class HtmlPreviewCard(
     val mediaUrls: List<String>
 )
 
+private data class HtmlPreviewDocument(
+    val metaContents: Map<String, List<String>>,
+    val canonicalUrl: String?
+)
+
 private fun String.htmlPreviewCard(): HtmlPreviewCard =
-    HtmlPreviewCard(
-        title = htmlMetaContent("og:title"),
-        description = htmlMetaContent("og:description"),
-        canonicalUrl = htmlCanonicalUrl(),
-        authorHandles = listOf("twitter:creator", "twitter:site")
-            .flatMap(::htmlMetaContents)
-            .distinct(),
-        mediaUrls = htmlPreviewMediaUrls()
-    )
+    htmlPreviewDocument().let { document ->
+        HtmlPreviewCard(
+            title = document.htmlMetaContent("og:title"),
+            description = document.htmlMetaContent("og:description"),
+            canonicalUrl = document.canonicalUrl,
+            authorHandles = listOf("twitter:creator", "twitter:site")
+                .flatMap(document::htmlMetaContents)
+                .distinct(),
+            mediaUrls = document.htmlPreviewMediaUrls()
+        )
+    }
 
 private fun String.htmlCanonicalUrl(): String? {
     val patterns = listOf(
@@ -1399,7 +1450,7 @@ private fun findCachedPreviewFile(directory: File, fileBaseName: String): File? 
 private fun String.md5Hex(): String =
     MessageDigest.getInstance("MD5").digest(toByteArray()).joinToString("") { "%02x".format(it) }
 
-private sealed interface PreviewRequest
+internal sealed interface PreviewRequest
 
 private data class TwitterStatusUrl(
     val handle: String?,

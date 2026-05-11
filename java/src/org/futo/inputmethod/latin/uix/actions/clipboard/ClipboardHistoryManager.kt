@@ -13,6 +13,7 @@ import androidx.lifecycle.LifecycleCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -39,9 +40,11 @@ private val ClipboardIOContext = Dispatchers.IO.limitedParallelism(1)
 @OptIn(ExperimentalCoroutinesApi::class)
 private val ClipboardPreviewFetchContext = Dispatchers.IO.limitedParallelism(3)
 private const val ClipboardStoredMediaMaxBytes = 50L * 1024L * 1024L
+private const val ClipboardStartupPreviewFetchLimit = 8
 
 private data class ClipboardPreviewFetchRequest(
     val text: String,
+    val candidate: ClipboardPreviewCandidate,
     val maxAttempts: Int,
     val manualRetry: Boolean
 )
@@ -91,6 +94,10 @@ private data class ClipboardArchiveProgressSnapshot(
     )
 }
 
+private data class ClipboardStorageSnapshot(
+    val fileNames: Set<String>
+)
+
 internal data class ClipboardPreviewProviderCooldown(
     val provider: ClipboardPreviewProvider,
     val retryAfterEpochMs: Long,
@@ -115,24 +122,24 @@ internal fun replaceFileWithBackup(
 
 internal fun ClipboardEntry.archiveBackfillMetadata(): ClipboardPreviewMetadata? {
     val text = text ?: return null
-    val urlMetadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text) ?: return null
-    return previewMetadata?.takeIf { it.provider == urlMetadata.provider }?.let { legacy ->
-        urlMetadata.copy(
-            sourceUrl = legacy.sourceUrl ?: urlMetadata.sourceUrl,
-            sourceId = legacy.sourceId ?: urlMetadata.sourceId,
+    val candidate = ClipboardLinkPreviewFetcher.previewCandidateFor(text) ?: return null
+    return previewMetadata?.takeIf { it.provider == candidate.provider }?.let { legacy ->
+        candidate.metadata.copy(
+            sourceUrl = legacy.sourceUrl ?: candidate.metadata.sourceUrl,
+            sourceId = legacy.sourceId ?: candidate.metadata.sourceId,
             title = legacy.title,
             bodyText = legacy.bodyText ?: previewText,
             authorName = legacy.authorName,
-            authorHandle = legacy.authorHandle ?: urlMetadata.authorHandle,
+            authorHandle = legacy.authorHandle ?: candidate.metadata.authorHandle,
             authorId = legacy.authorId,
             createdAt = legacy.createdAt,
             imageCount = legacy.imageCount,
-            selectedImageIndex = legacy.selectedImageIndex ?: urlMetadata.selectedImageIndex,
+            selectedImageIndex = legacy.selectedImageIndex ?: candidate.metadata.selectedImageIndex,
             tags = legacy.tags,
             stats = legacy.stats,
             flags = legacy.flags
         )
-    } ?: urlMetadata.copy(bodyText = previewText)
+    } ?: candidate.metadata.copy(bodyText = previewText)
 }
 
 internal fun ClipboardEntry.isEligibleForArchiveBackfill(
@@ -165,6 +172,19 @@ internal fun archiveBackfillRequests(
     }
 }
 
+internal fun startupPreviewFetchTexts(
+    entries: List<ClipboardEntry>,
+    limit: Int?
+): List<String> =
+    startupPreviewFetchTextSequence(entries)
+        .let { texts -> limit?.let(texts::take) ?: texts }
+        .toList()
+
+private fun startupPreviewFetchTextSequence(entries: List<ClipboardEntry>): Sequence<String> =
+    entries.asReversed().asSequence().mapNotNull { entry ->
+        entry.text?.takeIf { entry.canAutoFetchPreview() }
+    }
+
 internal fun ClipboardEntry.matchesDeletedArchiveKey(archiveKey: String): Boolean =
     previewMetadata?.archiveKey() == archiveKey ||
         archiveBackfillMetadata()?.archiveKey() == archiveKey
@@ -173,7 +193,7 @@ internal fun deletedArchiveKeysAfterTextImport(
     text: String,
     deletedArchiveKeys: Set<String>
 ): Set<String> {
-    val archiveKey = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text)?.archiveKey() ?: return deletedArchiveKeys
+    val archiveKey = ClipboardLinkPreviewFetcher.previewCandidateFor(text)?.archiveKey ?: return deletedArchiveKeys
     return deletedArchiveKeys - archiveKey
 }
 
@@ -267,7 +287,7 @@ class ClipboardHistoryManager(
     val previewLoadingByText = mutableStateMapOf<String, Boolean>()
     private val archiveDownloadProgressByKey = mutableStateMapOf<String, ClipboardArchiveDownloadProgress>()
     private val archiveDownloadQueuedSourceUrlsByKey = mutableStateMapOf<String, Set<String>>()
-    private val archiveFileNames = mutableStateOf<Set<String>>(emptySet())
+    private val clipboardStorageSnapshot = mutableStateOf(ClipboardStorageSnapshot(emptySet()))
     private val providerCooldownByProvider = mutableStateMapOf<ClipboardPreviewProvider, ClipboardPreviewProviderCooldown>()
     val archiveBackfillInProgress = mutableStateOf(false)
     val archiveBackfillRemainingCount = mutableStateOf(0)
@@ -301,6 +321,7 @@ class ClipboardHistoryManager(
     private var archiveBackfillCompletionPending = false
     private var archiveBackfillBlockedByCooldown = false
     private val archiveDownloadJobsByKey = mutableMapOf<String, Job>()
+    private val pendingArchiveSavesByKey = mutableMapOf<String, ClipboardLinkArchive>()
 
     private val screenshotHelper = ScreenshotHelper(
         context = context,
@@ -411,11 +432,12 @@ class ClipboardHistoryManager(
             fetchPreviewForEntry(text)
         }
 
-        saveClipboard()
+        saveClipboard(reconcileBeforeSave = false)
     }
 
     private fun reviveDeletedArchiveForImportedText(text: String) {
-        reviveDeletedArchiveKeys(deletedArchiveKeysAfterTextImport(text, deletedArchiveKeys))
+        val archiveKey = ClipboardLinkPreviewFetcher.previewCandidateFor(text)?.archiveKey ?: return
+        reviveDeletedArchiveKeys(deletedArchiveKeys - archiveKey)
     }
 
     private fun reviveDeletedArchiveForPreviewManifest(manifest: ClipboardLinkPreviewManifest) {
@@ -499,6 +521,7 @@ class ClipboardHistoryManager(
             } else {
                 tempFile.delete()
             }
+            noteClipboardMediaFileSaved(finalFile.name)
 
             upsertClipboardMediaEntry(
                 clipboardHistory,
@@ -515,7 +538,7 @@ class ClipboardHistoryManager(
         } catch(e: Exception) {
             throwIfDebug(e)
         } finally {
-            saveClipboard()
+            saveClipboard(reconcileBeforeSave = true)
         }
     }
 
@@ -523,6 +546,7 @@ class ClipboardHistoryManager(
         if(file != clipboardFile && file.name != clipboardFile.name) return
 
         loadClipboard()
+        reconcileClipboardStorage()
         refreshMissingLinkPreviews(forceArchiveBackfill = true)
     }
 
@@ -563,7 +587,10 @@ class ClipboardHistoryManager(
         reconcileArchiveStorage()
     }
 
-    internal fun saveClipboard(exiting: Boolean = false): Job? {
+    internal fun saveClipboard(
+        exiting: Boolean = false,
+        reconcileBeforeSave: Boolean = true
+    ): Job? {
         if(!context.isDirectBootUnlocked) return null
         if(!clipboardLoaded) {
             if(saveClipboardLoadJob?.isActive == true) return null
@@ -574,7 +601,10 @@ class ClipboardHistoryManager(
 
                 if(clipboardLoaded) {
                     clipboardHistory.addAll(currentEntries)
-                    saveClipboard(exiting)
+                    saveClipboard(
+                        exiting = exiting,
+                        reconcileBeforeSave = reconcileBeforeSave
+                    )
                 } else {
                     clipboardIOFailure.value = true
                 }
@@ -585,7 +615,7 @@ class ClipboardHistoryManager(
 
         return coroutineScope.launch(context = ClipboardIOContext) {
             try {
-                if(!exiting) reconcileClipboardStorage()
+                if(reconcileBeforeSave) reconcileClipboardStorage()
 
                 val list = clipboardHistory.map { it.copy(deletedArchiveKeys = emptySet()) }
                 val encoded = encodeClipboardEntries(list)
@@ -622,15 +652,20 @@ class ClipboardHistoryManager(
         }
     }
 
-    fun refreshMissingLinkPreviews(forceArchiveBackfill: Boolean = false) {
+    fun refreshMissingLinkPreviews(
+        forceArchiveBackfill: Boolean = false,
+        boundedPreviewFetches: Boolean = false
+    ) {
         if(context.getSetting(ClipboardIncognitoMode)) return
         if(!currentPreviewState().shouldArchivePreviews) return
         if(!canRunAutomaticClipboardNetworkDownloads()) return
 
-        clipboardHistory.toList().forEach { entry ->
-            val text = entry.text ?: return@forEach
-            if(entry.canAutoFetchPreview()) {
-                fetchPreviewForEntry(text)
+        val previewFetchLimit = ClipboardStartupPreviewFetchLimit.takeIf { boundedPreviewFetches }
+        var scheduledPreviewFetches = 0
+        for(text in startupPreviewFetchTextSequence(clipboardHistory.toList())) {
+            if(previewFetchLimit != null && scheduledPreviewFetches >= previewFetchLimit) break
+            if(fetchPreviewForEntry(text)) {
+                scheduledPreviewFetches += 1
             }
         }
         runLegacyArchiveBackfillIfNeeded(forceCompletedVersion = forceArchiveBackfill)
@@ -716,8 +751,24 @@ class ClipboardHistoryManager(
         if(!canRunAutomaticClipboardNetworkDownloads()) return false
         val text = request.entry.text ?: return false
         val archiveKey = request.archiveKey
-        if(!ClipboardLinkPreviewFetcher.supportsPreview(text)) return false
-        val metadata = request.entry.archiveBackfillMetadata() ?: return false
+        val candidate = ClipboardLinkPreviewFetcher.previewCandidateFor(text) ?: return false
+        val metadata = request.entry.previewMetadata?.takeIf { it.provider == candidate.provider }?.let { legacy ->
+            candidate.metadata.copy(
+                sourceUrl = legacy.sourceUrl ?: candidate.metadata.sourceUrl,
+                sourceId = legacy.sourceId ?: candidate.metadata.sourceId,
+                title = legacy.title,
+                bodyText = legacy.bodyText ?: request.entry.previewText,
+                authorName = legacy.authorName,
+                authorHandle = legacy.authorHandle ?: candidate.metadata.authorHandle,
+                authorId = legacy.authorId,
+                createdAt = legacy.createdAt,
+                imageCount = legacy.imageCount,
+                selectedImageIndex = legacy.selectedImageIndex ?: candidate.metadata.selectedImageIndex,
+                tags = legacy.tags,
+                stats = legacy.stats,
+                flags = legacy.flags
+            )
+        } ?: candidate.metadata.copy(bodyText = request.entry.previewText)
         if(providerCooldown(metadata.provider) != null) return false
         if(previewLoadingByText[text] == true) return false
         if(previewLoadingByText[archiveKey] == true) return false
@@ -731,7 +782,7 @@ class ClipboardHistoryManager(
             previewLoadingByText[text] = true
             try {
                 val manifestResult = withContext(ClipboardPreviewFetchContext) {
-                    ClipboardLinkPreviewFetcher.fetchManifestResult(text)
+                    ClipboardLinkPreviewFetcher.fetchManifestResult(candidate)
                 }
                 setProviderCooldown(manifestResult.failure)
                 if(manifestResult.failure is ClipboardPreviewFetchFailure.RateLimited) {
@@ -863,7 +914,7 @@ class ClipboardHistoryManager(
 
     private fun ClipboardEntry.previewProviderCooldown(): ClipboardPreviewProviderCooldown? =
         text
-            ?.let { ClipboardLinkPreviewFetcher.metadataForSupportedUrl(it)?.provider }
+            ?.let { ClipboardLinkPreviewFetcher.previewCandidateFor(it)?.provider }
             ?.let { providerCooldown(it) }
 
     internal fun isArchiveRetryBlockedByCooldown(archive: ClipboardLinkArchive): Boolean =
@@ -955,7 +1006,7 @@ class ClipboardHistoryManager(
             linkArchives[updated.key] = updated
             updateEntriesPreviewFromArchiveNow(updated)
             saveArchive(updated)
-            saveClipboard()
+            saveClipboard(reconcileBeforeSave = false)
         }
         return updated
     }
@@ -965,7 +1016,7 @@ class ClipboardHistoryManager(
 
     private fun refreshArchiveFileNames(): Set<String> {
         val fileNames = scanArchiveFileNames()
-        archiveFileNames.value = fileNames
+        clipboardStorageSnapshot.value = ClipboardStorageSnapshot(fileNames)
         archiveFileNamesLoaded = true
         return fileNames
     }
@@ -974,7 +1025,21 @@ class ClipboardHistoryManager(
         if(forceRefresh || !archiveFileNamesLoaded) {
             return refreshArchiveFileNames()
         }
-        return archiveFileNames.value
+        return clipboardStorageSnapshot.value.fileNames
+    }
+
+    private fun noteClipboardMediaFileSaved(fileName: String) {
+        val thumbnailName = ClipboardUtil.thumbnailForName(fileName)
+        val savedFileNames = buildSet {
+            add(fileName)
+            if(File(context.clipboardDir, thumbnailName).isFile) {
+                add(thumbnailName)
+            }
+        }
+        clipboardStorageSnapshot.value = ClipboardStorageSnapshot(
+            clipboardStorageSnapshot.value.fileNames + savedFileNames
+        )
+        archiveFileNamesLoaded = true
     }
 
     internal fun stopArchiveDownload(item: ClipboardArchiveDownloadListItem) {
@@ -999,6 +1064,7 @@ class ClipboardHistoryManager(
         archiveDownloadProgressByKey.remove(archiveKey)
         job?.cancel()
         val stoppedSourceUrl = sourceUrl ?: progress?.sourceUrl ?: return
+        discardPendingArchiveSave(archiveKey)
         val stoppedSourceIndex = sourceIndex ?: progress?.sourceIndex
         val attemptedAt = System.currentTimeMillis()
         val archive = updateArchiveWithCurrentStorageState(
@@ -1022,7 +1088,7 @@ class ClipboardHistoryManager(
         linkArchives[archiveKey] = updated
         updateEntriesPreviewFromArchiveNow(updated)
         saveArchive(updated)
-        queuePreviewSave(delayMillis = 0L)
+        saveClipboard(reconcileBeforeSave = true)
     }
 
     internal fun stopAllArchiveDownloads() {
@@ -1087,7 +1153,6 @@ class ClipboardHistoryManager(
             File(context.clipboardArchiveDir, fileName).delete()
             File(context.clipboardArchiveDir, ClipboardUtil.thumbnailForName(fileName)).delete()
         }
-        refreshArchiveFileNames()
 
         for(i in clipboardHistory.indices) {
             val current = clipboardHistory[i]
@@ -1114,8 +1179,9 @@ class ClipboardHistoryManager(
         }
         orphanedSharedArchiveFileNamesAfterArchiveDelete(archivedFileNames, clipboardHistory)
             .forEach { fileName -> File(context.clipboardDir, fileName).delete() }
+        refreshArchiveFileNames()
         saveArchives()
-        saveClipboard()
+        saveClipboard(reconcileBeforeSave = true)
     }
 
     private fun tombstoneArchiveKey(archiveKey: String, reason: String?) {
@@ -1157,7 +1223,7 @@ class ClipboardHistoryManager(
             archiveDownloadQueuedSourceUrlsByKey[item.archiveKey].orEmpty() - item.sourceUrl
         updateEntriesPreviewFromArchiveNow(updated)
         saveArchive(updated)
-        saveClipboard()
+        saveClipboard(reconcileBeforeSave = true)
     }
 
     private fun cancelArchiveDownloadState(archiveKey: String) {
@@ -1171,7 +1237,7 @@ class ClipboardHistoryManager(
         val itemPos = clipboardHistory.indexOf(item).coerceAtLeast(0)
         clipboardHistory.removeAll { it == item }
         clipboardHistory.add(itemPos, item.copy(timestamp = System.currentTimeMillis()))
-        saveClipboard()
+        saveClipboard(reconcileBeforeSave = true)
     }
 
     fun onTogglePin(item: ClipboardEntry) {
@@ -1194,7 +1260,7 @@ class ClipboardHistoryManager(
                 )
             }
         )
-        saveClipboard()
+        saveClipboard(reconcileBeforeSave = true)
     }
 
     fun onRemove(item: ClipboardEntry) {
@@ -1226,7 +1292,8 @@ class ClipboardHistoryManager(
     }
 
     override suspend fun cleanUp() {
-        saveClipboard()?.join()
+        flushPendingArchiveSavesOnIo()
+        saveClipboard(reconcileBeforeSave = true)?.join()
         saveArchives()
     }
 
@@ -1248,11 +1315,22 @@ class ClipboardHistoryManager(
             manualRetry = false
         )
 
-    private fun queuePreviewSave(delayMillis: Long = 350L) {
+    private fun queuePreviewSave(
+        delayMillis: Long = 350L,
+        reconcileBeforeSave: Boolean = false
+    ) {
         scheduledPreviewSaveJob?.cancel()
         scheduledPreviewSaveJob = coroutineScope.launch {
             delay(delayMillis)
-            saveClipboard()
+            saveClipboard(reconcileBeforeSave = reconcileBeforeSave)
+        }
+    }
+
+    private suspend fun flushPreviewSave(reconcileBeforeSave: Boolean = false) {
+        scheduledPreviewSaveJob?.cancel()
+        scheduledPreviewSaveJob = null
+        withContext(NonCancellable) {
+            saveClipboard(reconcileBeforeSave = reconcileBeforeSave)?.join()
         }
     }
 
@@ -1379,10 +1457,13 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             publishClipboardLoaded(activeEntries, loadedArchives, migratedTombstones)
             recoverArchivesFromLocalPreviewEntries()
             if(activeEntries != loadedEntries) {
-                saveClipboard()
+                saveClipboard(reconcileBeforeSave = true)
             }
             reconcileClipboardStorage()
-            refreshMissingLinkPreviews()
+            refreshMissingLinkPreviews(
+                forceArchiveBackfill = false,
+                boundedPreviewFetches = true
+            )
         } catch (e: Exception) {
             publishClipboardLoadFailure("Exception: ${e.message}")
             reportError("loadClipboard", e)
@@ -1434,11 +1515,9 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             emptyList()
         }
 
-    private fun fetchPreviewForEntry(text: String, manualRetry: Boolean = false) {
-        val request = previewFetchRequest(text, manualRetry) ?: return
-        ClipboardLinkPreviewFetcher.metadataForSupportedUrl(request.text)?.provider?.let {
-            if(providerCooldown(it) != null) return
-        }
+    private fun fetchPreviewForEntry(text: String, manualRetry: Boolean = false): Boolean {
+        val request = previewFetchRequest(text, manualRetry) ?: return false
+        if(providerCooldown(request.candidate.provider) != null) return false
 
         coroutineScope.launch {
             previewLoadingByText[request.text] = true
@@ -1450,7 +1529,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 
                 while (attempt < request.maxAttempts) {
                     val manifestResult = withContext(ClipboardPreviewFetchContext) {
-                        ClipboardLinkPreviewFetcher.fetchManifestResult(request.text)
+                        ClipboardLinkPreviewFetcher.fetchManifestResult(request.candidate)
                     }
                     setProviderCooldown(manifestResult.failure)
                     val manifest = manifestResult.manifest
@@ -1539,6 +1618,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 previewLoadingByText.remove(request.text)
             }
         }
+        return true
     }
 
     private fun previewFetchRequest(
@@ -1550,11 +1630,11 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         val previewState = currentPreviewState()
         if(!previewState.linkPreviewsEnabled) return null
         if(!manualRetry && !canRunAutomaticClipboardNetworkDownloads()) return null
-        if(!ClipboardLinkPreviewFetcher.supportsPreview(text)) return null
+        val candidate = ClipboardLinkPreviewFetcher.previewCandidateFor(text) ?: return null
         if(previewLoadingByText[text] == true) return null
 
         val entry = clipboardHistory.lastOrNull { it.text == text } ?: return null
-        val archiveKey = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text)?.archiveKey()
+        val archiveKey = candidate.archiveKey
         if(archiveKey != null && archiveKey in deletedArchiveKeys) return null
         if(manualRetry) {
             if(!canRetryPreview(entry)) return null
@@ -1564,7 +1644,8 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 
         return ClipboardPreviewFetchRequest(
             text = text,
-            maxAttempts = if(ClipboardLinkPreviewFetcher.prefersImagePreview(text)) 3 else 1,
+            candidate = candidate,
+            maxAttempts = if(candidate.prefersImagePreview) 3 else 1,
             manualRetry = manualRetry
         )
     }
@@ -1745,6 +1826,8 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 downloadArchiveMedia(text, archiveKey)
             }
         } finally {
+            flushArchiveSave(archiveKey)
+            flushPreviewSave(reconcileBeforeSave = false)
             archiveDownloadJobsByKey.remove(archiveKey)
             launchQueuedArchiveDownloadIfNeeded(archiveKey)
         }
@@ -1759,6 +1842,8 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             try {
                 withArchiveLoading(archiveKey, block)
             } finally {
+                flushArchiveSave(archiveKey)
+                flushPreviewSave(reconcileBeforeSave = false)
                 archiveDownloadJobsByKey.remove(archiveKey)
                 launchQueuedArchiveDownloadIfNeeded(archiveKey)
             }
@@ -1822,7 +1907,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             while(true) {
                 val target = withContext(Dispatchers.Main) {
                     val archive = linkArchives[archiveKey]?.let {
-                        updateArchiveWithCurrentStorageState(it, currentArchiveFileNames(forceRefresh = true))
+                        updateArchiveWithCurrentStorageState(it, currentArchiveFileNames())
                     }
                     if(archive?.provider?.let { providerCooldown(it) } != null) return@withContext null
                     val queuedSourceUrls = archiveDownloadQueuedSourceUrlsByKey[archiveKey].orEmpty()
@@ -1900,7 +1985,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                 val event = when (result) {
                     is ClipboardPreviewMediaCacheResult.Saved -> {
                         withContext(Dispatchers.Main) {
-                            refreshArchiveFileNames()
+                            noteClipboardMediaFileSaved(result.fileName)
                         }
                         ClipboardArchiveEvent.MediaDownloadSaved(
                             sourceUrl = media.sourceUrl,
@@ -1935,7 +2020,11 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     }
                 }
 
-                val archive = reduceArchiveMedia(archiveKey, event) ?: continue
+                val archive = reduceArchiveMedia(
+                    archiveKey = archiveKey,
+                    event = event,
+                    existingArchiveFileNames = currentArchiveFileNames()
+                ) ?: continue
                 publishArchiveDownloadProgressNow(
                     media = media,
                     completedBytes = currentCompletedBytes,
@@ -1943,8 +2032,8 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     archive = archive
                 )
                 updateEntriesPreviewFromArchive(text, archive, attemptedAt)
-                saveArchive(archive)
-                queuePreviewSave(delayMillis = 0L)
+                queueArchiveSave(archive)
+                queuePreviewSave(delayMillis = 350L, reconcileBeforeSave = false)
                 if(result is ClipboardPreviewMediaCacheResult.RateLimited) break
             }
         }
@@ -2022,11 +2111,12 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 
     private suspend fun reduceArchiveMedia(
         archiveKey: String,
-        event: ClipboardArchiveEvent
+        event: ClipboardArchiveEvent,
+        existingArchiveFileNames: Set<String> = currentArchiveFileNames(forceRefresh = true)
     ): ClipboardLinkArchive? = withContext(Dispatchers.Main) {
         val archive = updateArchiveWithCurrentStorageState(
             linkArchives[archiveKey] ?: return@withContext null,
-            currentArchiveFileNames(forceRefresh = true)
+            existingArchiveFileNames
         )
         val updated = reduceArchive(archive, event) ?: return@withContext null
         linkArchives[archiveKey] = updated
@@ -2123,7 +2213,51 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         }
     }
 
+    private fun queueArchiveSave(archive: ClipboardLinkArchive) {
+        synchronized(archiveSaveLock) {
+            pendingArchiveSavesByKey[archive.key] = archive
+        }
+    }
+
+    private suspend fun flushArchiveSave(archiveKey: String) {
+        val archive = drainPendingArchiveSave(archiveKey) ?: return
+        withContext(NonCancellable + ClipboardIOContext) {
+            saveArchive(archive)
+        }
+    }
+
+    private fun discardPendingArchiveSave(archiveKey: String) {
+        drainPendingArchiveSave(archiveKey)
+    }
+
+    private fun drainPendingArchiveSave(archiveKey: String): ClipboardLinkArchive? =
+        synchronized(archiveSaveLock) {
+            pendingArchiveSavesByKey.remove(archiveKey)
+        }
+
+    private fun flushPendingArchiveSaves() {
+        val archives = synchronized(archiveSaveLock) {
+            pendingArchiveSavesByKey.values.toList().also {
+                pendingArchiveSavesByKey.clear()
+            }
+        }
+        archives.forEach(::saveArchive)
+    }
+
+    private suspend fun flushPendingArchiveSavesOnIo() {
+        val archives = synchronized(archiveSaveLock) {
+            pendingArchiveSavesByKey.values.toList().also {
+                pendingArchiveSavesByKey.clear()
+            }
+        }
+        if(archives.isEmpty()) return
+        withContext(NonCancellable + ClipboardIOContext) {
+            archives.forEach(::saveArchive)
+        }
+    }
+
     private fun saveArchives() {
+        flushPendingArchiveSaves()
         linkArchives.values.forEach(::saveArchive)
         deleteStaleArchiveMetadataFiles()
         deleteLegacyArchiveAggregateFiles()

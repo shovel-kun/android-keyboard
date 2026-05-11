@@ -173,10 +173,12 @@ fun mergeClipboardEntries(
     importedEntries: List<ClipboardEntry>
 ): List<ClipboardEntry> {
     val merged = deduplicateClipboardEntries(currentEntries).toMutableList()
+    val mergedIndex = clipboardEntryIndex(merged)
     val normalizedImported = deduplicateClipboardEntries(importedEntries)
     normalizedImported.forEach { entry ->
         mergeClipboardEntryInto(
             target = merged,
+            indexByKey = mergedIndex,
             incoming = entry,
             preferIncomingOnTie = false
         )
@@ -186,9 +188,11 @@ fun mergeClipboardEntries(
 
 fun deduplicateClipboardEntries(entries: List<ClipboardEntry>): List<ClipboardEntry> {
     val deduplicated = mutableListOf<ClipboardEntry>()
+    val indexByKey = mutableMapOf<ClipboardEntryDedupKey, Int>()
     entries.forEach { entry ->
         mergeClipboardEntryInto(
             target = deduplicated,
+            indexByKey = indexByKey,
             incoming = entry,
             preferIncomingOnTie = true
         )
@@ -198,38 +202,41 @@ fun deduplicateClipboardEntries(entries: List<ClipboardEntry>): List<ClipboardEn
 
 private fun mergeClipboardEntryInto(
     target: MutableList<ClipboardEntry>,
+    indexByKey: MutableMap<ClipboardEntryDedupKey, Int>,
     incoming: ClipboardEntry,
     preferIncomingOnTie: Boolean
 ) {
-    val duplicateIndexes = when {
-        incoming.text != null -> target.indices.filter { target[it].text == incoming.text }
-        incoming.backingFile != null -> target.indices.filter { target[it].backingFile == incoming.backingFile }
-        else -> emptyList()
-    }
-
-    if(duplicateIndexes.isEmpty()) {
+    val key = incoming.dedupKey()
+    val duplicateIndex = key?.let(indexByKey::get)
+    if(duplicateIndex == null) {
         target.add(incoming)
+        key?.let { indexByKey[it] = target.lastIndex }
         return
     }
 
-    val existingEntries = duplicateIndexes.map { target[it] }
-    val representative = existingEntries.reduce { acc, entry ->
-        mergeDuplicateEntries(
-            existing = acc,
-            incoming = entry,
-            preferIncomingOnTie = true
-        )
-    }
     val merged = mergeDuplicateEntries(
-        existing = representative,
+        existing = target[duplicateIndex],
         incoming = incoming,
         preferIncomingOnTie = preferIncomingOnTie
     )
-
-    val insertionIndex = duplicateIndexes.last()
-    duplicateIndexes.asReversed().forEach { target.removeAt(it) }
-    target.add(insertionIndex.coerceAtMost(target.size), merged)
+    target[duplicateIndex] = merged
 }
+
+private sealed interface ClipboardEntryDedupKey {
+    data class Text(val value: String) : ClipboardEntryDedupKey
+    data class BackingFile(val value: String) : ClipboardEntryDedupKey
+}
+
+private fun ClipboardEntry.dedupKey(): ClipboardEntryDedupKey? = when {
+    text != null -> ClipboardEntryDedupKey.Text(text)
+    backingFile != null -> ClipboardEntryDedupKey.BackingFile(backingFile)
+    else -> null
+}
+
+private fun clipboardEntryIndex(entries: List<ClipboardEntry>): MutableMap<ClipboardEntryDedupKey, Int> =
+    entries.mapIndexedNotNull { index, entry ->
+        entry.dedupKey()?.let { it to index }
+    }.toMap().toMutableMap()
 
 private fun mergeDuplicateEntries(
     existing: ClipboardEntry,

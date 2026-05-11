@@ -196,7 +196,7 @@ fun ClipboardEntry.canAutoFetchPreview(): Boolean =
     text != null &&
         !hasRenderablePreview() &&
         previewFetchStatus == ClipboardPreviewFetchStatus.NeverAttempted &&
-        ClipboardLinkPreviewFetcher.metadataForSupportedUrl(text) != null
+        ClipboardLinkPreviewFetcher.previewCandidateFor(text) != null
 
 fun ClipboardEntry.shouldShowManualPreviewRetry(): Boolean =
     text != null &&
