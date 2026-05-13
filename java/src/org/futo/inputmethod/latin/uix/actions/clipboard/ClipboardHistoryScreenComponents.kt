@@ -508,7 +508,7 @@ internal fun rememberClipboardHistoryManager(): ClipboardHistoryManager {
 }
 
 internal fun copyTextClip(context: Context, entry: ClipboardEntry) {
-    val text = entry.text ?: return
+    val text = entry.text?.let(ClipboardLinkPreviewFetcher::normalizedTextForClipboardImport) ?: return
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Clipboard", text))
     Toast.makeText(context, context.getString(R.string.clipboard_history_copied_text), Toast.LENGTH_SHORT).show()

@@ -404,7 +404,8 @@ class ClipboardHistoryManager(
         context.getSettingBlocking(ClipboardHistoryEnabled) &&
             !context.getSettingBlocking(ClipboardIncognitoMode)
 
-    private fun importTextEntry(timestamp: Long, text: String, mimeTypes: List<String>) {
+    private fun importTextEntry(timestamp: Long, rawText: String, mimeTypes: List<String>) {
+        val text = ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
         val existingEntries = clipboardHistory.filter { it.text == text }
         val preservedEntry = existingEntries.lastOrNull { it.hasRetainedPreviewState() }
             ?: existingEntries.lastOrNull()

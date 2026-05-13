@@ -169,6 +169,16 @@ object ClipboardLinkPreviewFetcher {
     fun metadataForSupportedUrl(rawText: String): ClipboardPreviewMetadata? =
         previewCandidateFor(rawText)?.metadata
 
+    fun normalizedTextForClipboardImport(rawText: String): String {
+        val trimmed = rawText.trim()
+        if(!LinkPreviewUrlRegex.matches(trimmed)) return rawText
+
+        val candidate = extractPreviewRequest(trimmed)?.toCandidate() ?: return rawText
+        if(candidate.provider != ClipboardPreviewProvider.REDDIT) return rawText
+
+        return candidate.metadata.sourceUrl ?: rawText
+    }
+
     fun prefersImagePreview(rawText: String): Boolean =
         previewCandidateFor(rawText)?.prefersImagePreview == true
 
@@ -684,7 +694,7 @@ object ClipboardLinkPreviewFetcher {
         }
         val previewUrl = resolvedUrl ?: redditUrl
         val html = runPreviewRequestCatching {
-            requestText(previewUrl.oldRedditUrl(), MaxPreviewJsonBytes)
+            requestText(previewUrl.canonicalUrl(), MaxPreviewJsonBytes)
         } ?: return null
 
         return parseRedditHtmlPreview(html, previewUrl)
@@ -1471,8 +1481,7 @@ private data class RedditPostUrl(
     val commentId: String? = null,
     val redirectUrl: String? = null
 ) : PreviewRequest {
-    fun canonicalUrl(): String = "https://rxddit.com/${pathSegments.joinToString("/")}"
-    fun oldRedditUrl(): String = "https://old.reddit.com/${pathSegments.joinToString("/")}"
+    fun canonicalUrl(): String = "https://www.rxddit.com/${pathSegments.joinToString("/")}"
     fun sourceId(): String = listOfNotNull(postId, commentId).joinToString(":")
 }
 

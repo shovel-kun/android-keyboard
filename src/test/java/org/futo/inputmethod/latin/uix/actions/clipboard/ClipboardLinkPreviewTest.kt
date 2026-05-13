@@ -208,7 +208,7 @@ class ClipboardLinkPreviewTest {
         )
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://rxddit.com/r/futo/comments/abc123/a_title", metadata?.sourceUrl)
+        assertEquals("https://www.rxddit.com/r/futo/comments/abc123/a_title", metadata?.sourceUrl)
         assertEquals("abc123", metadata?.sourceId)
         assertEquals("reddit:abc123", metadata?.archiveKey())
     }
@@ -232,7 +232,7 @@ class ClipboardLinkPreviewTest {
         )
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://rxddit.com/r/futo/comments/abc123/a_title/def456", metadata?.sourceUrl)
+        assertEquals("https://www.rxddit.com/r/futo/comments/abc123/a_title/def456", metadata?.sourceUrl)
         assertEquals("abc123:def456", metadata?.sourceId)
         assertEquals("reddit:abc123:def456", metadata?.archiveKey())
     }
@@ -242,7 +242,7 @@ class ClipboardLinkPreviewTest {
         val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://redd.it/abc123")
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://rxddit.com/abc123", metadata?.sourceUrl)
+        assertEquals("https://www.rxddit.com/abc123", metadata?.sourceUrl)
         assertEquals("abc123", metadata?.sourceId)
     }
 
@@ -253,9 +253,34 @@ class ClipboardLinkPreviewTest {
         )
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://rxddit.com/r/ComedyHell/s/j7xGCXRsdR", metadata?.sourceUrl)
+        assertEquals("https://www.rxddit.com/r/ComedyHell/s/j7xGCXRsdR", metadata?.sourceUrl)
         assertEquals("j7xGCXRsdR", metadata?.sourceId)
         assertEquals("reddit:j7xGCXRsdR", metadata?.archiveKey())
+    }
+
+    @Test
+    fun normalizedTextForClipboardImport_rewritesUrlOnlyRedditLinksToWwwRxddit() {
+        assertEquals(
+            "https://www.rxddit.com/r/futo/comments/abc123/a_title",
+            ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(
+                "https://www.reddit.com/r/futo/comments/abc123/a_title/"
+            )
+        )
+        assertEquals(
+            "https://www.rxddit.com/r/futo/comments/abc123/a_title",
+            ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(
+                "https://rxddit.com/r/futo/comments/abc123/a_title"
+            )
+        )
+    }
+
+    @Test
+    fun normalizedTextForClipboardImport_keepsEmbeddedRedditAndOtherProvidersUnchanged() {
+        val embedded = "read this https://www.reddit.com/r/futo/comments/abc123/a_title/"
+        val twitter = "https://x.com/futo/status/1234567890"
+
+        assertEquals(embedded, ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(embedded))
+        assertEquals(twitter, ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(twitter))
     }
 
     @Test

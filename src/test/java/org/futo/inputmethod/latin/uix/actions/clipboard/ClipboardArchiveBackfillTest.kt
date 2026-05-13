@@ -752,7 +752,7 @@ class ClipboardArchiveBackfillTest {
             mediaItems = emptyList(),
             metadata = ClipboardPreviewMetadata(
                 provider = ClipboardPreviewProvider.REDDIT,
-                sourceUrl = "https://rxddit.com/r/ComedyHell/comments/1t4mfwe/is_there_a_way",
+                sourceUrl = "https://www.rxddit.com/r/ComedyHell/comments/1t4mfwe/is_there_a_way",
                 sourceId = "1t4mfwe",
                 title = "is there a way"
             )

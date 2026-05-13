@@ -243,7 +243,9 @@ internal fun ClipboardHistoryActionWindowContents(
                         embedDisplayMode = uiState.previewState.embedDisplayMode,
                         onPaste = {
                             when {
-                                it.text != null -> manager.typeText(it.text)
+                                it.text != null -> manager.typeText(
+                                    ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(it.text)
+                                )
                                 it.backingFile != null && it.mimeTypes.isNotEmpty() -> {
                                     val uri = createClipboardContentUri(
                                         file = File(context.clipboardDir, it.backingFile),
@@ -295,7 +297,9 @@ internal fun ClipboardHistoryActionWindowContents(
                         onWrapAndPaste = { clipEntry ->
                             when {
                                 clipEntry.uri != null -> manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
-                                clipEntry.text != null -> manager.typeText("||${clipEntry.text}||")
+                                clipEntry.text != null -> manager.typeText(
+                                    "||${ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(clipEntry.text)}||"
+                                )
                             }
                             clipboardHistoryManager.onPaste(clipEntry)
                             manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
