@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -19,6 +22,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.common.Constants
+import org.futo.inputmethod.latin.uix.ActionHeaderSearch
 import org.futo.inputmethod.latin.uix.DialogRequestItem
 import org.futo.inputmethod.latin.uix.KeyboardManagerForAction
 import org.futo.inputmethod.latin.uix.actions.BugViewerAction
@@ -57,12 +61,39 @@ internal fun RowScope.ClipboardHistoryActionToolbarControls(
 internal fun RowScope.ClipboardHistoryActionTitleBar(
     manager: KeyboardManagerForAction,
     clipboardHistoryManager: ClipboardHistoryManager,
-    unlocked: Boolean
+    unlocked: Boolean,
+    searchActive: MutableState<Boolean>,
+    searchText: MutableState<String>
 ) {
     val context = LocalContext.current
     val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
     val uiState = rememberClipboardUiState(clipboardHistoryManager)
     if(!uiState.historyEnabled || !unlocked || !uiState.historyVisible) return
+
+    if(searchActive.value) {
+        ActionHeaderSearch(
+            searchText,
+            Modifier.weight(1.0f),
+            placeholder = stringResource(R.string.action_clipboard_manager_enter_your_search)
+        )
+        IconButton(onClick = {
+            searchText.value = ""
+            searchActive.value = false
+        }) {
+            Icon(
+                painter = painterResource(id = R.drawable.close),
+                contentDescription = stringResource(R.string.clipboard_history_clear_search)
+            )
+        }
+        return
+    }
+
+    IconButton(onClick = { searchActive.value = true }) {
+        Icon(
+            Icons.Default.Search,
+            contentDescription = stringResource(R.string.action_clipboard_manager_search)
+        )
+    }
 
     IconButton(onClick = {
         val numUnpinnedItems = clipboardHistoryManager.clipboardHistory.count { !it.pinned }
@@ -117,7 +148,8 @@ internal fun RowScope.ClipboardHistoryActionTitleBar(
 internal fun ClipboardHistoryActionWindowContents(
     manager: KeyboardManagerForAction,
     clipboardHistoryManager: ClipboardHistoryManager,
-    unlocked: Boolean
+    unlocked: Boolean,
+    searchText: String
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -214,6 +246,16 @@ internal fun ClipboardHistoryActionWindowContents(
                 useDataStoreValue(ClipboardShowPinnedOnTop) -> clipboardHistoryManager.clipboardHistory.sortedBy { it.pinned }
                 else -> clipboardHistoryManager.clipboardHistory
             }
+            val displayedList = sortedList.filter { it.matchesQuery(searchText) }
+            if(displayedList.isEmpty() && searchText.isNotBlank() && sortedList.isNotEmpty()) {
+                ScrollableList {
+                    PaymentSurface(isPrimary = true) {
+                        ParagraphText(stringResource(R.string.action_clipboard_manager_no_clips_found))
+                    }
+                }
+                return
+            }
+
             val useSingleColumn = useDataStoreValue(ClipboardSingleColumn)
             val columns = if(useSingleColumn) {
                 StaggeredGridCells.Fixed(1)
@@ -227,13 +269,13 @@ internal fun ClipboardHistoryActionWindowContents(
                 verticalItemSpacing = 4.dp,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(sortedList.size, key = { reverseIndex ->
-                    val index = sortedList.size - reverseIndex - 1
-                    val entry = sortedList[index]
+                items(displayedList.size, key = { reverseIndex ->
+                    val index = displayedList.size - reverseIndex - 1
+                    val entry = displayedList[index]
                     entry.lazyListKey(index)
                 }) { reverseIndex ->
-                    val index = sortedList.size - reverseIndex - 1
-                    val entry = sortedList[index]
+                    val index = displayedList.size - reverseIndex - 1
+                    val entry = displayedList[index]
                     ClipboardEntryView(
                         modifier = Modifier,
                         clipboardEntry = entry,

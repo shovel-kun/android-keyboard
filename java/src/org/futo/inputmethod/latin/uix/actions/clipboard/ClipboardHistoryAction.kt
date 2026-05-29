@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -115,6 +116,8 @@ val ClipboardHistoryAction = Action(
     windowImpl = { manager, persistent ->
         val unlocked = !manager.isDeviceLocked()
         val clipboardHistoryManager = persistent as ClipboardHistoryManager
+        val clipboardSearchActive = mutableStateOf(false)
+        val clipboardSearchText = mutableStateOf("")
 
         manager.getLifecycleScope().launch {
             clipboardHistoryManager.reconcileClipboardStorage()
@@ -143,7 +146,9 @@ val ClipboardHistoryAction = Action(
                     ClipboardHistoryActionTitleBar(
                         manager = manager,
                         clipboardHistoryManager = clipboardHistoryManager,
-                        unlocked = unlocked
+                        unlocked = unlocked,
+                        searchActive = clipboardSearchActive,
+                        searchText = clipboardSearchText
                     )
                 }
             }
@@ -153,7 +158,8 @@ val ClipboardHistoryAction = Action(
                 ClipboardHistoryActionWindowContents(
                     manager = manager,
                     clipboardHistoryManager = clipboardHistoryManager,
-                    unlocked = unlocked
+                    unlocked = unlocked,
+                    searchText = clipboardSearchText.value
                 )
             }
         }

@@ -13,6 +13,7 @@ import java.io.File
 import java.io.FileOutputStream
 import androidx.core.graphics.scale
 import androidx.core.graphics.createBitmap
+import kotlin.math.max
 import kotlin.math.min
 
 private const val ClipboardThumbnailVersion = "v2"
