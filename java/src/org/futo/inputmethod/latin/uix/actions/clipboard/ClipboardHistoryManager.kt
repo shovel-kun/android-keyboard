@@ -923,9 +923,10 @@ class ClipboardHistoryManager(
 
     internal fun retryArchive(archive: ClipboardLinkArchive) {
         val retryArchive = updateArchiveWithCurrentStorageState(archive, currentArchiveFileNames(forceRefresh = true))
-        if(!retryArchive.hasRetryableMedia()) return
+        val forceRefetchManifest = retryArchive.canRefetchManifest()
+        if(!retryArchive.hasRetryableMedia() && !forceRefetchManifest) return
 
-        launchArchiveRetry(retryArchive)
+        launchArchiveRetry(retryArchive, forceRefetchManifest = forceRefetchManifest)
     }
 
     internal fun retryArchiveMedia(item: ClipboardArchiveDownloadListItem) {
@@ -958,7 +959,8 @@ class ClipboardHistoryManager(
     private fun launchArchiveRetry(
         archive: ClipboardLinkArchive,
         sourceUrls: Set<String>? = null,
-        includeSkippedTooLarge: Boolean = true
+        includeSkippedTooLarge: Boolean = true,
+        forceRefetchManifest: Boolean = false
     ) {
         if(isArchiveDownloadActive(archive.key)) {
             queueArchiveDownloadSourceUrls(archive, sourceUrls)
@@ -967,7 +969,7 @@ class ClipboardHistoryManager(
         if(isArchiveRetryBlockedByCooldown(archive)) return
 
         launchArchiveDownload(archive.key) {
-            if(archive.providerManifestAvailable) {
+            if(archive.providerManifestAvailable && !forceRefetchManifest) {
                 downloadArchiveMedia(
                     text = null,
                     archiveKey = archive.key,
@@ -975,7 +977,7 @@ class ClipboardHistoryManager(
                     onlySourceUrls = sourceUrls
                 )
             } else {
-                refetchFallbackArchive(archive)
+                refetchArchiveManifest(archive)
             }
         }
     }
@@ -1769,7 +1771,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         return archive
     }
 
-    private suspend fun refetchFallbackArchive(archive: ClipboardLinkArchive) {
+    private suspend fun refetchArchiveManifest(archive: ClipboardLinkArchive) {
         providerCooldown(archive.provider)?.let { return }
         val manifestResult = withContext(ClipboardPreviewFetchContext) {
             ClipboardLinkPreviewFetcher.fetchManifestResult(archive.sourceUrl)

@@ -206,6 +206,11 @@ fun ClipboardLinkArchive.savedPreviewMedia(): List<ClipboardPreviewMedia> =
 fun ClipboardLinkArchive.hasRetryableMedia(): Boolean =
     media.any { it.status.isRetryableArchiveMediaStatus() }
 
+fun ClipboardLinkArchive.canRefetchManifest(): Boolean =
+    providerManifestAvailable &&
+        media.isEmpty() &&
+        ClipboardLinkPreviewFetcher.supportsPreview(sourceUrl)
+
 fun ClipboardLinkArchive.hasAutoDownloadableMedia(): Boolean =
     media.any { it.isAutoDownloadableArchiveMedia(this) }
 

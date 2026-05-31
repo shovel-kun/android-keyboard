@@ -980,7 +980,7 @@ internal fun ClipboardArchiveCard(
                 )
 
                 ClipboardArchiveIconAction(
-                    visible = archive.hasRetryableMedia(),
+                    visible = archive.hasRetryableMedia() || archive.canRefetchManifest(),
                     icon = R.drawable.refresh_cw,
                     contentDescription = R.string.action_clipboard_manager_retry_preview,
                     onClick = onRetry
@@ -1183,7 +1183,7 @@ internal fun ClipboardArchiveGalleryDialog(
             )
         }
     }
-    val showRetry = archive.hasRetryableMedia()
+    val showRetry = archive.hasRetryableMedia() || archive.canRefetchManifest()
     val showShare = currentItem?.isShareable == true
     val showDetails = {
         detailsTarget = currentItem

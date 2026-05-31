@@ -485,6 +485,7 @@ class ClipboardArchiveReducerTest {
         assertEquals(true, archive.providerManifestAvailable)
         assertEquals(emptyList<ClipboardArchiveMedia>(), archive.media)
         assertEquals(ClipboardLinkArchiveStatus.Complete, archive.status)
+        assertEquals(true, archive.canRefetchManifest())
     }
 
     @Test
@@ -559,6 +560,7 @@ class ClipboardArchiveReducerTest {
         assertEquals(ClipboardLinkArchiveStatus.Complete, updated.status)
         assertEquals(emptyList<ClipboardArchiveMedia>(), updated.media)
         assertEquals(false, updated.hasRetryableMedia())
+        assertEquals(true, updated.canRefetchManifest())
     }
 
     @Test
@@ -606,6 +608,17 @@ class ClipboardArchiveReducerTest {
         assertEquals(ClipboardLinkArchiveStatus.Complete, updated.status)
         assertEquals(false, updated.hasAutoDownloadableMedia())
         assertEquals(false, updated.hasRetryableMedia())
+        assertEquals(true, updated.canRefetchManifest())
+    }
+
+    @Test
+    fun completeArchiveWithSavedMediaCannotRefetchManifestAsRetry() {
+        val archive = sampleArchive(
+            media = listOf(savedMedia())
+        ).copy(providerManifestAvailable = true)
+
+        assertEquals(false, archive.hasRetryableMedia())
+        assertEquals(false, archive.canRefetchManifest())
     }
 
     @Test
