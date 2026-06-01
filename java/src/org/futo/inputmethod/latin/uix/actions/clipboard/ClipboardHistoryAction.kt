@@ -102,6 +102,11 @@ val ClipboardPixivSessionId = SettingsKey(
     ""
 )
 
+val ClipboardRedditAccessToken = SettingsKey(
+    stringPreferencesKey("clipboard_reddit_access_token"),
+    ""
+)
+
 val ClipboardEmbedDisplayModeSetting = SettingsKey(
     intPreferencesKey("clipboard_embed_display_mode"),
     ClipboardEmbedDisplayMode.ShowEmbed.storedValue
@@ -265,6 +270,33 @@ val ClipboardHistoryAction = Action(
                             value = sessionId.value,
                             onValueChange = sessionId.setValue,
                             placeholder = { Text("PHPSESSID") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                visibilityCheck = {
+                    useDataStoreValue(ClipboardHistoryEnabled) &&
+                        useDataStoreValue(ClipboardLinkPreviewsEnabled)
+                }
+            ),
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_reddit_access_token,
+                subtitle = R.string.action_clipboard_manager_settings_reddit_access_token_subtitle,
+                component = {
+                    val accessToken = useDataStore(ClipboardRedditAccessToken)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp, 8.dp)
+                    ) {
+                        Text(stringResource(R.string.action_clipboard_manager_settings_reddit_access_token))
+                        TextField(
+                            value = accessToken.value,
+                            onValueChange = accessToken.setValue,
+                            placeholder = { Text("bearer token") },
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

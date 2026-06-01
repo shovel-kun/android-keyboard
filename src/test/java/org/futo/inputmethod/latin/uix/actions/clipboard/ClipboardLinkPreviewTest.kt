@@ -248,13 +248,13 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
-    fun metadataForSupportedUrl_normalizesRedditPostToRxddit() {
+    fun metadataForSupportedUrl_normalizesRedditPostToWwwReddit() {
         val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
             "https://www.reddit.com/r/futo/comments/abc123/a_title/"
         )
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://www.rxddit.com/r/futo/comments/abc123/a_title", metadata?.sourceUrl)
+        assertEquals("https://www.reddit.com/r/futo/comments/abc123/a_title", metadata?.sourceUrl)
         assertEquals("abc123", metadata?.sourceId)
         assertEquals("reddit:abc123", metadata?.archiveKey())
     }
@@ -278,7 +278,7 @@ class ClipboardLinkPreviewTest {
         )
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://www.rxddit.com/r/futo/comments/abc123/a_title/def456", metadata?.sourceUrl)
+        assertEquals("https://www.reddit.com/r/futo/comments/abc123/a_title/def456", metadata?.sourceUrl)
         assertEquals("abc123:def456", metadata?.sourceId)
         assertEquals("reddit:abc123:def456", metadata?.archiveKey())
     }
@@ -288,7 +288,7 @@ class ClipboardLinkPreviewTest {
         val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://redd.it/abc123")
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://www.rxddit.com/abc123", metadata?.sourceUrl)
+        assertEquals("https://www.reddit.com/abc123", metadata?.sourceUrl)
         assertEquals("abc123", metadata?.sourceId)
     }
 
@@ -299,21 +299,27 @@ class ClipboardLinkPreviewTest {
         )
 
         assertEquals(ClipboardPreviewProvider.REDDIT, metadata?.provider)
-        assertEquals("https://www.rxddit.com/r/ComedyHell/s/j7xGCXRsdR", metadata?.sourceUrl)
+        assertEquals("https://www.reddit.com/r/ComedyHell/s/j7xGCXRsdR", metadata?.sourceUrl)
         assertEquals("j7xGCXRsdR", metadata?.sourceId)
         assertEquals("reddit:j7xGCXRsdR", metadata?.archiveKey())
     }
 
     @Test
-    fun normalizedTextForClipboardImport_rewritesUrlOnlyRedditLinksToWwwRxddit() {
+    fun normalizedTextForClipboardImport_rewritesUrlOnlyRedditLinksToWwwReddit() {
         assertEquals(
-            "https://www.rxddit.com/r/futo/comments/abc123/a_title",
+            "https://www.reddit.com/r/futo/comments/abc123/a_title",
             ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(
                 "https://www.reddit.com/r/futo/comments/abc123/a_title/"
             )
         )
         assertEquals(
-            "https://www.rxddit.com/r/futo/comments/abc123/a_title",
+            "https://www.reddit.com/r/futo/comments/abc123/a_title",
+            ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(
+                "https://old.reddit.com/r/futo/comments/abc123/a_title/"
+            )
+        )
+        assertEquals(
+            "https://www.reddit.com/r/futo/comments/abc123/a_title",
             ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(
                 "https://rxddit.com/r/futo/comments/abc123/a_title"
             )
@@ -374,117 +380,137 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
-    fun parseRedditHtmlPreviewMediaUrls_returnsCardMediaInOrder() {
-        val urls = parseRedditHtmlPreviewMediaUrlsForTest(
+    fun parseRedditEmbedPreview_returnsTitleAuthorAndThumbnail() {
+        val manifest = parseRedditEmbedPreviewForTest(
             """
-            <html>
-              <head>
-                <meta property="og:description" content="hello" />
-                <meta property="og:image" content="https://i.redd.it/one.jpg" />
-                <meta name="twitter:image" content="https://i.redd.it/two.jpg" />
-                <meta property="og:video" content="https://v.redd.it/clip/DASH_720.mp4" />
-              </head>
-            </html>
-            """.trimIndent()
-        )
-
-        assertEquals(
-            listOf(
-                "https://v.redd.it/clip/DASH_720.mp4",
-                "https://i.redd.it/one.jpg",
-                "https://i.redd.it/two.jpg"
-            ),
-            urls
-        )
-    }
-
-    @Test
-    fun parseRedditHtmlPreview_preservesOnePassMetaOrderingAndApostrophes() {
-        val manifest = parseRedditHtmlPreviewForTest(
-            """
-            <html>
-              <head>
-                <meta property="og:title" content="I'm hungry" />
-                <meta name="twitter:site" content="@futo" />
-                <meta property="og:description" content="Posted by u/test" />
-                <meta name="twitter:image" content="https://i.redd.it/two.jpg" />
-                <meta property="og:image" content="https://i.redd.it/one.jpg" />
-                <meta property="og:video" content="https://v.redd.it/clip/DASH_720.mp4" />
-              </head>
-            </html>
+            {
+              "author_name": "futo",
+              "html": "<blockquote class=\"reddit-embed-bq\"><a href=\"https://www.reddit.com/r/futo/comments/abc123/title/\">I'm hungry</a></blockquote>",
+              "provider_name": "reddit",
+              "provider_url": "https://www.reddit.com",
+              "thumbnail_url": "https://preview.redd.it/post.jpg?width=960&amp;format=pjpg",
+              "title": "I'm hungry",
+              "type": "rich"
+            }
             """.trimIndent()
         )
 
         assertEquals("I'm hungry", manifest?.snippet)
         assertEquals("I'm hungry", manifest?.metadata?.title)
-        assertEquals("Posted by u/test", manifest?.metadata?.bodyText)
+        assertEquals("futo", manifest?.metadata?.authorName)
+        assertEquals(
+            listOf("https://preview.redd.it/post.jpg?width=960&format=pjpg"),
+            manifest?.mediaItems?.map { it.url }
+        )
+    }
+
+    @Test
+    fun parseRedditEmbedPreview_allowsTextOnlyEmbed() {
+        val manifest = parseRedditEmbedPreviewForTest(
+            """
+            {
+              "author_name": "futo",
+              "html": "<blockquote class=\"reddit-embed-bq\"></blockquote>",
+              "provider_name": "reddit",
+              "provider_url": "https://www.reddit.com",
+              "title": "is there a way",
+              "type": "rich"
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("is there a way", manifest?.snippet)
+        assertEquals("is there a way", manifest?.metadata?.title)
+        assertEquals(emptyList<String>(), manifest?.mediaItems?.map { it.url })
+    }
+
+    @Test
+    fun parseRedditApiPreview_returnsGalleryMediaInOrder() {
+        val manifest = parseRedditApiPreviewForTest(
+            """
+            {
+              "data": {
+                "children": [
+                  {
+                    "data": {
+                      "id": "abc123",
+                      "title": "Gallery post",
+                      "author": "futo",
+                      "permalink": "/r/futo/comments/abc123/gallery_post/",
+                      "created_utc": 1717000000,
+                      "ups": 42,
+                      "num_comments": 7,
+                      "over_18": false,
+                      "gallery_data": {
+                        "items": [
+                          {"media_id": "one"},
+                          {"media_id": "two"}
+                        ]
+                      },
+                      "media_metadata": {
+                        "one": {"s": {"u": "https://preview.redd.it/one.jpg?width=1200&amp;format=pjpg"}},
+                        "two": {"s": {"u": "https://preview.redd.it/two.png?width=1200&amp;format=png"}}
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("Gallery post", manifest?.snippet)
         assertEquals("futo", manifest?.metadata?.authorHandle)
+        assertEquals("https://www.reddit.com/r/futo/comments/abc123/gallery_post/", manifest?.metadata?.sourceUrl)
         assertEquals(
             listOf(
-                "https://v.redd.it/clip/DASH_720.mp4",
-                "https://i.redd.it/one.jpg",
-                "https://i.redd.it/two.jpg"
+                "https://preview.redd.it/one.jpg?width=1200&format=pjpg",
+                "https://preview.redd.it/two.png?width=1200&format=png"
             ),
             manifest?.mediaItems?.map { it.url }
         )
     }
 
     @Test
-    fun parseRedditHtmlPreviewMediaUrls_deduplicatesSamePreviewImageWithDifferentSizingParams() {
-        val urls = parseRedditHtmlPreviewMediaUrlsForTest(
+    fun parseRedditApiPreview_returnsVideoFallbackBeforePreviewImage() {
+        val manifest = parseRedditApiPreviewForTest(
             """
-            <html>
-              <head>
-                <meta property="og:image" content="https://preview.redd.it/post.jpeg?width=959&amp;height=502&amp;auto=webp" />
-                <meta property="twitter:image" content="https://preview.redd.it/post.jpeg?width=600&amp;height=300&amp;auto=webp" />
-              </head>
-            </html>
+            {
+              "data": {
+                "children": [
+                  {
+                    "data": {
+                      "id": "abc123",
+                      "title": "Video post",
+                      "secure_media": {
+                        "reddit_video": {
+                          "fallback_url": "https://v.redd.it/clip/DASH_720.mp4?source=fallback"
+                        }
+                      },
+                      "preview": {
+                        "images": [
+                          {
+                            "source": {
+                              "url": "https://preview.redd.it/thumb.jpg?width=960&amp;format=pjpg"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
             """.trimIndent()
         )
 
         assertEquals(
-            listOf("https://preview.redd.it/post.jpeg?width=959&amp;height=502&amp;auto=webp"),
-            urls
+            listOf(
+                "https://v.redd.it/clip/DASH_720.mp4?source=fallback",
+                "https://preview.redd.it/thumb.jpg?width=960&format=pjpg"
+            ),
+            manifest?.mediaItems?.map { it.url }
         )
-    }
-
-    @Test
-    fun parseRedditHtmlPreview_usesPostTitleAsSnippet() {
-        val manifest = parseRedditHtmlPreviewForTest(
-            """
-            <html>
-              <head>
-                <meta property="og:title" content="is there a way" />
-                <meta property="og:description" content="Posted in r/ComedyHell by u/IloveRamen99 • 19,533 points and 835 comments" />
-                <meta property="og:image" content="https://i.redd.it/post.jpg" />
-              </head>
-            </html>
-            """.trimIndent()
-        )
-
-        assertEquals("is there a way", manifest?.snippet)
-        assertEquals("is there a way", manifest?.metadata?.title)
-        assertEquals(
-            "Posted in r/ComedyHell by u/IloveRamen99 • 19,533 points and 835 comments",
-            manifest?.metadata?.bodyText
-        )
-    }
-
-    @Test
-    fun parseRedditHtmlPreview_keepsApostrophesInDoubleQuotedTitle() {
-        val manifest = parseRedditHtmlPreviewForTest(
-            """
-            <html>
-              <head>
-                <meta property="og:title" content="I'm hungry" />
-                <meta property="og:image" content="https://i.redd.it/post.jpg" />
-              </head>
-            </html>
-            """.trimIndent()
-        )
-
-        assertEquals("I'm hungry", manifest?.snippet)
-        assertEquals("I'm hungry", manifest?.metadata?.title)
     }
 
     @Test

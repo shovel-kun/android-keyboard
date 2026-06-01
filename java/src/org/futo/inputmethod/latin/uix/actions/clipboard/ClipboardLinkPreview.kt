@@ -186,32 +186,47 @@ object ClipboardLinkPreviewFetcher {
     internal fun previewCandidateFor(rawText: String): ClipboardPreviewCandidate? =
         extractPreviewRequest(rawText)?.toCandidate()
 
-    fun fetchManifest(rawText: String, pixivSessionId: String? = null): ClipboardLinkPreviewManifest? {
-        return fetchManifestResult(rawText, pixivSessionId).manifest
+    fun fetchManifest(
+        rawText: String,
+        pixivSessionId: String? = null,
+        redditAccessToken: String? = null
+    ): ClipboardLinkPreviewManifest? {
+        return fetchManifestResult(rawText, pixivSessionId, redditAccessToken).manifest
     }
 
-    fun fetchManifestResult(rawText: String, pixivSessionId: String? = null): ClipboardLinkPreviewManifestResult {
+    fun fetchManifestResult(
+        rawText: String,
+        pixivSessionId: String? = null,
+        redditAccessToken: String? = null
+    ): ClipboardLinkPreviewManifestResult {
         val candidate = previewCandidateFor(rawText) ?: return ClipboardLinkPreviewManifestResult(
             manifest = null,
             failureDetail = "Unsupported preview URL: $rawText"
         )
-        return fetchManifestResult(candidate, rawText, pixivSessionId)
+        return fetchManifestResult(candidate, rawText, pixivSessionId, redditAccessToken)
     }
 
     internal fun fetchManifestResult(
         candidate: ClipboardPreviewCandidate,
-        pixivSessionId: String? = null
+        pixivSessionId: String? = null,
+        redditAccessToken: String? = null
     ): ClipboardLinkPreviewManifestResult =
-        fetchManifestResult(candidate, candidate.metadata.sourceUrl ?: candidate.archiveKey.orEmpty(), pixivSessionId)
+        fetchManifestResult(
+            candidate,
+            candidate.metadata.sourceUrl ?: candidate.archiveKey.orEmpty(),
+            pixivSessionId,
+            redditAccessToken
+        )
 
     private fun fetchManifestResult(
         candidate: ClipboardPreviewCandidate,
         rawText: String,
-        pixivSessionId: String?
+        pixivSessionId: String?,
+        redditAccessToken: String?
     ): ClipboardLinkPreviewManifestResult {
         val request = candidate.request
         return try {
-            request.fetchPreview(pixivSessionId)
+            request.fetchPreview(pixivSessionId, redditAccessToken)
         } catch (e: ClipboardPreviewRateLimitedException) {
             val provider = candidate.provider
             val detail = "Rate limited by ${provider.name} while fetching preview manifest for $rawText. Retry after ${e.retryAfterEpochMs}. ${e.message}"
@@ -255,7 +270,8 @@ object ClipboardLinkPreviewFetcher {
     fun fetch(context: Context, rawText: String): ClipboardLinkPreview? {
         val preview = fetchManifest(
             rawText = rawText,
-            pixivSessionId = context.getSetting(ClipboardPixivSessionId).takeIf { it.isNotBlank() }
+            pixivSessionId = context.getSetting(ClipboardPixivSessionId).takeIf { it.isNotBlank() },
+            redditAccessToken = context.getSetting(ClipboardRedditAccessToken).takeIf { it.isNotBlank() }
         ) ?: return null
         val provider = preview.metadata?.provider
 
@@ -305,18 +321,24 @@ object ClipboardLinkPreviewFetcher {
             statusUrl = TwitterStatusUrl(handle = "futo", id = "123")
         )?.mediaItems?.map { it.url }.orEmpty()
 
-    internal fun parseRedditHtmlPreviewMediaUrlsForTest(html: String): List<String> =
-        parseRedditHtmlPreview(
-            html = html,
+    internal fun parseRedditEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+        parseRedditEmbedPreview(
+            response = LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
             redditUrl = RedditPostUrl(
                 pathSegments = listOf("r", "futo", "comments", "abc123", "title"),
                 postId = "abc123"
             )
-        )?.mediaItems?.map { it.url }.orEmpty()
+        )?.let { preview ->
+            ClipboardLinkPreviewManifest(
+                snippet = preview.snippet,
+                mediaItems = preview.mediaItems,
+                metadata = preview.metadata
+            )
+        }
 
-    internal fun parseRedditHtmlPreviewForTest(html: String): ClipboardLinkPreviewManifest? =
-        parseRedditHtmlPreview(
-            html = html,
+    internal fun parseRedditApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+        parseRedditApiPreview(
+            response = LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
             redditUrl = RedditPostUrl(
                 pathSegments = listOf("r", "futo", "comments", "abc123", "title"),
                 postId = "abc123"
@@ -461,7 +483,7 @@ object ClipboardLinkPreviewFetcher {
         }
 
         override fun fetch(request: PreviewRequest): RemotePreviewData? =
-            fetchRedditPreview(request as RedditPostUrl)
+            fetchRedditPreview(request as RedditPostUrl, redditAccessToken = null)
 
         override fun canonicalSourceUrl(request: PreviewRequest): String =
             (request as RedditPostUrl).canonicalUrl()
@@ -469,7 +491,6 @@ object ClipboardLinkPreviewFetcher {
         override fun ownsMediaHost(host: String): Boolean =
             SupportedRedditHosts.contains(host) ||
                 host.endsWith(".reddit.com") ||
-                host.endsWith(".rxddit.com") ||
                 host.endsWith(".redd.it") ||
                 host.endsWith(".redditmedia.com")
     }
@@ -720,7 +741,18 @@ object ClipboardLinkPreviewFetcher {
         return PixivPreviewResponse(infoResponse, pagesResponse)
     }
 
-    private fun fetchRedditPreview(redditUrl: RedditPostUrl): RemotePreviewData? {
+    private fun fetchRedditPreview(
+        redditUrl: RedditPostUrl,
+        redditAccessToken: String?
+    ): RemotePreviewData? {
+        redditAccessToken?.redditBearerTokenHeader()?.let { headers ->
+            runPreviewRequestCatching {
+                requestJsonObject(redditUrl.oauthPostUrl(), MaxPreviewJsonBytes, headers)
+            }?.let { response ->
+                parseRedditApiPreview(response, redditUrl)
+            }?.let { return it }
+        }
+
         val resolvedUrl = redditUrl.redirectUrl?.let { redirectUrl ->
             runPreviewRequestCatching {
                 requestFinalUrl(redirectUrl)
@@ -728,34 +760,73 @@ object ClipboardLinkPreviewFetcher {
                 ?.takeIf { it.redirectUrl == null }
         }
         val previewUrl = resolvedUrl ?: redditUrl
-        val html = runPreviewRequestCatching {
-            requestText(previewUrl.canonicalUrl(), MaxPreviewJsonBytes)
+        val response = runPreviewRequestCatching {
+            requestJsonObject(previewUrl.embedUrl(), MaxPreviewJsonBytes, redditEmbedHeaders())
         } ?: return null
 
-        return parseRedditHtmlPreview(html, previewUrl)
+        return parseRedditEmbedPreview(response, previewUrl)
     }
 
-    private fun parseRedditHtmlPreview(
-        html: String,
+    private fun parseRedditApiPreview(
+        response: JsonObject,
         redditUrl: RedditPostUrl
     ): RemotePreviewData? {
-        val card = html.htmlPreviewCard()
-        val description = card.description
+        val post = response
+            .objectValue("data")
+            ?.arrayValue("children")
+            ?.firstObject()
+            ?.objectValue("data")
+            ?: return null
+
+        val title = post.stringValue("title")
             ?.stripSimpleHtml()
             ?.takeIf { it.isNotBlank() }
+        val bodyText = post.stringValue("selftext")
+            ?.stripSimpleHtml()
+            ?.takeIf { it.isNotBlank() }
+        val mediaItems = post.redditApiMediaItems()
 
-        val title = card.title
+        val metadata = ClipboardPreviewMetadata(
+            provider = ClipboardPreviewProvider.REDDIT,
+            sourceUrl = post.stringValue("permalink")?.redditPermalinkUrl() ?: redditUrl.canonicalUrl(),
+            sourceId = post.stringValue("id") ?: redditUrl.sourceId(),
+            title = title,
+            bodyText = bodyText,
+            authorHandle = post.stringValue("author"),
+            createdAt = post.longValue("created_utc")?.toString(),
+            imageCount = mediaItems.size.takeIf { it > 0 },
+            selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() },
+            stats = ClipboardPreviewStats(
+                likeCount = post.longValue("ups"),
+                replyCount = post.longValue("num_comments")
+            ),
+            flags = ClipboardPreviewFlags(
+                restricted = post.booleanValue("over_18") == true
+            )
+        ).nullIfEmpty()
+
+        if (title == null && bodyText == null && mediaItems.isEmpty() && metadata == null) return null
+
+        return RemotePreviewData(
+            snippet = title?.let { sanitizeClipboardText(it, 160) },
+            mediaItems = mediaItems,
+            metadata = metadata
+        )
+    }
+
+    private fun parseRedditEmbedPreview(
+        response: JsonObject,
+        redditUrl: RedditPostUrl
+    ): RemotePreviewData? {
+        val title = response.stringValue("title")
             ?.stripSimpleHtml()
             ?.takeIf { it.isNotBlank() }
         val snippet = title?.let { sanitizeClipboardText(it, 160) }
 
-        val authorHandle = card.authorHandles.firstOrNull()
-            ?.removePrefix("@")
-            ?.trim()
+        val thumbnailUrl = response.stringValue("thumbnail_url")
+            ?.redditApiUrlDecode()
             ?.takeIf { it.isNotBlank() }
-
-        val mediaItems = card.mediaUrls
-            .distinctBy { it.redditPreviewMediaIdentity() }
+        val mediaItems = listOfNotNull(thumbnailUrl)
             .mapIndexed { index, url ->
                 ClipboardLinkPreviewMedia(
                     url = url,
@@ -769,8 +840,8 @@ object ClipboardLinkPreviewFetcher {
             sourceUrl = redditUrl.canonicalUrl(),
             sourceId = redditUrl.sourceId(),
             title = title,
-            bodyText = description,
-            authorHandle = authorHandle,
+            authorName = response.stringValue("author_name"),
+            imageCount = mediaItems.size.takeIf { it > 0 },
             selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() }
         ).nullIfEmpty()
 
@@ -993,11 +1064,14 @@ object ClipboardLinkPreviewFetcher {
     private fun PreviewRequest.fetchPreview(): RemotePreviewData? =
         previewProvider().fetch(this)
 
-    private fun PreviewRequest.fetchPreview(pixivSessionId: String?): RemotePreviewData? =
-        if(this is PixivArtworkUrl) {
-            fetchPixivPreview(this, pixivSessionId)
-        } else {
-            fetchPreview()
+    private fun PreviewRequest.fetchPreview(
+        pixivSessionId: String?,
+        redditAccessToken: String?
+    ): RemotePreviewData? =
+        when (this) {
+            is PixivArtworkUrl -> fetchPixivPreview(this, pixivSessionId)
+            is RedditPostUrl -> fetchRedditPreview(this, redditAccessToken)
+            else -> fetchPreview()
         }
 
     private fun PreviewRequest.prefersImagePreview(): Boolean =
@@ -1245,11 +1319,11 @@ internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: 
 internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String> =
     ClipboardLinkPreviewFetcher.parseTwitterHtmlPreviewMediaUrlsForTest(html)
 
-internal fun parseRedditHtmlPreviewMediaUrlsForTest(html: String): List<String> =
-    ClipboardLinkPreviewFetcher.parseRedditHtmlPreviewMediaUrlsForTest(html)
+internal fun parseRedditEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseRedditEmbedPreviewForTest(responseText)
 
-internal fun parseRedditHtmlPreviewForTest(html: String): ClipboardLinkPreviewManifest? =
-    ClipboardLinkPreviewFetcher.parseRedditHtmlPreviewForTest(html)
+internal fun parseRedditApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseRedditApiPreviewForTest(responseText)
 
 internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
     ClipboardLinkPreviewFetcher.parseYouTubeOEmbedPreviewForTest(responseText)
@@ -1363,10 +1437,87 @@ private fun JsonArray.pixivOriginalImageUrls(): List<String> =
             ?.takeIf { it.isNotBlank() }
     }
 
+private fun JsonObject.redditApiMediaItems(): List<ClipboardLinkPreviewMedia> {
+    val galleryUrls = objectValue("gallery_data")
+        ?.arrayValue("items")
+        ?.mapNotNull { item ->
+            val mediaId = (item as? JsonObject)?.stringValue("media_id") ?: return@mapNotNull null
+            objectValue("media_metadata")
+                ?.objectValue(mediaId)
+                ?.redditMediaMetadataUrl()
+        }
+        .orEmpty()
+
+    val previewUrls = objectValue("preview")
+        ?.arrayValue("images")
+        ?.mapNotNull { image ->
+            (image as? JsonObject)
+                ?.objectValue("source")
+                ?.stringValue("url")
+        }
+        .orEmpty()
+
+    val redditVideo = objectValue("secure_media")
+        ?.objectValue("reddit_video")
+        ?: objectValue("media")?.objectValue("reddit_video")
+        ?: objectValue("preview")?.objectValue("reddit_video_preview")
+
+    val urls = galleryUrls.ifEmpty {
+        listOfNotNull(
+            redditVideo?.stringValue("fallback_url"),
+            stringValue("url_overridden_by_dest")
+                ?.takeIf { url -> url.guessedClipboardMimeType()?.startsWith("image/") == true },
+            stringValue("url")?.takeIf { url -> url.guessedClipboardMimeType()?.startsWith("image/") == true }
+        ) + previewUrls
+    }
+
+    return urls
+        .map { it.redditApiUrlDecode() }
+        .filter { it.isNotBlank() }
+        .distinctBy { it.redditPreviewMediaIdentity() }
+        .mapIndexed { index, url ->
+            ClipboardLinkPreviewMedia(
+                url = url,
+                sourceIndex = index,
+                mimeType = url.guessedClipboardMimeType()
+            )
+        }
+}
+
+private fun String.redditApiUrlDecode(): String =
+    replace("&amp;", "&")
+        .stripSimpleHtml()
+
+private fun JsonObject.redditMediaMetadataUrl(): String? {
+    val preferred = objectValue("s")?.stringValue("u")
+        ?: objectValue("s")?.stringValue("gif")
+        ?: objectValue("s")?.stringValue("mp4")
+    return preferred?.takeIf { it.isNotBlank() }
+}
+
 private fun pixivAjaxHeaders(pixivSessionId: String?): Map<String, String> {
     val cookie = pixivSessionId?.pixivSessionCookieHeader() ?: return emptyMap()
     return mapOf("Cookie" to cookie)
 }
+
+private fun String.redditBearerTokenHeader(): Map<String, String>? {
+    val token = trim()
+        .removePrefix("Bearer ")
+        .removePrefix("bearer ")
+        .trim()
+        .takeIf { it.isNotBlank() }
+        ?: return null
+    return mapOf(
+        "Authorization" to "bearer $token",
+        "User-Agent" to "android:org.futo.inputmethod.latin:clipboard-preview (by /u/local-user)"
+    )
+}
+
+private fun redditEmbedHeaders(): Map<String, String> =
+    mapOf("User-Agent" to "android:org.futo.inputmethod.latin:clipboard-preview (by /u/local-user)")
+
+private fun String.redditPermalinkUrl(): String =
+    if(startsWith("http://") || startsWith("https://")) this else "https://www.reddit.com${this}"
 
 private fun String.pixivSessionCookieHeader(): String? {
     val sessionId = trim()
@@ -1576,7 +1727,10 @@ private data class RedditPostUrl(
     val commentId: String? = null,
     val redirectUrl: String? = null
 ) : PreviewRequest {
-    fun canonicalUrl(): String = "https://www.rxddit.com/${pathSegments.joinToString("/")}"
+    fun canonicalUrl(): String = "https://www.reddit.com/${pathSegments.joinToString("/")}"
+    fun oauthPostUrl(): String = "https://oauth.reddit.com/by_id/t3_$postId?raw_json=1"
+    fun embedUrl(): String =
+        "https://www.reddit.com/oembed?url=${URLEncoder.encode(canonicalUrl(), "UTF-8")}"
     fun sourceId(): String = listOfNotNull(postId, commentId).joinToString(":")
 }
 

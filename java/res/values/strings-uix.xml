@@ -99,11 +99,13 @@
     <string name="action_clipboard_manager_settings_save_screenshots">Save recent screenshots</string>
     <string name="action_clipboard_manager_settings_save_screenshots_subtitle">You\'ll need to grant permission to access your screenshots</string>
     <string name="action_clipboard_manager_settings_link_previews">Fetch link previews</string>
-    <string name="action_clipboard_manager_settings_link_previews_subtitle">When enabled, supported X and Pixiv links may contact third-party preview services</string>
+    <string name="action_clipboard_manager_settings_link_previews_subtitle">When enabled, supported X, Reddit, Pixiv, and YouTube links may contact preview services</string>
     <string name="action_clipboard_manager_settings_limit_mobile_data">Limit downloads on mobile data</string>
     <string name="action_clipboard_manager_settings_limit_mobile_data_subtitle">Wait for Wi-Fi or unmetered network before fetching link previews and archive media automatically</string>
     <string name="action_clipboard_manager_settings_pixiv_session_id">Pixiv session ID</string>
     <string name="action_clipboard_manager_settings_pixiv_session_id_subtitle">Optional PHPSESSID used only for Pixiv preview requests</string>
+    <string name="action_clipboard_manager_settings_reddit_access_token">Reddit access token</string>
+    <string name="action_clipboard_manager_settings_reddit_access_token_subtitle">Optional bearer token used only for Reddit preview requests</string>
     <string name="action_clipboard_manager_settings_save_sensitive_clips">Save sensitive clips</string>
     <string name="action_clipboard_manager_settings_save_sensitive_clips_subtitle">If enabled, it will save items from password managers, incognito windows, etc</string>
     <string name="action_clipboard_manager_settings_list_layout">Use vertical list layout instead of grid</string>

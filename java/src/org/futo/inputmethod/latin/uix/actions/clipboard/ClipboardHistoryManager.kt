@@ -192,6 +192,9 @@ internal fun ClipboardEntry.matchesDeletedArchiveKey(archiveKey: String): Boolea
 private fun Context.pixivSessionIdForClipboardPreviews(): String? =
     getSetting(ClipboardPixivSessionId).trim().takeIf { it.isNotBlank() }
 
+private fun Context.redditAccessTokenForClipboardPreviews(): String? =
+    getSetting(ClipboardRedditAccessToken).trim().takeIf { it.isNotBlank() }
+
 internal fun deletedArchiveKeysAfterTextImport(
     text: String,
     deletedArchiveKeys: Set<String>
@@ -786,7 +789,11 @@ class ClipboardHistoryManager(
             previewLoadingByText[text] = true
             try {
                 val manifestResult = withContext(ClipboardPreviewFetchContext) {
-                    ClipboardLinkPreviewFetcher.fetchManifestResult(candidate, context.pixivSessionIdForClipboardPreviews())
+                    ClipboardLinkPreviewFetcher.fetchManifestResult(
+                        candidate,
+                        context.pixivSessionIdForClipboardPreviews(),
+                        context.redditAccessTokenForClipboardPreviews()
+                    )
                 }
                 setProviderCooldown(manifestResult.failure)
                 if(manifestResult.failure is ClipboardPreviewFetchFailure.RateLimited) {
@@ -1537,7 +1544,8 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     val manifestResult = withContext(ClipboardPreviewFetchContext) {
                         ClipboardLinkPreviewFetcher.fetchManifestResult(
                             request.candidate,
-                            context.pixivSessionIdForClipboardPreviews()
+                            context.pixivSessionIdForClipboardPreviews(),
+                            context.redditAccessTokenForClipboardPreviews()
                         )
                     }
                     setProviderCooldown(manifestResult.failure)
@@ -1782,7 +1790,8 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         val manifestResult = withContext(ClipboardPreviewFetchContext) {
             ClipboardLinkPreviewFetcher.fetchManifestResult(
                 archive.sourceUrl,
-                context.pixivSessionIdForClipboardPreviews()
+                context.pixivSessionIdForClipboardPreviews(),
+                context.redditAccessTokenForClipboardPreviews()
             )
         }
         setProviderCooldown(manifestResult.failure)
