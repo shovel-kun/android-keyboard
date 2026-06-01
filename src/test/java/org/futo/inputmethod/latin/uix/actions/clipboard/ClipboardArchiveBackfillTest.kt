@@ -45,6 +45,13 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
+    fun entryMatchesArchiveKeyFromBackfillMetadataWhenPreviewMetadataIsMissing() {
+        val entry = samplePixivEntry(metadata = null)
+
+        assertTrue(entry.matchesDeletedArchiveKey("pixiv:123"))
+    }
+
+    @Test
     fun unsupportedTextClip_isNotEligibleForArchiveBackfill() {
         val entry = samplePixivEntry().copy(text = "plain text")
 

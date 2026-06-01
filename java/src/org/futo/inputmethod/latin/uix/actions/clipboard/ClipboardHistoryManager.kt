@@ -2158,7 +2158,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             withContext(Dispatchers.Main) {
                 for(i in clipboardHistory.indices) {
                     val current = clipboardHistory[i]
-                    if(current.previewMetadata?.archiveKey() == archive.key) {
+                    if(current.matchesDeletedArchiveKey(archive.key)) {
                         clipboardHistory[i] = current.withArchivePreviewMedia(archive, savedMedia, attemptedAt)
                     }
                 }
@@ -2173,7 +2173,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         val savedMedia = archive.savedPreviewMedia()
         for(i in clipboardHistory.indices) {
             val current = clipboardHistory[i]
-            if(current.previewMetadata?.archiveKey() == archive.key) {
+            if(current.matchesDeletedArchiveKey(archive.key)) {
                 clipboardHistory[i] = current.withArchivePreviewMedia(archive, savedMedia, attemptedAt)
             }
         }
