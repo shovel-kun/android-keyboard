@@ -3,17 +3,28 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.uix.Action
@@ -84,6 +95,11 @@ val ClipboardLinkPreviewsEnabled = SettingsKey(
 val ClipboardLimitDownloadsOnMobileData = SettingsKey(
     booleanPreferencesKey("clipboard_limit_downloads_on_mobile_data"),
     true
+)
+
+val ClipboardPixivSessionId = SettingsKey(
+    stringPreferencesKey("clipboard_pixiv_session_id"),
+    ""
 )
 
 val ClipboardEmbedDisplayModeSetting = SettingsKey(
@@ -234,6 +250,33 @@ val ClipboardHistoryAction = Action(
                 subtitle = R.string.action_clipboard_manager_settings_limit_mobile_data_subtitle,
                 setting = ClipboardLimitDownloadsOnMobileData
             ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_pixiv_session_id,
+                subtitle = R.string.action_clipboard_manager_settings_pixiv_session_id_subtitle,
+                component = {
+                    val sessionId = useDataStore(ClipboardPixivSessionId)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp, 8.dp)
+                    ) {
+                        Text(stringResource(R.string.action_clipboard_manager_settings_pixiv_session_id))
+                        TextField(
+                            value = sessionId.value,
+                            onValueChange = sessionId.setValue,
+                            placeholder = { Text("PHPSESSID") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                visibilityCheck = {
+                    useDataStoreValue(ClipboardHistoryEnabled) &&
+                        useDataStoreValue(ClipboardLinkPreviewsEnabled)
+                }
+            ),
             UserSetting(
                 name = R.string.action_clipboard_manager_settings_save_sensitive_clips,
                 subtitle = R.string.action_clipboard_manager_settings_save_sensitive_clips_subtitle,

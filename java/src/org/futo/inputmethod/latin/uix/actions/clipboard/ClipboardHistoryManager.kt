@@ -189,6 +189,9 @@ internal fun ClipboardEntry.matchesDeletedArchiveKey(archiveKey: String): Boolea
     previewMetadata?.archiveKey() == archiveKey ||
         archiveBackfillMetadata()?.archiveKey() == archiveKey
 
+private fun Context.pixivSessionIdForClipboardPreviews(): String? =
+    getSetting(ClipboardPixivSessionId).trim().takeIf { it.isNotBlank() }
+
 internal fun deletedArchiveKeysAfterTextImport(
     text: String,
     deletedArchiveKeys: Set<String>
@@ -783,7 +786,7 @@ class ClipboardHistoryManager(
             previewLoadingByText[text] = true
             try {
                 val manifestResult = withContext(ClipboardPreviewFetchContext) {
-                    ClipboardLinkPreviewFetcher.fetchManifestResult(candidate)
+                    ClipboardLinkPreviewFetcher.fetchManifestResult(candidate, context.pixivSessionIdForClipboardPreviews())
                 }
                 setProviderCooldown(manifestResult.failure)
                 if(manifestResult.failure is ClipboardPreviewFetchFailure.RateLimited) {
@@ -1532,7 +1535,10 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 
                 while (attempt < request.maxAttempts) {
                     val manifestResult = withContext(ClipboardPreviewFetchContext) {
-                        ClipboardLinkPreviewFetcher.fetchManifestResult(request.candidate)
+                        ClipboardLinkPreviewFetcher.fetchManifestResult(
+                            request.candidate,
+                            context.pixivSessionIdForClipboardPreviews()
+                        )
                     }
                     setProviderCooldown(manifestResult.failure)
                     val manifest = manifestResult.manifest
@@ -1774,7 +1780,10 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
     private suspend fun refetchArchiveManifest(archive: ClipboardLinkArchive) {
         providerCooldown(archive.provider)?.let { return }
         val manifestResult = withContext(ClipboardPreviewFetchContext) {
-            ClipboardLinkPreviewFetcher.fetchManifestResult(archive.sourceUrl)
+            ClipboardLinkPreviewFetcher.fetchManifestResult(
+                archive.sourceUrl,
+                context.pixivSessionIdForClipboardPreviews()
+            )
         }
         setProviderCooldown(manifestResult.failure)
         if(manifestResult.failure is ClipboardPreviewFetchFailure.Unavailable) {

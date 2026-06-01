@@ -122,6 +122,18 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun pixivSessionCookieHeader_acceptsRawSessionIdOrCookieFragment() {
+        assertEquals(
+            "PHPSESSID=abc123",
+            ClipboardLinkPreviewFetcher.pixivSessionCookieHeaderForTest("abc123")
+        )
+        assertEquals(
+            "PHPSESSID=abc123",
+            ClipboardLinkPreviewFetcher.pixivSessionCookieHeaderForTest("foo=bar; PHPSESSID=abc123; baz=qux")
+        )
+    }
+
+    @Test
     fun parseTwitterApiPreviewMediaUrls_returnsAllPhotos() {
         val urls = parseTwitterApiPreviewMediaUrlsForTest(
             """

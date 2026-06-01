@@ -21,6 +21,7 @@ import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import org.futo.inputmethod.latin.uix.getSetting
 
 data class ClipboardLinkPreview(
     val snippet: String?,
@@ -185,28 +186,32 @@ object ClipboardLinkPreviewFetcher {
     internal fun previewCandidateFor(rawText: String): ClipboardPreviewCandidate? =
         extractPreviewRequest(rawText)?.toCandidate()
 
-    fun fetchManifest(rawText: String): ClipboardLinkPreviewManifest? {
-        return fetchManifestResult(rawText).manifest
+    fun fetchManifest(rawText: String, pixivSessionId: String? = null): ClipboardLinkPreviewManifest? {
+        return fetchManifestResult(rawText, pixivSessionId).manifest
     }
 
-    fun fetchManifestResult(rawText: String): ClipboardLinkPreviewManifestResult {
+    fun fetchManifestResult(rawText: String, pixivSessionId: String? = null): ClipboardLinkPreviewManifestResult {
         val candidate = previewCandidateFor(rawText) ?: return ClipboardLinkPreviewManifestResult(
             manifest = null,
             failureDetail = "Unsupported preview URL: $rawText"
         )
-        return fetchManifestResult(candidate, rawText)
+        return fetchManifestResult(candidate, rawText, pixivSessionId)
     }
 
-    internal fun fetchManifestResult(candidate: ClipboardPreviewCandidate): ClipboardLinkPreviewManifestResult =
-        fetchManifestResult(candidate, candidate.metadata.sourceUrl ?: candidate.archiveKey.orEmpty())
+    internal fun fetchManifestResult(
+        candidate: ClipboardPreviewCandidate,
+        pixivSessionId: String? = null
+    ): ClipboardLinkPreviewManifestResult =
+        fetchManifestResult(candidate, candidate.metadata.sourceUrl ?: candidate.archiveKey.orEmpty(), pixivSessionId)
 
     private fun fetchManifestResult(
         candidate: ClipboardPreviewCandidate,
-        rawText: String
+        rawText: String,
+        pixivSessionId: String?
     ): ClipboardLinkPreviewManifestResult {
         val request = candidate.request
         return try {
-            request.fetchPreview()
+            request.fetchPreview(pixivSessionId)
         } catch (e: ClipboardPreviewRateLimitedException) {
             val provider = candidate.provider
             val detail = "Rate limited by ${provider.name} while fetching preview manifest for $rawText. Retry after ${e.retryAfterEpochMs}. ${e.message}"
@@ -248,7 +253,10 @@ object ClipboardLinkPreviewFetcher {
     }
 
     fun fetch(context: Context, rawText: String): ClipboardLinkPreview? {
-        val preview = fetchManifest(rawText) ?: return null
+        val preview = fetchManifest(
+            rawText = rawText,
+            pixivSessionId = context.getSetting(ClipboardPixivSessionId).takeIf { it.isNotBlank() }
+        ) ?: return null
         val provider = preview.metadata?.provider
 
         val mediaFiles = preview.mediaItems.mapNotNull { media ->
@@ -287,6 +295,9 @@ object ClipboardLinkPreviewFetcher {
             pagesResponse = null,
             PixivArtworkUrl(id = "123", pageIndex = pageIndex, language = "en")
         )?.mediaItems?.map { it.url }.orEmpty()
+
+    internal fun pixivSessionCookieHeaderForTest(value: String): String? =
+        value.pixivSessionCookieHeader()
 
     internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String> =
         parseTwitterHtmlPreview(
@@ -547,7 +558,15 @@ object ClipboardLinkPreviewFetcher {
     }
 
     private fun fetchPixivPreview(artworkUrl: PixivArtworkUrl): RemotePreviewData? {
-        val response = requestPixivPreview(artworkUrl) ?: return null
+        val response = requestPixivPreview(artworkUrl, pixivSessionId = null) ?: return null
+        return parsePixivPreviewData(response.infoResponse, response.pagesResponse, artworkUrl)
+    }
+
+    private fun fetchPixivPreview(
+        artworkUrl: PixivArtworkUrl,
+        pixivSessionId: String?
+    ): RemotePreviewData? {
+        val response = requestPixivPreview(artworkUrl, pixivSessionId) ?: return null
         return parsePixivPreviewData(response.infoResponse, response.pagesResponse, artworkUrl)
     }
 
@@ -687,12 +706,16 @@ object ClipboardLinkPreviewFetcher {
     private fun List<ClipboardLinkPreviewMedia>.withoutTwitterStatusPageUrls(): List<ClipboardLinkPreviewMedia> =
         filterNot { parseTwitterStatusUrl(it.url) != null }
 
-    private fun requestPixivPreview(artworkUrl: PixivArtworkUrl): PixivPreviewResponse? {
+    private fun requestPixivPreview(
+        artworkUrl: PixivArtworkUrl,
+        pixivSessionId: String?
+    ): PixivPreviewResponse? {
         val infoUrl = "https://www.pixiv.net/ajax/illust/${artworkUrl.id}?lang=${artworkUrl.language}"
         val pagesUrl = "https://www.pixiv.net/ajax/illust/${artworkUrl.id}/pages?lang=${artworkUrl.language}"
-        val infoResponse = requestJsonObject(infoUrl, MaxPreviewJsonBytes)
+        val headers = pixivAjaxHeaders(pixivSessionId)
+        val infoResponse = requestJsonObject(infoUrl, MaxPreviewJsonBytes, headers)
         val pagesResponse = runPreviewRequestCatching {
-            requestJsonObject(pagesUrl, MaxPreviewJsonBytes).arrayValue("body")
+            requestJsonObject(pagesUrl, MaxPreviewJsonBytes, headers).arrayValue("body")
         }
         return PixivPreviewResponse(infoResponse, pagesResponse)
     }
@@ -902,8 +925,12 @@ object ClipboardLinkPreviewFetcher {
         }
     }
 
-    private fun requestJsonObject(url: String, maxBytes: Int): JsonObject =
-        withConnection(url) { connection ->
+    private fun requestJsonObject(
+        url: String,
+        maxBytes: Int,
+        requestHeaders: Map<String, String> = emptyMap()
+    ): JsonObject =
+        withConnection(url, requestHeaders) { connection ->
             connection.inputStream.use { stream ->
                 LinkPreviewJson.parseToJsonElement(stream.readStringCapped(maxBytes)).jsonObject
             }
@@ -921,8 +948,15 @@ object ClipboardLinkPreviewFetcher {
             connection.url.toString()
         }
 
-    private inline fun <T> withConnection(url: String, block: (HttpURLConnection) -> T): T {
+    private inline fun <T> withConnection(
+        url: String,
+        requestHeaders: Map<String, String> = emptyMap(),
+        block: (HttpURLConnection) -> T
+    ): T {
         val connection = openConnection(url)
+        requestHeaders.forEach { (name, value) ->
+            connection.setRequestProperty(name, value)
+        }
         return try {
             if(connection.responseCode == HttpTooManyRequests) {
                 throw connection.rateLimitedException(url)
@@ -958,6 +992,13 @@ object ClipboardLinkPreviewFetcher {
 
     private fun PreviewRequest.fetchPreview(): RemotePreviewData? =
         previewProvider().fetch(this)
+
+    private fun PreviewRequest.fetchPreview(pixivSessionId: String?): RemotePreviewData? =
+        if(this is PixivArtworkUrl) {
+            fetchPixivPreview(this, pixivSessionId)
+        } else {
+            fetchPreview()
+        }
 
     private fun PreviewRequest.prefersImagePreview(): Boolean =
         previewProvider().prefersImagePreview(this)
@@ -1321,6 +1362,21 @@ private fun JsonArray.pixivOriginalImageUrls(): List<String> =
             ?.trim()
             ?.takeIf { it.isNotBlank() }
     }
+
+private fun pixivAjaxHeaders(pixivSessionId: String?): Map<String, String> {
+    val cookie = pixivSessionId?.pixivSessionCookieHeader() ?: return emptyMap()
+    return mapOf("Cookie" to cookie)
+}
+
+private fun String.pixivSessionCookieHeader(): String? {
+    val sessionId = trim()
+        .split(';')
+        .firstOrNull { it.trim().startsWith("PHPSESSID=") }
+        ?.substringAfter('=')
+        ?.trim()
+        ?: trim()
+    return sessionId.takeIf { it.isNotBlank() }?.let { "PHPSESSID=$it" }
+}
 
 private fun JsonArray.firstObject(): JsonObject? =
     firstOrNull() as? JsonObject
