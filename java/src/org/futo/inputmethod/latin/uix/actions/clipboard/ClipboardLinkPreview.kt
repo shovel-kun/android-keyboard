@@ -1621,7 +1621,12 @@ private fun HtmlPreviewDocument.htmlPreviewMediaUrls(): List<String> =
 private fun String.redditPreviewMediaIdentity(): String =
     runCatching {
         val url = URL(this)
-        "${url.host.lowercase()}${url.path}"
+        val host = url.host.lowercase()
+        if(host == "i.redd.it" || host == "preview.redd.it") {
+            url.path.substringAfterLast('/')
+        } else {
+            "$host${url.path}"
+        }
     }.getOrDefault(this)
 
 private data class HtmlPreviewCard(

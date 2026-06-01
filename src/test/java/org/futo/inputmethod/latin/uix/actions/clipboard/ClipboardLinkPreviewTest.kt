@@ -472,6 +472,41 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parseRedditApiPreview_deduplicatesOriginalAndPreviewImage() {
+        val manifest = parseRedditApiPreviewForTest(
+            """
+            {
+              "data": {
+                "children": [
+                  {
+                    "data": {
+                      "id": "abc123",
+                      "title": "Single image post",
+                      "url_overridden_by_dest": "https://i.redd.it/one.jpg",
+                      "preview": {
+                        "images": [
+                          {
+                            "source": {
+                              "url": "https://preview.redd.it/one.jpg?width=960&amp;format=pjpg"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf("https://i.redd.it/one.jpg"),
+            manifest?.mediaItems?.map { it.url }
+        )
+    }
+
+    @Test
     fun parseRedditApiPreview_returnsVideoFallbackBeforePreviewImage() {
         val manifest = parseRedditApiPreviewForTest(
             """
