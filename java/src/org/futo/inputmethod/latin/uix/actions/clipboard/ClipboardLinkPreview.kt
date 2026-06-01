@@ -284,6 +284,7 @@ object ClipboardLinkPreviewFetcher {
     internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: Int? = null): List<String> =
         parsePixivPreviewData(
             LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
+            pagesResponse = null,
             PixivArtworkUrl(id = "123", pageIndex = pageIndex, language = "en")
         )?.mediaItems?.map { it.url }.orEmpty()
 
@@ -547,14 +548,18 @@ object ClipboardLinkPreviewFetcher {
 
     private fun fetchPixivPreview(artworkUrl: PixivArtworkUrl): RemotePreviewData? {
         val response = requestPixivPreview(artworkUrl) ?: return null
-        return parsePixivPreviewData(response, artworkUrl)
+        return parsePixivPreviewData(response.infoResponse, response.pagesResponse, artworkUrl)
     }
 
     private fun parsePixivPreviewData(
         response: JsonObject,
+        pagesResponse: JsonArray?,
         artworkUrl: PixivArtworkUrl
     ): RemotePreviewData? {
-        val imageUrls = response.stringArrayValue("image_proxy_urls")
+        val body = response.objectValue("body") ?: response
+        val imageUrls = pagesResponse?.pixivOriginalImageUrls()
+            ?: response.arrayValue("body")?.pixivOriginalImageUrls()
+            ?: response.stringArrayValue("image_proxy_urls")
         val mediaItems = imageUrls
             .prioritizeIndex(artworkUrl.pageIndex ?: 0)
             .map { (sourceIndex, url) ->
@@ -564,29 +569,31 @@ object ClipboardLinkPreviewFetcher {
                     mimeType = url.guessedClipboardMimeType()
                 )
             }
-        val description = response.stringValue("description")?.stripSimpleHtml()?.takeIf { it.isNotBlank() }
+        val description = (body.stringValue("description") ?: body.stringValue("illustComment"))
+            ?.stripSimpleHtml()
+            ?.takeIf { it.isNotBlank() }
         val metadata = ClipboardPreviewMetadata(
             provider = ClipboardPreviewProvider.PIXIV,
-            sourceUrl = response.stringValue("url") ?: artworkUrl.canonicalUrl(),
-            sourceId = response.stringValue("illust_id") ?: artworkUrl.id,
-            title = response.stringValue("title")?.trim()?.takeIf { it.isNotBlank() },
+            sourceUrl = body.stringValue("url") ?: artworkUrl.canonicalUrl(),
+            sourceId = body.stringValue("illust_id") ?: body.stringValue("illustId") ?: body.stringValue("id") ?: artworkUrl.id,
+            title = (body.stringValue("title") ?: body.stringValue("illustTitle"))?.trim()?.takeIf { it.isNotBlank() },
             bodyText = description,
-            authorName = response.stringValue("author_name"),
-            authorId = response.stringValue("author_id"),
-            createdAt = response.stringValue("create_date"),
+            authorName = body.stringValue("author_name") ?: body.stringValue("userName"),
+            authorId = body.stringValue("author_id") ?: body.stringValue("userId"),
+            createdAt = body.stringValue("create_date") ?: body.stringValue("createDate") ?: body.stringValue("uploadDate"),
             imageCount = imageUrls.size.takeIf { it > 0 },
             selectedImageIndex = (artworkUrl.pageIndex ?: 0).takeIf { imageUrls.isNotEmpty() },
-            tags = response.stringArrayValue("tags"),
+            tags = body.stringArrayValue("tags").ifEmpty { body.pixivTags() },
             stats = ClipboardPreviewStats(
-                likeCount = response.longValue("like_count"),
-                bookmarkCount = response.longValue("bookmark_count"),
-                viewCount = response.longValue("view_count"),
-                commentCount = response.longValue("comment_count")
+                likeCount = body.longValue("like_count") ?: body.longValue("likeCount"),
+                bookmarkCount = body.longValue("bookmark_count") ?: body.longValue("bookmarkCount"),
+                viewCount = body.longValue("view_count") ?: body.longValue("viewCount"),
+                commentCount = body.longValue("comment_count") ?: body.longValue("commentCount")
             ),
             flags = ClipboardPreviewFlags(
-                aiGenerated = response.booleanValue("ai_generated") == true,
-                animated = response.booleanValue("is_ugoira") == true,
-                restricted = (response.longValue("x_restrict") ?: 0L) > 0L
+                aiGenerated = body.booleanValue("ai_generated") == true || body.longValue("aiType") == 2L,
+                animated = body.booleanValue("is_ugoira") == true || body.longValue("illustType") == 2L,
+                restricted = (body.longValue("x_restrict") ?: body.longValue("xRestrict") ?: 0L) > 0L
             )
         ).nullIfEmpty()
 
@@ -680,9 +687,14 @@ object ClipboardLinkPreviewFetcher {
     private fun List<ClipboardLinkPreviewMedia>.withoutTwitterStatusPageUrls(): List<ClipboardLinkPreviewMedia> =
         filterNot { parseTwitterStatusUrl(it.url) != null }
 
-    private fun requestPixivPreview(artworkUrl: PixivArtworkUrl): JsonObject? {
-        val requestUrl = "https://www.phixiv.net/api/info?id=${artworkUrl.id}&language=${artworkUrl.language}"
-        return requestJsonObject(requestUrl, MaxPreviewJsonBytes)
+    private fun requestPixivPreview(artworkUrl: PixivArtworkUrl): PixivPreviewResponse? {
+        val infoUrl = "https://www.pixiv.net/ajax/illust/${artworkUrl.id}?lang=${artworkUrl.language}"
+        val pagesUrl = "https://www.pixiv.net/ajax/illust/${artworkUrl.id}/pages?lang=${artworkUrl.language}"
+        val infoResponse = requestJsonObject(infoUrl, MaxPreviewJsonBytes)
+        val pagesResponse = runPreviewRequestCatching {
+            requestJsonObject(pagesUrl, MaxPreviewJsonBytes).arrayValue("body")
+        }
+        return PixivPreviewResponse(infoResponse, pagesResponse)
     }
 
     private fun fetchRedditPreview(redditUrl: RedditPostUrl): RemotePreviewData? {
@@ -928,6 +940,9 @@ object ClipboardLinkPreviewFetcher {
         connection.readTimeout = PreviewReadTimeoutMillis
         connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) FutoKeyboardLinkPreview/1.0")
         connection.setRequestProperty("Accept", "application/json,image/*,video/*,*/*")
+        if(connection.url.host.endsWith(".pximg.net")) {
+            connection.setRequestProperty("Referer", "https://www.pixiv.net/")
+        }
         return connection
     }
 
@@ -1288,6 +1303,25 @@ private fun JsonObject.stringArrayValue(key: String): List<String> =
         }?.trim()?.takeIf { it.isNotBlank() }
     }.orEmpty()
 
+private fun JsonObject.pixivTags(): List<String> =
+    objectValue("tags")
+        ?.arrayValue("tags")
+        ?.mapNotNull { (it as? JsonObject)?.stringValue("tag")?.trim()?.takeIf { tag -> tag.isNotBlank() } }
+        .orEmpty()
+
+private fun JsonArray.pixivOriginalImageUrls(): List<String> =
+    mapNotNull { page ->
+        (page as? JsonObject)
+            ?.objectValue("urls")
+            ?.let { urls ->
+                urls.stringValue("original")
+                    ?: urls.stringValue("regular")
+                    ?: urls.stringValue("small")
+            }
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
 private fun JsonArray.firstObject(): JsonObject? =
     firstOrNull() as? JsonObject
 
@@ -1474,6 +1508,11 @@ private data class PixivArtworkUrl(
 ) : PreviewRequest {
     fun canonicalUrl(): String = "https://www.phixiv.net/$language/artworks/$id"
 }
+
+private data class PixivPreviewResponse(
+    val infoResponse: JsonObject,
+    val pagesResponse: JsonArray?
+)
 
 private data class RedditPostUrl(
     val pathSegments: List<String>,

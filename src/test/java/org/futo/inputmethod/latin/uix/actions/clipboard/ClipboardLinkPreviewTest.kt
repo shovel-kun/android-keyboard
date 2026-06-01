@@ -88,6 +88,40 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parsePixivPreviewMediaUrls_readsPixivPagesApi() {
+        val urls = parsePixivPreviewMediaUrlsForTest(
+            """
+            {
+              "error": false,
+              "message": "",
+              "body": [
+                {
+                  "urls": {
+                    "regular": "https://i.pximg.net/img-master/img/2026/01/01/00/00/00/123_p0_master1200.jpg",
+                    "original": "https://i.pximg.net/img-original/img/2026/01/01/00/00/00/123_p0.png"
+                  }
+                },
+                {
+                  "urls": {
+                    "regular": "https://i.pximg.net/img-master/img/2026/01/01/00/00/00/123_p1_master1200.jpg",
+                    "original": "https://i.pximg.net/img-original/img/2026/01/01/00/00/00/123_p1.jpg"
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf(
+                "https://i.pximg.net/img-original/img/2026/01/01/00/00/00/123_p0.png",
+                "https://i.pximg.net/img-original/img/2026/01/01/00/00/00/123_p1.jpg"
+            ),
+            urls
+        )
+    }
+
+    @Test
     fun parseTwitterApiPreviewMediaUrls_returnsAllPhotos() {
         val urls = parseTwitterApiPreviewMediaUrlsForTest(
             """
