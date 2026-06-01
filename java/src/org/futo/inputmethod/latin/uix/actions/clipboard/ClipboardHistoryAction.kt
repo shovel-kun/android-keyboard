@@ -286,7 +286,7 @@ val ClipboardHistoryAction = Action(
                 name = R.string.action_clipboard_manager_settings_reddit_access_token,
                 subtitle = R.string.action_clipboard_manager_settings_reddit_access_token_subtitle,
                 component = {
-                    val accessToken = useDataStore(ClipboardRedditAccessToken)
+                    val redditCredential = useDataStore(ClipboardRedditAccessToken)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -294,9 +294,9 @@ val ClipboardHistoryAction = Action(
                     ) {
                         Text(stringResource(R.string.action_clipboard_manager_settings_reddit_access_token))
                         TextField(
-                            value = accessToken.value,
-                            onValueChange = accessToken.setValue,
-                            placeholder = { Text("bearer token") },
+                            value = redditCredential.value,
+                            onValueChange = redditCredential.setValue,
+                            placeholder = { Text("client id or Bearer token") },
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

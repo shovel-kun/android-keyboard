@@ -104,8 +104,8 @@
     <string name="action_clipboard_manager_settings_limit_mobile_data_subtitle">Wait for Wi-Fi or unmetered network before fetching link previews and archive media automatically</string>
     <string name="action_clipboard_manager_settings_pixiv_session_id">Pixiv session ID</string>
     <string name="action_clipboard_manager_settings_pixiv_session_id_subtitle">Optional PHPSESSID used only for Pixiv preview requests</string>
-    <string name="action_clipboard_manager_settings_reddit_access_token">Reddit access token</string>
-    <string name="action_clipboard_manager_settings_reddit_access_token_subtitle">Optional bearer token used only for Reddit preview requests</string>
+    <string name="action_clipboard_manager_settings_reddit_access_token">Reddit client ID</string>
+    <string name="action_clipboard_manager_settings_reddit_access_token_subtitle">Optional Reddit installed app client ID or bearer token used only for Reddit preview requests</string>
     <string name="action_clipboard_manager_settings_save_sensitive_clips">Save sensitive clips</string>
     <string name="action_clipboard_manager_settings_save_sensitive_clips_subtitle">If enabled, it will save items from password managers, incognito windows, etc</string>
     <string name="action_clipboard_manager_settings_list_layout">Use vertical list layout instead of grid</string>

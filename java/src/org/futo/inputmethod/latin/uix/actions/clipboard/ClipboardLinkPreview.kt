@@ -3,6 +3,7 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import android.content.Context
 import android.os.Build
 import android.text.Html
+import android.util.Base64
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -161,6 +162,8 @@ private const val PreviewReadTimeoutMillis = 10_000
 private const val MaxPreviewJsonBytes = 1_000_000
 private const val MaxPreviewMediaBytes = 50_000_000
 private const val HttpTooManyRequests = 429
+private const val RedditInstalledClientDeviceId = "android_keyboard_preview"
+private const val RedditUserAgent = "android:org.futo.inputmethod.latin:clipboard-preview (by /u/EbisuzawaKurumi_)"
 internal const val DefaultPreviewRateLimitCooldownMillis = 15L * 60L * 1000L
 
 object ClipboardLinkPreviewFetcher {
@@ -745,9 +748,13 @@ object ClipboardLinkPreviewFetcher {
         redditUrl: RedditPostUrl,
         redditAccessToken: String?
     ): RemotePreviewData? {
-        redditAccessToken?.redditBearerTokenHeader()?.let { headers ->
+        redditAccessToken?.takeIf { it.isNotBlank() }?.let { credential ->
             runPreviewRequestCatching {
-                requestJsonObject(redditUrl.oauthPostUrl(), MaxPreviewJsonBytes, headers)
+                requestJsonObject(
+                    redditUrl.oauthPostUrl(),
+                    MaxPreviewJsonBytes,
+                    credential.redditOAuthHeaders()
+                )
             }?.let { response ->
                 parseRedditApiPreview(response, redditUrl)
             }?.let { return it }
@@ -1500,21 +1507,49 @@ private fun pixivAjaxHeaders(pixivSessionId: String?): Map<String, String> {
     return mapOf("Cookie" to cookie)
 }
 
-private fun String.redditBearerTokenHeader(): Map<String, String>? {
-    val token = trim()
-        .removePrefix("Bearer ")
-        .removePrefix("bearer ")
-        .trim()
-        .takeIf { it.isNotBlank() }
-        ?: return null
+private fun String.redditOAuthHeaders(): Map<String, String> {
+    val credential = trim()
+    val token = if(credential.startsWith("Bearer ", ignoreCase = true)) {
+        credential.substringAfter(' ').trim()
+    } else {
+        requestRedditInstalledClientAccessToken(credential)
+    }
     return mapOf(
         "Authorization" to "bearer $token",
-        "User-Agent" to "android:org.futo.inputmethod.latin:clipboard-preview (by /u/local-user)"
+        "User-Agent" to RedditUserAgent
     )
 }
 
 private fun redditEmbedHeaders(): Map<String, String> =
-    mapOf("User-Agent" to "android:org.futo.inputmethod.latin:clipboard-preview (by /u/local-user)")
+    mapOf("User-Agent" to RedditUserAgent)
+
+private fun requestRedditInstalledClientAccessToken(clientId: String): String {
+    val body = "grant_type=${URLEncoder.encode("https://oauth.reddit.com/grants/installed_client", "UTF-8")}" +
+        "&device_id=${URLEncoder.encode(RedditInstalledClientDeviceId, "UTF-8")}"
+    val auth = Base64.encodeToString("$clientId:".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+    val connection = URL("https://www.reddit.com/api/v1/access_token").openConnection() as HttpURLConnection
+    connection.instanceFollowRedirects = true
+    connection.connectTimeout = PreviewConnectTimeoutMillis
+    connection.readTimeout = PreviewReadTimeoutMillis
+    connection.requestMethod = "POST"
+    connection.doOutput = true
+    connection.setRequestProperty("Authorization", "Basic $auth")
+    connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+    connection.setRequestProperty("User-Agent", RedditUserAgent)
+    val response = try {
+        connection.outputStream.use { output ->
+            output.write(body.toByteArray(Charsets.UTF_8))
+        }
+        connection.inputStream.use { stream ->
+            LinkPreviewJson.parseToJsonElement(stream.readStringCapped(MaxPreviewJsonBytes)).jsonObject
+        }
+    } finally {
+        connection.disconnect()
+    }
+    return response.stringValue("access_token")
+        ?.takeIf { it.isNotBlank() }
+        ?: error("Reddit OAuth response did not include an access token")
+}
 
 private fun String.redditPermalinkUrl(): String =
     if(startsWith("http://") || startsWith("https://")) this else "https://www.reddit.com${this}"
