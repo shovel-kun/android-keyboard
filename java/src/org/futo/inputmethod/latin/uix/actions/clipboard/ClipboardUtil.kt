@@ -3,10 +3,12 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.ImageDecoder
 import android.graphics.LinearGradient
 import android.media.MediaMetadataRetriever
 import android.graphics.Paint
 import android.graphics.Shader
+import android.os.Build
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import java.io.File
@@ -34,52 +36,31 @@ object ClipboardUtil {
         return when {
             mimeType?.startsWith("video/") == true || mediaFile.isClipboardVideoFile() ->
                 generateVideoThumbnail(mediaFile, thumbFile)
+            mimeType == "image/gif" || mediaFile.isClipboardGifFile() ->
+                generateGifThumbnail(mediaFile, thumbFile)
             else ->
                 generateImageThumbnail(mediaFile, thumbFile)
         }
     }
 
-    private fun generateImageThumbnail(mediaFile: File, thumbFile: File): File? {
-        var bitmap: Bitmap? = null
+    private fun writeSquareImageThumbnail(bitmap: Bitmap, thumbFile: File): File? {
+        val cropSize = min(bitmap.width, bitmap.height)
+        if (cropSize <= 0) return null
+
+        val cropX = (bitmap.width - cropSize) / 2
+        val cropY = (bitmap.height - cropSize) / 2
         var croppedBitmap: Bitmap? = null
+        var finalBmp: Bitmap? = null
+
         try {
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(mediaFile.absolutePath, options)
-
-            val (w, h) = options.outWidth to options.outHeight
-            if (w <= 0 || h <= 0) return null
-
-            val cropSize = min(w, h)
-            val cropX = (w - cropSize) / 2
-            val cropY = (h - cropSize) / 2
-
-            val maxSide = 384
-            var sample = 1
-            while (cropSize / sample > maxSide) sample *= 2
-
-            options.inJustDecodeBounds = false
-            options.inSampleSize = sample
-
-            bitmap = BitmapFactory.decodeFile(mediaFile.absolutePath, options) ?: return null
-
-            val scaledCropX = cropX / sample
-            val scaledCropY = cropY / sample
-            val scaledCropSize = cropSize / sample
-
-            croppedBitmap = if (scaledCropSize == bitmap.width && scaledCropSize == bitmap.height) {
-                // Already square, no crop needed
+            croppedBitmap = if (cropSize == bitmap.width && cropSize == bitmap.height) {
                 bitmap
             } else {
-                Bitmap.createBitmap(
-                    bitmap,
-                    scaledCropX.coerceIn(0, bitmap.width - scaledCropSize),
-                    scaledCropY.coerceIn(0, bitmap.height - scaledCropSize),
-                    scaledCropSize.coerceAtMost(bitmap.width),
-                    scaledCropSize.coerceAtMost(bitmap.height)
-                )
+                Bitmap.createBitmap(bitmap, cropX, cropY, cropSize, cropSize)
             }
 
-            val finalBmp = if (croppedBitmap.width != maxSide || croppedBitmap.height != maxSide) {
+            val maxSide = 384
+            finalBmp = if (croppedBitmap.width != maxSide || croppedBitmap.height != maxSide) {
                 croppedBitmap.scale(maxSide, maxSide)
             } else {
                 croppedBitmap
@@ -90,13 +71,69 @@ object ClipboardUtil {
             }
 
             return thumbFile
+        } finally {
+            if (finalBmp !== croppedBitmap && finalBmp !== bitmap) {
+                finalBmp?.recycle()
+            }
+            if (croppedBitmap !== bitmap) {
+                croppedBitmap?.recycle()
+            }
+        }
+    }
+
+    private fun generateImageThumbnail(mediaFile: File, thumbFile: File): File? {
+        var bitmap: Bitmap? = null
+        try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(mediaFile.absolutePath, options)
+
+            val (w, h) = options.outWidth to options.outHeight
+            if (w <= 0 || h <= 0) return null
+
+            val cropSize = min(w, h)
+
+            val maxSide = 384
+            var sample = 1
+            while (cropSize / sample > maxSide) sample *= 2
+
+            options.inJustDecodeBounds = false
+            options.inSampleSize = sample
+
+            bitmap = BitmapFactory.decodeFile(mediaFile.absolutePath, options) ?: return null
+
+            return writeSquareImageThumbnail(bitmap, thumbFile)
         } catch (e: Exception) {
             thumbFile.delete()
             return null
         } finally {
-            if (croppedBitmap !== bitmap) {
-                croppedBitmap?.recycle()
-            }
+            bitmap?.recycle()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun generateGifThumbnail(mediaFile: File, thumbFile: File): File? {
+        var bitmap: Bitmap? = null
+        try {
+            bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                ImageDecoder.decodeBitmap(ImageDecoder.createSource(mediaFile)) { decoder, _, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                }
+            } else {
+                android.graphics.Movie.decodeFile(mediaFile.absolutePath)?.let { movie ->
+                    val width = movie.width().takeIf { it > 0 } ?: return null
+                    val height = movie.height().takeIf { it > 0 } ?: return null
+                    createBitmap(width, height).also {
+                        movie.setTime(0)
+                        movie.draw(Canvas(it), 0f, 0f)
+                    }
+                }
+            } ?: return null
+
+            return writeSquareImageThumbnail(bitmap, thumbFile)
+        } catch (e: Exception) {
+            thumbFile.delete()
+            return null
+        } finally {
             bitmap?.recycle()
         }
     }
