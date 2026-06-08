@@ -167,7 +167,6 @@ val ClipboardHistoryAction = Action(
                 }
                 with(rowScope) {
                     ClipboardHistoryActionTitleBar(
-                        manager = manager,
                         clipboardHistoryManager = clipboardHistoryManager,
                         unlocked = unlocked,
                         searchActive = clipboardSearchActive,

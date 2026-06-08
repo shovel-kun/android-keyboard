@@ -59,14 +59,11 @@ internal fun RowScope.ClipboardHistoryActionToolbarControls(
 
 @Composable
 internal fun RowScope.ClipboardHistoryActionTitleBar(
-    manager: KeyboardManagerForAction,
     clipboardHistoryManager: ClipboardHistoryManager,
     unlocked: Boolean,
     searchActive: MutableState<Boolean>,
     searchText: MutableState<String>
 ) {
-    val context = LocalContext.current
-    val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
     val uiState = rememberClipboardUiState(clipboardHistoryManager)
     if(!uiState.historyEnabled || !unlocked || !uiState.historyVisible) return
 
@@ -92,53 +89,6 @@ internal fun RowScope.ClipboardHistoryActionTitleBar(
         Icon(
             Icons.Default.Search,
             contentDescription = stringResource(R.string.action_clipboard_manager_search)
-        )
-    }
-
-    IconButton(onClick = {
-        val numUnpinnedItems = clipboardHistoryManager.clipboardHistory.count { !it.pinned }
-        when {
-            clipboardHistoryManager.clipboardHistory.isEmpty() -> manager.requestDialog(
-                context.getString(R.string.action_clipboard_manager_disable_text),
-                listOf(
-                    DialogRequestItem(context.getString(R.string.action_clipboard_manager_cancel_action_button)) {},
-                    DialogRequestItem(context.getString(R.string.action_clipboard_manager_disable_button)) {
-                        clipboardHistory.setValue(false)
-                    },
-                ),
-                {}
-            )
-
-            numUnpinnedItems == 0 -> manager.requestDialog(
-                context.getString(R.string.action_clipboard_manager_unpin_all_items_text),
-                listOf(
-                    DialogRequestItem(context.getString(R.string.action_clipboard_manager_cancel_action_button)) {},
-                    DialogRequestItem(context.getString(R.string.action_clipboard_manager_unpin_all_items_button)) {
-                        clipboardHistoryManager.clipboardHistory.toList().forEach {
-                            if(it.pinned) clipboardHistoryManager.onTogglePin(it)
-                        }
-                    },
-                ),
-                {}
-            )
-
-            else -> manager.requestDialog(
-                context.getString(R.string.action_clipboard_manager_clear_unpinned_items_text),
-                listOf(
-                    DialogRequestItem(context.getString(R.string.action_clipboard_manager_cancel_action_button)) {},
-                    DialogRequestItem(context.getString(R.string.action_clipboard_manager_clear_unpinned_items_button)) {
-                        clipboardHistoryManager.clipboardHistory.toList().forEach {
-                            if(!it.pinned) clipboardHistoryManager.onRemove(it)
-                        }
-                    },
-                ),
-                {}
-            )
-        }
-    }) {
-        Icon(
-            painter = painterResource(id = R.drawable.close),
-            contentDescription = stringResource(R.string.action_clipboard_manager_clear_clipboard)
         )
     }
 }
