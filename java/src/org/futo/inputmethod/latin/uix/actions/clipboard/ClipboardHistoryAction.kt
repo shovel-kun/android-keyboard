@@ -162,7 +162,9 @@ val ClipboardHistoryAction = Action(
 
             @Composable
             override fun WindowTitleBar(rowScope: RowScope) {
-                super.WindowTitleBar(rowScope)
+                if(!clipboardSearchActive.value) {
+                    super.WindowTitleBar(rowScope)
+                }
                 with(rowScope) {
                     ClipboardHistoryActionTitleBar(
                         manager = manager,
