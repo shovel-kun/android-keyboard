@@ -82,6 +82,41 @@ internal data class ClipboardPreviewCandidate(
     val prefersImagePreview: Boolean
 )
 
+internal data class PhixivArtworkPasteUrl(
+    val baseUrl: String,
+    val pageIndex: Int?
+)
+
+internal class PhixivArtworkPasteSession {
+    private val lastPageByBaseUrl = mutableMapOf<String, Int>()
+
+    fun textForPaste(rawText: String): String {
+        val trimmed = rawText.trim()
+        val spoilerWrapped = trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4
+        val text = if(spoilerWrapped) trimmed.substring(2, trimmed.length - 2).trim() else rawText
+        val artworkUrl = ClipboardLinkPreviewFetcher.phixivArtworkPasteUrl(text)
+            ?: return ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
+        val startingPage = artworkUrl.pageIndex ?: 1
+        val page = lastPageByBaseUrl[artworkUrl.baseUrl]
+            ?.let { maxOf(it + 1, startingPage) }
+            ?: startingPage
+
+        lastPageByBaseUrl[artworkUrl.baseUrl] = page
+        val pasteText = if(page <= 1) artworkUrl.baseUrl else "${artworkUrl.baseUrl}/$page"
+        return if(spoilerWrapped) "||$pasteText||" else pasteText
+    }
+
+    fun wrappedTextForPaste(rawText: String): String {
+        val text = textForPaste(rawText)
+        val trimmed = text.trim()
+        return if(trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4) {
+            text
+        } else {
+            "||$text||"
+        }
+    }
+}
+
 sealed interface ClipboardPreviewFetchFailure {
     data class RateLimited(
         val provider: ClipboardPreviewProvider,
@@ -181,6 +216,17 @@ object ClipboardLinkPreviewFetcher {
         if(candidate.provider != ClipboardPreviewProvider.REDDIT) return rawText
 
         return candidate.metadata.sourceUrl ?: rawText
+    }
+
+    internal fun phixivArtworkPasteUrl(rawText: String): PhixivArtworkPasteUrl? {
+        val trimmed = rawText.trim()
+        if(!LinkPreviewUrlRegex.matches(trimmed)) return null
+
+        val artworkUrl = parsePixivArtworkUrl(trimmed) ?: return null
+        return PhixivArtworkPasteUrl(
+            baseUrl = artworkUrl.canonicalUrl(),
+            pageIndex = artworkUrl.pageIndex
+        )
     }
 
     fun prefersImagePreview(rawText: String): Boolean =

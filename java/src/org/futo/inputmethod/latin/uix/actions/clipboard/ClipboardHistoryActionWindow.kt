@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -105,6 +106,7 @@ internal fun ClipboardHistoryActionWindowContents(
     val context = LocalContext.current
     val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
     val uiState = rememberClipboardUiState(clipboardHistoryManager)
+    val phixivPasteSession = remember { PhixivArtworkPasteSession() }
 
     LaunchedEffect(unlocked, uiState) {
         if(unlocked && uiState.shouldRefreshPreviews) {
@@ -236,7 +238,7 @@ internal fun ClipboardHistoryActionWindowContents(
                         onPaste = {
                             when {
                                 it.text != null -> manager.typeText(
-                                    ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(it.text)
+                                    phixivPasteSession.textForPaste(it.text)
                                 )
                                 it.backingFile != null && it.mimeTypes.isNotEmpty() -> {
                                     val uri = createClipboardContentUri(
@@ -290,7 +292,7 @@ internal fun ClipboardHistoryActionWindowContents(
                             when {
                                 clipEntry.uri != null -> manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
                                 clipEntry.text != null -> manager.typeText(
-                                    "||${ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(clipEntry.text)}||"
+                                    phixivPasteSession.wrappedTextForPaste(clipEntry.text)
                                 )
                             }
                             clipboardHistoryManager.onPaste(clipEntry)
