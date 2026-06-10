@@ -341,8 +341,8 @@ class ClipboardLinkPreviewTest {
         val url = "https://www.phixiv.net/en/artworks/39832455"
 
         assertEquals(url, session.textForPaste(url))
-        assertEquals("$url/2", session.textForPaste(url))
-        assertEquals("$url/3", session.textForPaste(url))
+        assertEquals("\n$url/2", session.textForPaste(url))
+        assertEquals("\n$url/3", session.textForPaste(url))
     }
 
     @Test
@@ -351,8 +351,8 @@ class ClipboardLinkPreviewTest {
         val url = "https://www.phixiv.net/en/artworks/39832455"
 
         assertEquals(url, session.textForPaste(url))
-        assertEquals("||$url/2||", session.wrappedTextForPaste(url))
-        assertEquals("$url/3", session.textForPaste(url))
+        assertEquals("\n||$url/2||", session.wrappedTextForPaste(url))
+        assertEquals("\n$url/3", session.textForPaste(url))
     }
 
     @Test
@@ -361,9 +361,9 @@ class ClipboardLinkPreviewTest {
         val url = "https://www.phixiv.net/en/artworks/39832455"
 
         assertEquals("||$url||", session.textForPaste("||$url||"))
-        assertEquals("$url/2", session.textForPaste(url))
-        assertEquals("||$url/3||", session.textForPaste("||$url||"))
-        assertEquals("||$url/4||", session.wrappedTextForPaste("||$url||"))
+        assertEquals("\n$url/2", session.textForPaste(url))
+        assertEquals("\n||$url/3||", session.textForPaste("||$url||"))
+        assertEquals("\n||$url/4||", session.wrappedTextForPaste("||$url||"))
     }
 
     @Test
@@ -372,7 +372,7 @@ class ClipboardLinkPreviewTest {
         val baseUrl = "https://www.phixiv.net/en/artworks/39832455"
 
         assertEquals("$baseUrl/2", session.textForPaste("$baseUrl/2"))
-        assertEquals("$baseUrl/3", session.textForPaste("$baseUrl/2"))
+        assertEquals("\n$baseUrl/3", session.textForPaste("$baseUrl/2"))
     }
 
     @Test

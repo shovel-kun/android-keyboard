@@ -97,22 +97,26 @@ internal class PhixivArtworkPasteSession {
         val artworkUrl = ClipboardLinkPreviewFetcher.phixivArtworkPasteUrl(text)
             ?: return ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
         val startingPage = artworkUrl.pageIndex ?: 1
-        val page = lastPageByBaseUrl[artworkUrl.baseUrl]
+        val lastPage = lastPageByBaseUrl[artworkUrl.baseUrl]
+        val page = lastPage
             ?.let { maxOf(it + 1, startingPage) }
             ?: startingPage
 
         lastPageByBaseUrl[artworkUrl.baseUrl] = page
         val pasteText = if(page <= 1) artworkUrl.baseUrl else "${artworkUrl.baseUrl}/$page"
-        return if(spoilerWrapped) "||$pasteText||" else pasteText
+        val wrappedPasteText = if(spoilerWrapped) "||$pasteText||" else pasteText
+        return if(lastPage != null) "\n$wrappedPasteText" else wrappedPasteText
     }
 
     fun wrappedTextForPaste(rawText: String): String {
         val text = textForPaste(rawText)
-        val trimmed = text.trim()
+        val prefix = if(text.startsWith("\n")) "\n" else ""
+        val body = text.removePrefix("\n")
+        val trimmed = body.trim()
         return if(trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4) {
             text
         } else {
-            "||$text||"
+            "$prefix||$body||"
         }
     }
 }
