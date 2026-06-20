@@ -9,16 +9,19 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.net.toUri
-import androidx.lifecycle.LifecycleCoroutineScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.futo.inputmethod.latin.uix.PersistentActionState
 import org.futo.inputmethod.latin.uix.QuickClip
@@ -284,10 +287,18 @@ internal fun upsertClipboardMediaEntry(
     entries.add(entry.copy(pinned = entry.pinned || wasPinned))
 }
 
-class ClipboardHistoryManager(
-    val context: Context,
-    val coroutineScope: LifecycleCoroutineScope
+class ClipboardHistoryManager private constructor(
+    val context: Context
 ) : PersistentActionState {
+    // Process-lifetime scope, owned by this (singleton) manager rather than the IME
+    // service's lifecycleScope, so in-flight work and the loaded state survive the
+    // service being destroyed and recreated on an input-method switch.
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    // Serializes clipboard loads so the initial load and an unlock-triggered load
+    // cannot interleave their clear/repopulate of the in-memory lists.
+    private val loadMutex = Mutex()
+
     var clipboardIOFailureReason = ""
     val clipboardIOFailure = mutableStateOf(false)
     val previewLoadingByText = mutableStateMapOf<String, Boolean>()
@@ -300,6 +311,23 @@ class ClipboardHistoryManager(
 
     companion object {
         val onClipboardImportedFlow = MutableSharedFlow<File>()
+
+        @Volatile
+        private var instance: ClipboardHistoryManager? = null
+
+        /**
+         * Returns the process-wide ClipboardHistoryManager, creating it on first use.
+         * Holding a single instance built from the application context (with its own
+         * process-lifetime scope) avoids reloading and reconciling the entire clipboard
+         * every time the IME service is destroyed and recreated, e.g. on an input-method
+         * switch. Safe to call from the keyboard service or the settings activity.
+         */
+        fun getInstance(context: Context): ClipboardHistoryManager =
+            instance ?: synchronized(this) {
+                instance ?: ClipboardHistoryManager(context.applicationContext).also {
+                    instance = it
+                }
+            }
     }
 
     private val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -340,6 +368,9 @@ class ClipboardHistoryManager(
     )
 
     override suspend fun onDeviceUnlocked() {
+        // The singleton's init already loads on construction; only load here if that
+        // hasn't happened yet (e.g. the manager was built while still device-locked).
+        if(clipboardLoaded) return
         loadClipboard()
     }
 
@@ -1317,8 +1348,11 @@ class ClipboardHistoryManager(
     }
 
     override fun close() {
-        clipboardManager.removePrimaryClipChangedListener(primaryClipChangedListener)
-        screenshotHelper.onDestroy()
+        // No-op: this manager is a process-wide singleton, so it must NOT release its
+        // clipboard-change listener or screenshot observer when an individual IME
+        // service instance is destroyed (UixManager.onDestroy calls close() on every
+        // teardown). The listeners live for the process lifetime; the singleton is only
+        // reclaimed when the process itself dies.
     }
 
     private fun currentPreviewState(): ClipboardPreviewState =
@@ -1425,7 +1459,11 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 """))
     }
 
-    private suspend fun loadClipboard() = withContext(ClipboardIOContext) {
+    private suspend fun loadClipboard() = loadMutex.withLock {
+        loadClipboardLocked()
+    }
+
+    private suspend fun loadClipboardLocked() = withContext(ClipboardIOContext) {
         if(!context.isDirectBootUnlocked) {
             publishClipboardLoadFailure("Direct Boot not unlocked")
             return@withContext

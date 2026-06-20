@@ -130,7 +130,7 @@ val ClipboardHistoryAction = Action(
     simplePressImpl = null,
     canShowKeyboard = true,
     persistentState = { manager ->
-        ClipboardHistoryManager(manager.getContext(), manager.getLifecycleScope())
+        ClipboardHistoryManager.getInstance(manager.getContext())
     },
     altPressImpl = PasteAction.simplePressImpl,
     persistentStateInitialization = PersistentStateInitialization.OnKeyboardLoad,

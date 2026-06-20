@@ -13,7 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleCoroutineScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
@@ -36,7 +36,7 @@ internal fun shouldObserveScreenshots(
 
 class ScreenshotHelper(
     private val context: Context,
-    private val lifecycleScope: LifecycleCoroutineScope,
+    private val lifecycleScope: CoroutineScope,
     private val listener: ScreenshotListener
 ) {
     companion object {

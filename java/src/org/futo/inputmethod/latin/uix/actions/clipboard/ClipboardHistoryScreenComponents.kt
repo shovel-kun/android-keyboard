@@ -82,8 +82,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.lifecycleScope
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -490,21 +488,12 @@ internal sealed interface DeleteRequest {
 @Composable
 internal fun rememberClipboardHistoryManager(): ClipboardHistoryManager {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val manager = remember(context, lifecycleOwner) {
-        ClipboardHistoryManager(context, lifecycleOwner.lifecycleScope)
+    // Shares the same process-wide singleton as the keyboard. Intentionally no
+    // DisposableEffect teardown here: leaving the settings screen must not close or
+    // clean up the instance the live keyboard is still using.
+    return remember(context) {
+        ClipboardHistoryManager.getInstance(context)
     }
-
-    DisposableEffect(manager, lifecycleOwner) {
-        onDispose {
-            manager.close()
-            lifecycleOwner.lifecycleScope.launch {
-                manager.cleanUp()
-            }
-        }
-    }
-
-    return manager
 }
 
 internal fun copyTextClip(context: Context, entry: ClipboardEntry) {
