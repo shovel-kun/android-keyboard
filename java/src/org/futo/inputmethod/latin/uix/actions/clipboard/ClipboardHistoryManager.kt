@@ -557,37 +557,43 @@ class ClipboardHistoryManager(
         refreshMissingLinkPreviews(forceArchiveBackfill = true)
     }
 
-    suspend fun reconcileClipboardStorage() = withContext(Dispatchers.Main) {
-        val deduplicated = deduplicateClipboardEntries(clipboardHistory)
-        if(deduplicated.size < clipboardHistory.size || deduplicated != clipboardHistory.toList()) {
-            clipboardHistory.clear()
-            clipboardHistory.addAll(deduplicated)
-        }
+    suspend fun reconcileClipboardStorage() = withContext(ClipboardIOContext) {
+        // Enumerate the clipboard media directory once on a background thread rather
+        // than issuing a File.isFile stat per entry/preview-media on the UI thread.
+        // Both checks below only ever target context.clipboardDir, so membership in
+        // this set is equivalent to the previous per-file .isFile checks.
+        val existingMediaNames = existingClipboardMediaFileNames(context.clipboardDir)
 
-        clipboardHistory.removeAll {
-            it.backingFile != null && it.getFile(context)?.isFile != true
-        }
+        withContext(Dispatchers.Main) {
+            val deduplicated = deduplicateClipboardEntries(clipboardHistory)
+            if(deduplicated.size < clipboardHistory.size || deduplicated != clipboardHistory.toList()) {
+                clipboardHistory.clear()
+                clipboardHistory.addAll(deduplicated)
+            }
 
-        for(i in clipboardHistory.indices) {
-            val entry = clipboardHistory[i]
-            val retainedPreviewMedia = entry.previewMedia()
-                .filter {
-                    File(context.clipboardDir, it.fileName).isFile == true
+            clipboardHistory.removeAll {
+                it.backingFile != null && it.backingFile !in existingMediaNames
+            }
+
+            for(i in clipboardHistory.indices) {
+                val entry = clipboardHistory[i]
+                val retainedPreviewMedia = entry.previewMedia()
+                    .filter { it.fileName in existingMediaNames }
+                if(retainedPreviewMedia.size != entry.previewMedia().size) {
+                    clipboardHistory[i] = entry.copy(
+                        previewImageFile = null,
+                        previewMediaFiles = retainedPreviewMedia,
+                        previewFetchStatus = if(
+                            entry.previewFetchStatus == ClipboardPreviewFetchStatus.Success &&
+                            entry.previewText == null &&
+                            retainedPreviewMedia.isEmpty()
+                        ) {
+                            ClipboardPreviewFetchStatus.NeverAttempted
+                        } else {
+                            entry.previewFetchStatus
+                        }
+                    )
                 }
-            if(retainedPreviewMedia.size != entry.previewMedia().size) {
-                clipboardHistory[i] = entry.copy(
-                    previewImageFile = null,
-                    previewMediaFiles = retainedPreviewMedia,
-                    previewFetchStatus = if(
-                        entry.previewFetchStatus == ClipboardPreviewFetchStatus.Success &&
-                        entry.previewText == null &&
-                        retainedPreviewMedia.isEmpty()
-                    ) {
-                        ClipboardPreviewFetchStatus.NeverAttempted
-                    } else {
-                        entry.previewFetchStatus
-                    }
-                )
             }
         }
 
@@ -1469,10 +1475,13 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
 
             publishClipboardLoaded(activeEntries, loadedArchives, migratedTombstones)
             recoverArchivesFromLocalPreviewEntries()
-            if(activeEntries != loadedEntries) {
-                saveClipboard(reconcileBeforeSave = true)
-            }
+            // Reconcile once, then persist the already-reconciled list. Previously this
+            // saved with reconcileBeforeSave=true AND called reconcile again below, running
+            // the (now off-main) reconcile twice on first-run/migration loads.
             reconcileClipboardStorage()
+            if(activeEntries != loadedEntries) {
+                saveClipboard(reconcileBeforeSave = false)
+            }
             refreshMissingLinkPreviews(
                 forceArchiveBackfill = false,
                 boundedPreviewFetches = true
@@ -2334,7 +2343,9 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             .forEach { it.delete() }
     }
 
-    private fun reconcileArchiveStorage() {
+    // Callers invoke this from ClipboardIOContext; the filesystem work below therefore
+    // runs off the main thread, and only the snapshot-map swap is marshalled to Main.
+    private suspend fun reconcileArchiveStorage() {
         val referencedArchiveFiles = referencedClipboardArchiveFileNames(linkArchives.values)
         migrateLegacyArchiveMediaFiles(
             legacyArchiveDir = context.clipboardArchiveDir,
@@ -2347,8 +2358,10 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
             legacyArchiveDir = context.clipboardArchiveDir
         )
         if(reconciled.associateBy { it.key } != linkArchives.toMap()) {
-            linkArchives.clear()
-            linkArchives.putAll(reconciled.associateBy { it.key })
+            withContext(Dispatchers.Main) {
+                linkArchives.clear()
+                linkArchives.putAll(reconciled.associateBy { it.key })
+            }
             saveArchives()
         }
 

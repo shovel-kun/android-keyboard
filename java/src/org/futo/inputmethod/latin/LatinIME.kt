@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.Bundle
+import android.os.StrictMode
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
@@ -376,6 +377,16 @@ class LatinIME : InputMethodServiceCompose(), LatinIMELegacy.SuggestionStripCont
 
     override fun onCreate() {
         super.onCreate()
+
+        if(BuildConfig.DEBUG) {
+            StrictMode.setThreadPolicy(
+                StrictMode.ThreadPolicy.Builder()
+                    .detectDiskReads()
+                    .detectDiskWrites()
+                    .penaltyLog()
+                    .build()
+            )
+        }
 
         UserBinaryDictionary.resetUserDictionariesRequiringRecreation()
 
