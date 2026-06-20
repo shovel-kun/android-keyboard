@@ -1197,12 +1197,7 @@ class ClipboardHistoryManager private constructor(
         cancelArchiveDownloadState(archiveKey)
         linkArchives.remove(archiveKey)
         tombstoneArchiveKey(archiveKey, reason = "user")
-        deleteArchiveMetadataFile(archiveKey)
         val archivedFileNames = archive?.media.orEmpty().mapNotNull { it.fileName }.toSet()
-        archivedFileNames.forEach { fileName ->
-            File(context.clipboardArchiveDir, fileName).delete()
-            File(context.clipboardArchiveDir, ClipboardUtil.thumbnailForName(fileName)).delete()
-        }
 
         for(i in clipboardHistory.indices) {
             val current = clipboardHistory[i]
@@ -1227,13 +1222,27 @@ class ClipboardHistoryManager private constructor(
                 )
             }
         }
-        orphanedSharedArchiveFileNamesAfterArchiveDelete(archivedFileNames, clipboardHistory)
-            .forEach { fileName -> File(context.clipboardDir, fileName).delete() }
-        refreshArchiveFileNames()
-        saveArchives()
+
+        // The in-memory/snapshot mutations above run on the caller's (main) thread so the
+        // UI updates immediately; the filesystem work runs off the main thread.
+        val tombstones = archiveTombstonesByKey.values.toList()
+        coroutineScope.launch(ClipboardIOContext) {
+            saveArchiveTombstones(tombstones)
+            deleteArchiveMetadataFile(archiveKey)
+            archivedFileNames.forEach { fileName ->
+                File(context.clipboardArchiveDir, fileName).delete()
+                File(context.clipboardArchiveDir, ClipboardUtil.thumbnailForName(fileName)).delete()
+            }
+            orphanedSharedArchiveFileNamesAfterArchiveDelete(archivedFileNames, clipboardHistory)
+                .forEach { fileName -> File(context.clipboardDir, fileName).delete() }
+            refreshArchiveFileNames()
+            saveArchives()
+        }
         saveClipboard(reconcileBeforeSave = true)
     }
 
+    // Only updates in-memory tombstone state. Callers are responsible for persisting via
+    // saveArchiveTombstones (off the main thread).
     private fun tombstoneArchiveKey(archiveKey: String, reason: String?) {
         deletedArchiveKeys.add(archiveKey)
         archiveTombstonesByKey.putIfAbsent(
@@ -1244,7 +1253,6 @@ class ClipboardHistoryManager private constructor(
                 reason = reason
             )
         )
-        saveArchiveTombstones(archiveTombstonesByKey.values)
     }
 
     private fun deleteArchiveDownloadMedia(item: ClipboardArchiveDownloadListItem) {
@@ -1320,9 +1328,16 @@ class ClipboardHistoryManager private constructor(
     fun removeAll(items: Collection<ClipboardEntry>) {
         if(items.isEmpty()) return
 
-        clearPrimaryClipIfNeeded(items)
-        deleteArchivesOnlyReferencedBy(items)
-        applyEntryMutations(items) { null }
+        // Run asynchronously so the caller (e.g. the confirmation dialog's onClick)
+        // returns immediately and the popup can dismiss without waiting. The in-memory
+        // list/snapshot updates run on the main thread (so the entry disappears right
+        // away), while the slow system-clipboard read and archive disk cleanup are
+        // offloaded off the main thread by the callees below.
+        coroutineScope.launch {
+            deleteArchivesOnlyReferencedBy(items)
+            applyEntryMutations(items) { null }
+            clearPrimaryClipIfNeeded(items)
+        }
     }
 
     fun setPinned(items: Collection<ClipboardEntry>, pinned: Boolean) {
@@ -1766,13 +1781,18 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         clipboardHistory.addAll(updatedEntries)
     }
 
-    private fun clearPrimaryClipIfNeeded(items: Collection<ClipboardEntry>) {
+    private suspend fun clearPrimaryClipIfNeeded(items: Collection<ClipboardEntry>) {
         if(Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
 
-        val currentText = try {
-            clipboardManager.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
-        } catch(_: Exception) {
-            null
+        // coerceToText reads the system primary clip; for a content:// clip it performs a
+        // binder read into the source app's ContentProvider, which can block for seconds
+        // (up to the ANR window). Keep it off the main thread.
+        val currentText = withContext(Dispatchers.IO) {
+            try {
+                clipboardManager.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+            } catch(_: Exception) {
+                null
+            }
         }
 
         if(currentText != null && items.any { it.text == currentText }) {
