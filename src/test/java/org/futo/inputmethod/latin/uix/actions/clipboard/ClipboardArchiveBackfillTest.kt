@@ -630,7 +630,7 @@ class ClipboardArchiveBackfillTest {
             val retained = retainedPreviewMediaAfterArchiveDelete(
                 entry = entry,
                 archivedFileNames = setOf("legacy.jpg"),
-                clipboardDir = clipboardDir
+                existingMediaNames = setOf("legacy.jpg")
             )
 
             assertEquals(listOf("legacy.jpg"), retained.map { it.fileName })
@@ -654,7 +654,7 @@ class ClipboardArchiveBackfillTest {
             val retained = retainedPreviewMediaAfterArchiveDelete(
                 entry = entry,
                 archivedFileNames = setOf("legacy.jpg"),
-                clipboardDir = clipboardDir
+                existingMediaNames = emptySet()
             )
 
             assertTrue(retained.isEmpty())

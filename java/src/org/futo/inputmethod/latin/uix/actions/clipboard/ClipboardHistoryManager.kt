@@ -253,11 +253,11 @@ internal fun copyLegacyPreviewMediaToArchive(
 internal fun retainedPreviewMediaAfterArchiveDelete(
     entry: ClipboardEntry,
     archivedFileNames: Set<String>,
-    clipboardDir: File
+    existingMediaNames: Set<String>
 ): List<ClipboardPreviewMedia> =
     entry.previewMedia().filter {
         it.fileName !in archivedFileNames ||
-            File(clipboardDir, it.fileName).isFile
+            it.fileName in existingMediaNames
     }
 
 internal fun retainedPreviewTextAfterArchiveDelete(
@@ -1192,7 +1192,10 @@ class ClipboardHistoryManager private constructor(
         deleteArchiveByKey(archiveForEntry(entry)?.key ?: return)
     }
 
-    private fun deleteArchiveByKey(archiveKey: String) {
+    private fun deleteArchiveByKey(
+        archiveKey: String,
+        existingMediaNames: Set<String> = currentArchiveFileNames()
+    ) {
         val archive = linkArchives[archiveKey]
         cancelArchiveDownloadState(archiveKey)
         linkArchives.remove(archiveKey)
@@ -1205,7 +1208,7 @@ class ClipboardHistoryManager private constructor(
                 val retainedPreviewMedia = retainedPreviewMediaAfterArchiveDelete(
                     entry = current,
                     archivedFileNames = archivedFileNames,
-                    clipboardDir = context.clipboardDir
+                    existingMediaNames = existingMediaNames
                 )
                 clipboardHistory[i] = current.copy(
                     previewText = retainedPreviewTextAfterArchiveDelete(
@@ -1328,13 +1331,16 @@ class ClipboardHistoryManager private constructor(
     fun removeAll(items: Collection<ClipboardEntry>) {
         if(items.isEmpty()) return
 
-        // Run asynchronously so the caller (e.g. the confirmation dialog's onClick)
-        // returns immediately and the popup can dismiss without waiting. The in-memory
-        // list/snapshot updates run on the main thread (so the entry disappears right
-        // away), while the slow system-clipboard read and archive disk cleanup are
-        // offloaded off the main thread by the callees below.
         coroutineScope.launch {
-            deleteArchivesOnlyReferencedBy(items)
+            // Suspend immediately off the main thread (coroutineScope is Main.immediate, so
+            // a plain launch would otherwise run inline up to the first suspension and block
+            // the caller). This lets the confirmation dialog's onClick return and the popup
+            // dismiss without waiting. It also enumerates the media directory once here
+            // instead of a per-file File.isFile stat on the UI thread inside the loop below.
+            val existingMediaNames = withContext(ClipboardIOContext) {
+                existingClipboardMediaFileNames(context.clipboardDir)
+            }
+            deleteArchivesOnlyReferencedBy(items, existingMediaNames)
             applyEntryMutations(items) { null }
             clearPrimaryClipIfNeeded(items)
         }
@@ -1763,7 +1769,10 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         saveClipboard()
     }
 
-    private fun deleteArchivesOnlyReferencedBy(items: Collection<ClipboardEntry>) {
+    private fun deleteArchivesOnlyReferencedBy(
+        items: Collection<ClipboardEntry>,
+        existingMediaNames: Set<String>
+    ) {
         val itemSet = items.toHashSet()
         items
             .mapNotNull { it.archiveBackfillKey() ?: it.previewMetadata?.archiveKey() }
@@ -1773,7 +1782,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     entry !in itemSet && entry.matchesDeletedArchiveKey(archiveKey)
                 }
             }
-            .forEach(::deleteArchiveByKey)
+            .forEach { deleteArchiveByKey(it, existingMediaNames) }
     }
 
     private fun replaceEntries(updatedEntries: List<ClipboardEntry>) {
