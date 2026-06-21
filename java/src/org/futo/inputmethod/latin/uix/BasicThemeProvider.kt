@@ -13,6 +13,7 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.NinePatchDrawable
 import android.graphics.drawable.StateListDrawable
 import android.util.Log
+import android.util.LruCache
 import android.util.TypedValue
 import androidx.annotation.ColorInt
 import androidx.appcompat.content.res.AppCompatResources
@@ -283,15 +284,31 @@ class BasicThemeProvider(val context: Context, val colorScheme: KeyboardColorSch
     val showKeyHints: Boolean
 
     private fun addIcon(iconName: String, drawableIntResId: Int, tint: Int) {
-        addIcon(iconName, AppCompatResources.getDrawable(
-            context,
-            drawableIntResId
-        ), tint)
+        addIcon(iconName, inflateCachedIcon(context, drawableIntResId), tint)
     }
 
     private fun addIcon(iconName: String, drawable: Drawable?, tint: Int) {
         icons[iconName] = drawable?.apply {
             //setTint(tint) // breaks some stuff, its set anyway before drawing in KeyboardView now ?
+        }
+    }
+
+    companion object {
+        // Inflated key-icon vectors are theme/color-independent (they are tinted live in
+        // KeyboardView, not baked here), so their ConstantState can be shared across
+        // BasicThemeProvider instances. Without this, ~70 vector XML drawables are
+        // re-inflated on every provider construction (one per IME service create), a
+        // meaningful slice of the keyboard-appearance cost. newDrawable().mutate() hands
+        // out an independent drawable per icon so live tinting never leaks across keys.
+        private val iconConstantStateCache = LruCache<Int, Drawable.ConstantState>(192)
+
+        private fun inflateCachedIcon(context: Context, drawableIntResId: Int): Drawable? {
+            iconConstantStateCache.get(drawableIntResId)?.let {
+                return it.newDrawable(context.resources).mutate()
+            }
+            val drawable = AppCompatResources.getDrawable(context, drawableIntResId) ?: return null
+            drawable.constantState?.let { iconConstantStateCache.put(drawableIntResId, it) }
+            return drawable.mutate()
         }
     }
 
