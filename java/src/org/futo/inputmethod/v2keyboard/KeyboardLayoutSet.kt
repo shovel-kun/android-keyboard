@@ -3,6 +3,7 @@ package org.futo.inputmethod.v2keyboard
 import android.content.Context
 import android.text.InputType
 import android.util.Log
+import android.util.LruCache
 import android.view.inputmethod.EditorInfo
 import androidx.compose.ui.unit.dp
 import kotlinx.serialization.Serializable
@@ -309,6 +310,9 @@ Layout: $layoutName
             element
         )
 
+        val cacheKey = KeyboardCacheKey(keyboardId, multilingualTypingLocales)
+        keyboardCache.get(cacheKey)?.let { return it }
+
         val layout = getKeyboardLayoutForElement(element)
 
         val keyboardParams = KeyboardParams().apply {
@@ -328,7 +332,9 @@ Layout: $layoutName
         )
 
         try {
-            return layout.build(context, keyboardParams, layoutParams)
+            val built = layout.build(context, keyboardParams, layoutParams)
+            keyboardCache.put(cacheKey, built)
+            return built
         } catch(e: Exception) {
             Log.e("KeyboardLayoutSet", "Failed to load element $element for keyboard layout set $layoutName. Message: ${e.message}")
             Log.e("KeyboardLayoutSet", "LayoutSet params: $params, keyboardId: $keyboardId")
@@ -353,15 +359,30 @@ Stack trace: ${e.stackTrace.map { it.toString() }}
     }
 
     companion object {
+        private data class KeyboardCacheKey(
+            val id: KeyboardId,
+            val multilingualTypingLocales: List<Locale>?
+        )
+
+        // Caches built keyboards across appearances and IME service instances. The full
+        // LayoutEngine geometry build (key rects, moreKeys, native ProximityInfo) is the
+        // dominant synchronous main-thread cost when the keyboard is shown, and it is
+        // otherwise rebuilt from scratch on every onStartInputView even when nothing
+        // changed. KeyboardId captures every geometry/label-affecting input except the
+        // multilingual typing locales, which are folded into the key. The built keyboard is
+        // theme-independent (icons are raw vectors tinted live in KeyboardView), so the
+        // cache only needs clearing on locale/theme changes; size/setting changes miss
+        // naturally via a different KeyboardId.
+        private val keyboardCache = LruCache<KeyboardCacheKey, Keyboard>(8)
 
         @JvmStatic
         fun onSystemLocaleChanged() {
-
+            keyboardCache.evictAll()
         }
 
         @JvmStatic
         fun onKeyboardThemeChanged(context: Context) {
-            // This is where we would clear all caches if we had any
+            keyboardCache.evictAll()
         }
     }
 }
