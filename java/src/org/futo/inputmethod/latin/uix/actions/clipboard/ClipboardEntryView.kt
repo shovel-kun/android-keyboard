@@ -113,7 +113,7 @@ private fun decodeClipboardBitmapSource(
         return it.asImageBitmap()
     }
 
-    if(!originalFile.isClipboardGifFile()) return null
+    if(!originalFile.isClipboardGifFile() && !originalFile.isClipboardVideoFile()) return null
 
     val thumbnail = ClipboardUtil.generateThumbnail(originalFile) ?: return null
     return BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()
