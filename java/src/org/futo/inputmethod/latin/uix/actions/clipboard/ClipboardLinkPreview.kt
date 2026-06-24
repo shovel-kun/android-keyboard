@@ -33,7 +33,8 @@ data class ClipboardLinkPreview(
 data class ClipboardLinkPreviewManifest(
     val snippet: String?,
     val mediaItems: List<ClipboardLinkPreviewMedia>,
-    val metadata: ClipboardPreviewMetadata?
+    val metadata: ClipboardPreviewMetadata?,
+    val referencedManifests: List<ClipboardLinkPreviewManifest> = emptyList()
 )
 
 data class ClipboardLinkPreviewMedia(
@@ -298,13 +299,7 @@ object ClipboardLinkPreviewFetcher {
                 failureDetail = "Failed to fetch preview manifest for $rawText: ${e.failureDetail()}"
             )
         }.let {
-            val manifest = it?.let { preview ->
-                ClipboardLinkPreviewManifest(
-                    snippet = preview.snippet,
-                    mediaItems = preview.mediaItems,
-                    metadata = preview.metadata
-                )
-            }
+            val manifest = it?.toManifest()
             val unavailableFailure = manifest?.unavailablePreviewFailure(request, rawText)
             if(unavailableFailure != null) {
                 return ClipboardLinkPreviewManifestResult(
@@ -357,6 +352,12 @@ object ClipboardLinkPreviewFetcher {
             LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
             TwitterStatusUrl(handle = "futo", id = "123")
         )?.mediaItems?.map { it.url }.orEmpty()
+
+    internal fun parseTwitterApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+        parseTwitterApiPreview(
+            LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
+            TwitterStatusUrl(handle = "futo", id = "123")
+        )?.toManifest()
 
     internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: Int? = null): List<String> =
         parsePixivPreviewData(
@@ -582,6 +583,14 @@ object ClipboardLinkPreviewFetcher {
 
     private fun parseTwitterApiPreview(response: JsonObject, statusUrl: TwitterStatusUrl): RemotePreviewData? {
         val tweet = response.objectValue("tweet") ?: return null
+        return parseTwitterApiStatusPreview(tweet, statusUrl, includeQuote = true)
+    }
+
+    private fun parseTwitterApiStatusPreview(
+        tweet: JsonObject,
+        statusUrl: TwitterStatusUrl,
+        includeQuote: Boolean
+    ): RemotePreviewData? {
         val rawBodyText = tweet.stringValue("text")?.trim()?.takeIf { it.isNotBlank() }
         val card = tweet.objectValue("card") ?: tweet.objectValue("twitter_card")
         val title = card?.stringValue("title")?.trim()?.takeIf { it.isNotBlank() }
@@ -623,11 +632,27 @@ object ClipboardLinkPreviewFetcher {
                 noteTweet = tweet.booleanValue("is_note_tweet") == true
             )
         ).nullIfEmpty()
+        val referencedPreviews = if(includeQuote) {
+            listOfNotNull(
+                tweet.objectValue("quote")?.let { quote ->
+                    quote.twitterStatusUrl()?.let { quoteStatusUrl ->
+                        parseTwitterApiStatusPreview(
+                            tweet = quote,
+                            statusUrl = quoteStatusUrl,
+                            includeQuote = false
+                        )
+                    }
+                }
+            )
+        } else {
+            emptyList()
+        }
 
         return RemotePreviewData(
             snippet = snippet,
             mediaItems = mediaItems,
-            metadata = metadata
+            metadata = metadata,
+            referencedPreviews = referencedPreviews
         )
     }
 
@@ -1193,6 +1218,17 @@ object ClipboardLinkPreviewFetcher {
         }
     }
 
+    private fun JsonObject.twitterStatusUrl(): TwitterStatusUrl? {
+        stringValue("url")?.let { url ->
+            parseTwitterStatusUrl(url)?.let { return it }
+        }
+        val id = stringValue("id")?.takeIf { it.isNotBlank() } ?: return null
+        return TwitterStatusUrl(
+            handle = objectValue("author")?.stringValue("screen_name"),
+            id = id
+        )
+    }
+
     private fun parseTwitterStatusUrl(url: String): TwitterStatusUrl? {
         val uri = runCatching { URL(url).toURI() }.getOrNull() ?: return null
         if (!SupportedTwitterHosts.contains(uri.host?.lowercase())) return null
@@ -1369,6 +1405,9 @@ internal fun retryAfterEpochMs(value: String?, nowEpochMs: Long): Long {
 
 internal fun parseTwitterApiPreviewMediaUrlsForTest(responseText: String): List<String> =
     ClipboardLinkPreviewFetcher.parseTwitterApiPreviewMediaUrlsForTest(responseText)
+
+internal fun parseTwitterApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseTwitterApiPreviewForTest(responseText)
 
 internal fun parsePixivPreviewMediaUrlsForTest(responseText: String, pageIndex: Int? = null): List<String> =
     ClipboardLinkPreviewFetcher.parsePixivPreviewMediaUrlsForTest(responseText, pageIndex)
@@ -1835,8 +1874,17 @@ private data class YouTubeVideoUrl(
 private data class RemotePreviewData(
     val snippet: String?,
     val mediaItems: List<ClipboardLinkPreviewMedia>,
-    val metadata: ClipboardPreviewMetadata?
+    val metadata: ClipboardPreviewMetadata?,
+    val referencedPreviews: List<RemotePreviewData> = emptyList()
 )
+
+private fun RemotePreviewData.toManifest(): ClipboardLinkPreviewManifest =
+    ClipboardLinkPreviewManifest(
+        snippet = snippet,
+        mediaItems = mediaItems,
+        metadata = metadata,
+        referencedManifests = referencedPreviews.map { it.toManifest() }
+    )
 
 private fun JsonObject?.twitterMediaItems(): List<ClipboardLinkPreviewMedia> {
     if (this == null) return emptyList()

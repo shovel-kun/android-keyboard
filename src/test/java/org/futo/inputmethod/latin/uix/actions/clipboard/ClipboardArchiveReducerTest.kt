@@ -489,6 +489,33 @@ class ClipboardArchiveReducerTest {
     }
 
     @Test
+    fun manifestSeenStoresReferencedArchiveKeysWithoutMergingReferencedMedia() {
+        val archive = reduceArchive(
+            archive = null,
+            event = ClipboardArchiveEvent.ManifestSeen(
+                manifest = sampleManifest(
+                    url = "https://img.example/parent.jpg",
+                    referencedManifests = listOf(
+                        sampleManifest(
+                            url = "https://img.example/quote.jpg",
+                            metadata = ClipboardPreviewMetadata(
+                                provider = ClipboardPreviewProvider.TWITTER,
+                                sourceUrl = "https://x.com/quote/status/456",
+                                sourceId = "456"
+                            )
+                        )
+                    )
+                ),
+                now = 10L
+            )
+        )!!
+
+        assertEquals(listOf("twitter:456"), archive.referencedArchiveKeys)
+        assertEquals(listOf("https://img.example/parent.jpg"), archive.media.map { it.sourceUrl })
+        assertEquals(listOf(0), archive.media.map { it.sourceIndex })
+    }
+
+    @Test
     fun decodeClipboardArchivesDropsFailedTwitterStatusPageMediaFromBackup() {
         val archive = ClipboardLinkArchive(
             key = "twitter:2048952037258215905",
@@ -793,15 +820,18 @@ class ClipboardArchiveReducerTest {
         url: String = "https://img.example/one.jpg",
         mediaItems: List<ClipboardLinkPreviewMedia> = listOf(
             ClipboardLinkPreviewMedia(url, 0, "image/jpeg")
-        )
-    ) = ClipboardLinkPreviewManifest(
-        snippet = "remote",
-        mediaItems = mediaItems,
-        metadata = ClipboardPreviewMetadata(
+        ),
+        metadata: ClipboardPreviewMetadata = ClipboardPreviewMetadata(
             provider = ClipboardPreviewProvider.PIXIV,
             sourceUrl = "https://www.phixiv.net/en/artworks/123",
             sourceId = "123"
-        )
+        ),
+        referencedManifests: List<ClipboardLinkPreviewManifest> = emptyList()
+    ) = ClipboardLinkPreviewManifest(
+        snippet = "remote",
+        mediaItems = mediaItems,
+        metadata = metadata,
+        referencedManifests = referencedManifests
     )
 
     private fun sampleArchive(

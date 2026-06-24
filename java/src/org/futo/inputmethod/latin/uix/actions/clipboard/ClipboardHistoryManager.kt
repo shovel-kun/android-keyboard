@@ -1825,6 +1825,12 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         ) ?: return null
         linkArchives[updated.key] = updated
         saveArchive(updated)
+        manifest.referencedManifests.forEach { referencedManifest ->
+            val referencedArchive = createOrUpdateArchive(referencedManifest, now)
+            if(referencedArchive?.hasAutoDownloadableMedia() == true) {
+                startArchiveDownload(text = null, archiveKey = referencedArchive.key)
+            }
+        }
         return updated
     }
 

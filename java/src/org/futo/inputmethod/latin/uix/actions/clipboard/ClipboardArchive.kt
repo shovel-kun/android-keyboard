@@ -59,6 +59,7 @@ data class ClipboardLinkArchive(
     val sourceId: String? = null,
     val metadata: ClipboardPreviewMetadata? = null,
     val media: List<ClipboardArchiveMedia> = emptyList(),
+    val referencedArchiveKeys: List<String> = emptyList(),
     val providerManifestAvailable: Boolean = true,
     val deletedMediaKeys: Set<String> = emptySet(),
     val createdAtEpochMs: Long,
@@ -552,6 +553,9 @@ private fun reduceManifestSeen(
     val existingByIndex = normalizeArchiveMedia(archive?.media.orEmpty()).associateBy { it.sourceIndex }
     val incomingSourceIndexes = manifest.mediaItems.map { it.sourceIndex }.toSet()
     val deletedMediaKeys = archive?.deletedMediaKeys.orEmpty()
+    val referencedArchiveKeys = manifest.referencedManifests
+        .mapNotNull { it.archiveKey() }
+        .distinct()
     val manifestMedia = manifest.mediaItems.mapNotNull { incoming ->
         val incomingMediaKey = ClipboardArchiveMedia(
             sourceUrl = incoming.url,
@@ -587,6 +591,7 @@ private fun reduceManifestSeen(
         sourceId = metadata.sourceId ?: archive?.sourceId,
         metadata = mergePreviewMetadataForArchive(archive?.metadata, manifest.metadata),
         media = normalizeArchiveMedia(manifestMedia + retainedMedia),
+        referencedArchiveKeys = referencedArchiveKeys.ifEmpty { archive?.referencedArchiveKeys.orEmpty() },
         providerManifestAvailable = if(unavailableManifest) {
             archive?.providerManifestAvailable ?: false
         } else {
@@ -616,6 +621,7 @@ private fun reduceImportedArchive(
         metadata = mergePreviewMetadataForArchive(existing.metadata, incoming.metadata),
         media = normalizeArchiveMedia(existing.media + incoming.media)
             .filter { it.archiveMediaKey() !in deletedMediaKeys },
+        referencedArchiveKeys = (existing.referencedArchiveKeys + incoming.referencedArchiveKeys).distinct(),
         providerManifestAvailable = existing.providerManifestAvailable || incoming.providerManifestAvailable,
         deletedMediaKeys = deletedMediaKeys,
         createdAtEpochMs = minOf(existing.createdAtEpochMs, incoming.createdAtEpochMs),

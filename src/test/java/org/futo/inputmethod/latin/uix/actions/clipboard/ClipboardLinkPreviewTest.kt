@@ -216,6 +216,57 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parseTwitterApiPreview_keepsQuotedPostAsReferencedManifest() {
+        val manifest = parseTwitterApiPreviewForTest(
+            """
+            {
+              "tweet": {
+                "id": "123",
+                "url": "https://x.com/futo/status/123",
+                "text": "parent post",
+                "author": {
+                  "name": "FUTO",
+                  "screen_name": "futo",
+                  "id": "1"
+                },
+                "media": {
+                  "photos": [
+                    {"url": "https://pbs.twimg.com/media/parent.jpg"}
+                  ]
+                },
+                "quote": {
+                  "id": "456",
+                  "url": "https://x.com/quote/status/456",
+                  "text": "quoted post",
+                  "author": {
+                    "name": "Quote",
+                    "screen_name": "quote",
+                    "id": "2"
+                  },
+                  "media": {
+                    "photos": [
+                      {"url": "https://pbs.twimg.com/media/quote.jpg"}
+                    ]
+                  }
+                }
+              }
+            }
+            """.trimIndent()
+        )!!
+
+        assertEquals("twitter:123", manifest.archiveKey())
+        assertEquals(listOf("https://pbs.twimg.com/media/parent.jpg?name=orig"), manifest.mediaItems.map { it.url })
+        assertEquals(listOf(0), manifest.mediaItems.map { it.sourceIndex })
+
+        val quoteManifest = manifest.referencedManifests.single()
+        assertEquals("twitter:456", quoteManifest.archiveKey())
+        assertEquals("quoted post", quoteManifest.snippet)
+        assertEquals(listOf("https://pbs.twimg.com/media/quote.jpg?name=orig"), quoteManifest.mediaItems.map { it.url })
+        assertEquals(listOf(0), quoteManifest.mediaItems.map { it.sourceIndex })
+        assertEquals(emptyList<ClipboardLinkPreviewManifest>(), quoteManifest.referencedManifests)
+    }
+
+    @Test
     fun parseTwitterHtmlPreviewMediaUrls_returnsSingleOpenGraphMedia() {
         val urls = parseTwitterHtmlPreviewMediaUrlsForTest(
             """
