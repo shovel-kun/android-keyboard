@@ -138,7 +138,6 @@ object ClipboardUtil {
         }
     }
 
-
     private fun generateVideoThumbnail(mediaFile: File, thumbFile: File): File? {
         var bitmap: Bitmap? = null
         val retriever = MediaMetadataRetriever()

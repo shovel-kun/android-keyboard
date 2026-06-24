@@ -113,11 +113,16 @@ private fun decodeClipboardBitmapSource(
         return it.asImageBitmap()
     }
 
-    if(!originalFile.isClipboardGifFile() && !originalFile.isClipboardVideoFile()) return null
-
-    val thumbnail = ClipboardUtil.generateThumbnail(originalFile) ?: return null
+    val thumbnail = generatedClipboardThumbnailFallback(originalFile) ?: return null
     return BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()
 }
+
+private fun generatedClipboardThumbnailFallback(originalFile: File): File? =
+    if(originalFile.isClipboardGifFile() || originalFile.isClipboardVideoFile()) {
+        ClipboardUtil.generateThumbnail(originalFile)
+    } else {
+        null
+    }
 
 private fun cachedClipboardBitmap(
     imageFile: File,

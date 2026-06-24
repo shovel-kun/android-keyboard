@@ -994,7 +994,7 @@ object ClipboardLinkPreviewFetcher {
         val fileBaseName = "preview_${mediaUrl.md5Hex()}"
         destinationDir.mkdirs()
         findCachedPreviewFile(destinationDir, fileBaseName)?.let {
-            cachePreviewMediaThumbnail(thumbnailUrl, ClipboardUtil.thumbnailFor(it))
+            cachePreviewMediaThumbnail(thumbnailUrl, it)
             return ClipboardPreviewMediaCacheResult.Saved(
                 fileName = it.name,
                 mimeType = it.guessedClipboardMimeType()
@@ -1021,7 +1021,7 @@ object ClipboardLinkPreviewFetcher {
                 outputMimeType = mimeType
                 outputFile = File(destinationDir, fileName)
                 if (outputFile!!.exists()) {
-                    cachePreviewMediaThumbnail(thumbnailUrl, ClipboardUtil.thumbnailFor(outputFile!!))
+                    cachePreviewMediaThumbnail(thumbnailUrl, outputFile!!)
                     return ClipboardPreviewMediaCacheResult.Saved(fileName, mimeType)
                 }
                 val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
@@ -1053,8 +1053,10 @@ object ClipboardLinkPreviewFetcher {
                 tempFile.delete()
             }
 
-            ClipboardUtil.generateThumbnail(finalFile)
-            cachePreviewMediaThumbnail(thumbnailUrl, ClipboardUtil.thumbnailFor(finalFile))
+            cachePreviewMediaThumbnail(thumbnailUrl, finalFile)
+            if(!ClipboardUtil.thumbnailFor(finalFile).isFile) {
+                ClipboardUtil.generateThumbnail(finalFile)
+            }
             return ClipboardPreviewMediaCacheResult.Saved(finalFile.name, outputMimeType)
         } catch (e: CancellationException) {
             tempFile.delete()
@@ -1083,23 +1085,32 @@ object ClipboardLinkPreviewFetcher {
         }
     }
 
-    private fun cachePreviewMediaThumbnail(thumbnailUrl: String?, thumbFile: File) {
+    private fun cachePreviewMediaThumbnail(thumbnailUrl: String?, mediaFile: File) {
+        val thumbFile = ClipboardUtil.thumbnailFor(mediaFile)
         if(thumbnailUrl == null || thumbFile.isFile) return
 
         val tempFile = File(thumbFile.parentFile, "${thumbFile.name}.tmp")
         try {
-            withConnection(thumbnailUrl) { connection ->
+            val cached = withConnection(thumbnailUrl) { connection ->
                 val contentType = connection.contentType.orEmpty().normalizedMimeType()
-                if(!contentType.startsWith("image/")) return
-                connection.inputStream.use { input ->
-                    tempFile.outputStream().use { output ->
-                        input.copyToCapped(
-                            output = output,
-                            limit = MaxPreviewMediaBytes,
-                            totalBytes = connection.contentLengthLong.takeIf { it > 0L }
-                        )
+                if(!contentType.startsWith("image/")) {
+                    false
+                } else {
+                    connection.inputStream.use { input ->
+                        tempFile.outputStream().use { output ->
+                            input.copyToCapped(
+                                output = output,
+                                limit = MaxPreviewMediaBytes,
+                                totalBytes = connection.contentLengthLong.takeIf { it > 0L }
+                            )
+                        }
                     }
+                    true
                 }
+            }
+            if(!cached) {
+                tempFile.delete()
+                return
             }
 
             if(!tempFile.renameTo(thumbFile)) {
