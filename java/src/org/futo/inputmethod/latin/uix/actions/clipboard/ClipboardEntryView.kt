@@ -100,9 +100,23 @@ internal fun decodeClipboardBitmap(
 ): ImageBitmap? {
     val source = clipboardBitmapSource(imageFile, preferThumbnail) ?: return null
     return ClipboardThumbCache.cache[source.cacheKey]
-        ?: BitmapFactory.decodeFile(source.file.absolutePath)?.asImageBitmap()?.also {
+        ?: decodeClipboardBitmapSource(source, imageFile)?.also {
             ClipboardThumbCache.cache.put(source.cacheKey, it)
         }
+}
+
+private fun decodeClipboardBitmapSource(
+    source: ClipboardBitmapSource,
+    originalFile: File
+): ImageBitmap? {
+    BitmapFactory.decodeFile(source.file.absolutePath)?.let {
+        return it.asImageBitmap()
+    }
+
+    if(!originalFile.isClipboardGifFile()) return null
+
+    val thumbnail = ClipboardUtil.generateThumbnail(originalFile) ?: return null
+    return BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()
 }
 
 private fun cachedClipboardBitmap(
