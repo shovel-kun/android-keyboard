@@ -69,10 +69,14 @@ public final class AudioAndHapticFeedbackManager {
     }
 
     public void vibrate(final long milliseconds) {
-        if (mVibrator == null) {
+        if (mVibrator == null || !isValidVibrationDuration(milliseconds)) {
             return;
         }
         mVibrator.vibrate(milliseconds);
+    }
+
+    static boolean isValidVibrationDuration(final long milliseconds) {
+        return milliseconds > 0;
     }
 
     private boolean reevaluateIfSoundIsOn() {
