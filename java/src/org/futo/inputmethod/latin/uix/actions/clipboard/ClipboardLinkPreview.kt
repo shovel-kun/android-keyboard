@@ -40,7 +40,8 @@ data class ClipboardLinkPreviewManifest(
 data class ClipboardLinkPreviewMedia(
     val url: String,
     val sourceIndex: Int,
-    val mimeType: String? = null
+    val mimeType: String? = null,
+    val thumbnailUrl: String? = null
 )
 
 sealed interface ClipboardPreviewMediaCacheResult {
@@ -987,11 +988,13 @@ object ClipboardLinkPreviewFetcher {
         mediaUrl: String,
         destinationDir: File,
         provider: ClipboardPreviewProvider? = null,
+        thumbnailUrl: String? = null,
         onProgress: (ClipboardPreviewMediaDownloadProgress) -> Unit = {}
     ): ClipboardPreviewMediaCacheResult {
         val fileBaseName = "preview_${mediaUrl.md5Hex()}"
         destinationDir.mkdirs()
         findCachedPreviewFile(destinationDir, fileBaseName)?.let {
+            cachePreviewMediaThumbnail(thumbnailUrl, ClipboardUtil.thumbnailFor(it))
             return ClipboardPreviewMediaCacheResult.Saved(
                 fileName = it.name,
                 mimeType = it.guessedClipboardMimeType()
@@ -1018,6 +1021,7 @@ object ClipboardLinkPreviewFetcher {
                 outputMimeType = mimeType
                 outputFile = File(destinationDir, fileName)
                 if (outputFile!!.exists()) {
+                    cachePreviewMediaThumbnail(thumbnailUrl, ClipboardUtil.thumbnailFor(outputFile!!))
                     return ClipboardPreviewMediaCacheResult.Saved(fileName, mimeType)
                 }
                 val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
@@ -1050,6 +1054,7 @@ object ClipboardLinkPreviewFetcher {
             }
 
             ClipboardUtil.generateThumbnail(finalFile)
+            cachePreviewMediaThumbnail(thumbnailUrl, ClipboardUtil.thumbnailFor(finalFile))
             return ClipboardPreviewMediaCacheResult.Saved(finalFile.name, outputMimeType)
         } catch (e: CancellationException) {
             tempFile.delete()
@@ -1075,6 +1080,34 @@ object ClipboardLinkPreviewFetcher {
             return ClipboardPreviewMediaCacheResult.Failed(
                 "Failed to cache preview media for $mediaUrl: ${e.failureDetail()}"
             )
+        }
+    }
+
+    private fun cachePreviewMediaThumbnail(thumbnailUrl: String?, thumbFile: File) {
+        if(thumbnailUrl == null || thumbFile.isFile) return
+
+        val tempFile = File(thumbFile.parentFile, "${thumbFile.name}.tmp")
+        try {
+            withConnection(thumbnailUrl) { connection ->
+                val contentType = connection.contentType.orEmpty().normalizedMimeType()
+                if(!contentType.startsWith("image/")) return
+                connection.inputStream.use { input ->
+                    tempFile.outputStream().use { output ->
+                        input.copyToCapped(
+                            output = output,
+                            limit = MaxPreviewMediaBytes,
+                            totalBytes = connection.contentLengthLong.takeIf { it > 0L }
+                        )
+                    }
+                }
+            }
+
+            if(!tempFile.renameTo(thumbFile)) {
+                tempFile.copyTo(thumbFile, overwrite = true)
+                tempFile.delete()
+            }
+        } catch(_: Exception) {
+            tempFile.delete()
         }
     }
 
@@ -1906,6 +1939,7 @@ private fun JsonObject?.twitterMediaItems(): List<ClipboardLinkPreviewMedia> {
     val videos = arrayValue("videos")
         ?.mapIndexedNotNull { index, element ->
             val video = element as? JsonObject ?: return@mapIndexedNotNull null
+            val thumbnailUrl = video.stringValue("thumbnail_url")
             val url = video.stringValue("url")
                 ?: video.stringValue("download_url")
                 ?: video.arrayValue("variants")?.firstNotNullOfOrNull { variant ->
@@ -1913,12 +1947,13 @@ private fun JsonObject?.twitterMediaItems(): List<ClipboardLinkPreviewMedia> {
                 }
                 ?: video.arrayValue("variants")?.firstObject()?.stringValue("url")
                 ?: video.objectValue("variants")?.stringValue("url")
-                ?: video.stringValue("thumbnail_url")
+                ?: thumbnailUrl
                 ?: return@mapIndexedNotNull null
             ClipboardLinkPreviewMedia(
                 url = url,
                 sourceIndex = photos.size + index,
-                mimeType = url.guessedClipboardMimeType()
+                mimeType = url.guessedClipboardMimeType(),
+                thumbnailUrl = thumbnailUrl?.takeIf { it != url }
             )
         }
         .orEmpty()

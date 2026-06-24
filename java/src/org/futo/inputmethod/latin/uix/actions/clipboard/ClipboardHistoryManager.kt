@@ -2067,6 +2067,7 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
                     mediaUrl = media.sourceUrl,
                     destinationDir = context.clipboardDir,
                     provider = linkArchives[archiveKey]?.provider,
+                    thumbnailUrl = media.thumbnailUrl,
                     onProgress = { progress ->
                         coroutineContext.ensureActive()
                         currentCompletedBytes = progress.completedBytes

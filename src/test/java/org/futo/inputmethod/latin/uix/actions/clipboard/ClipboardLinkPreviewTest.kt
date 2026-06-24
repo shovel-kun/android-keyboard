@@ -192,6 +192,39 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parseTwitterApiPreview_preservesVideoThumbnailUrl() {
+        val manifest = parseTwitterApiPreviewForTest(
+            """
+            {
+              "tweet": {
+                "id": "2069500125781565470",
+                "url": "https://x.com/abichungus/status/2069500125781565470",
+                "text": "did u guys know i made a gif version of it",
+                "media": {
+                  "videos": [
+                    {
+                      "url": "https://video.twimg.com/tweet_video/HLhXYqyWcAAgos1.mp4",
+                      "thumbnail_url": "https://pbs.twimg.com/tweet_video_thumb/HLhXYqyWcAAgos1.jpg",
+                      "type": "gif"
+                    }
+                  ]
+                }
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(
+            "https://video.twimg.com/tweet_video/HLhXYqyWcAAgos1.mp4",
+            manifest?.mediaItems?.single()?.url
+        )
+        assertEquals(
+            "https://pbs.twimg.com/tweet_video_thumb/HLhXYqyWcAAgos1.jpg",
+            manifest?.mediaItems?.single()?.thumbnailUrl
+        )
+    }
+
+    @Test
     fun parseTwitterApiPreviewMediaUrls_ignoresStatusPageUrls() {
         val urls = parseTwitterApiPreviewMediaUrlsForTest(
             """

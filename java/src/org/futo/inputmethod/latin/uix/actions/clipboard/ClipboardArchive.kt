@@ -48,7 +48,8 @@ data class ClipboardArchiveMedia(
     val fileName: String? = null,
     val status: ClipboardArchiveMediaStatus = ClipboardArchiveMediaStatus.Pending,
     val lastAttemptAtEpochMs: Long? = null,
-    val failureDetail: String? = null
+    val failureDetail: String? = null,
+    val thumbnailUrl: String? = null
 )
 
 @Serializable
@@ -571,11 +572,13 @@ private fun reduceManifestSeen(
         existing?.copy(
             sourceUrl = incoming.url,
             sourceIndex = incoming.sourceIndex,
-            mimeType = incoming.mimeType ?: existing.mimeType
+            mimeType = incoming.mimeType ?: existing.mimeType,
+            thumbnailUrl = incoming.thumbnailUrl ?: existing.thumbnailUrl
         ) ?: ClipboardArchiveMedia(
             sourceUrl = incoming.url,
             sourceIndex = incoming.sourceIndex,
-            mimeType = incoming.mimeType
+            mimeType = incoming.mimeType,
+            thumbnailUrl = incoming.thumbnailUrl
         )
     }
     val retainedMedia = if(manifest.mediaItems.isEmpty()) {
@@ -674,6 +677,7 @@ private fun richerArchiveMedia(
         mimeType = winner.mimeType ?: loser.mimeType,
         fileName = winner.fileName ?: loser.fileName,
         failureDetail = winner.failureDetail ?: loser.failureDetail,
+        thumbnailUrl = winner.thumbnailUrl ?: loser.thumbnailUrl,
         lastAttemptAtEpochMs = maxOfNullableForArchive(
             winner.lastAttemptAtEpochMs,
             loser.lastAttemptAtEpochMs
