@@ -53,6 +53,7 @@ import java.io.File
 
 private object ClipboardThumbCache {
     val cache = LruCache<String, ImageBitmap>(128)
+    val latestByRequest = LruCache<String, ImageBitmap>(128)
 }
 
 private data class ClipboardBitmapSource(
@@ -88,6 +89,12 @@ private fun clipboardBitmapSource(
     )
 }
 
+private fun clipboardBitmapRequestKey(
+    imageFile: File,
+    preferThumbnail: Boolean
+): String =
+    "${imageFile.absolutePath}|thumbnail=$preferThumbnail"
+
 internal fun clipboardBitmapCacheKey(
     imageFile: File,
     preferThumbnail: Boolean = true
@@ -99,10 +106,13 @@ internal fun decodeClipboardBitmap(
     preferThumbnail: Boolean = true
 ): ImageBitmap? {
     val source = clipboardBitmapSource(imageFile, preferThumbnail) ?: return null
-    return ClipboardThumbCache.cache[source.cacheKey]
-        ?: decodeClipboardBitmapSource(source, imageFile)?.also {
-            ClipboardThumbCache.cache.put(source.cacheKey, it)
-        }
+    val requestKey = clipboardBitmapRequestKey(imageFile, preferThumbnail)
+    return ClipboardThumbCache.cache[source.cacheKey]?.also {
+        ClipboardThumbCache.latestByRequest.put(requestKey, it)
+    } ?: decodeClipboardBitmapSource(source, imageFile)?.also {
+        ClipboardThumbCache.cache.put(source.cacheKey, it)
+        ClipboardThumbCache.latestByRequest.put(requestKey, it)
+    }
 }
 
 private fun decodeClipboardBitmapSource(
@@ -128,7 +138,7 @@ private fun cachedClipboardBitmap(
     imageFile: File,
     preferThumbnail: Boolean
 ): ImageBitmap? =
-    clipboardBitmapCacheKey(imageFile, preferThumbnail)?.let(ClipboardThumbCache.cache::get)
+    ClipboardThumbCache.latestByRequest[clipboardBitmapRequestKey(imageFile, preferThumbnail)]
 
 private fun requestedClipboardBitmapFiles(
     imageFiles: List<File>,
@@ -150,7 +160,7 @@ private fun clipboardBitmapRequestKeys(
     maxCount: Int?
 ): List<String> =
     requestedClipboardBitmapFiles(imageFiles, maxCount)
-        .map { clipboardBitmapCacheKey(it, preferThumbnail) ?: "${it.absolutePath}|missing|thumbnail=$preferThumbnail" }
+        .map { clipboardBitmapRequestKey(it, preferThumbnail) }
 
 @Composable
 internal fun rememberClipboardBitmap(
@@ -159,8 +169,7 @@ internal fun rememberClipboardBitmap(
     preferThumbnail: Boolean = true
 ): ImageBitmap? {
     if(bitmapOverride != null || imageFile == null) return bitmapOverride
-    val requestKey = clipboardBitmapCacheKey(imageFile, preferThumbnail)
-        ?: "${imageFile.absolutePath}|missing|thumbnail=$preferThumbnail"
+    val requestKey = clipboardBitmapRequestKey(imageFile, preferThumbnail)
 
     return produceState<ImageBitmap?>(
         initialValue = cachedClipboardBitmap(imageFile, preferThumbnail),
@@ -182,13 +191,10 @@ internal fun rememberClipboardBitmapLoadState(
     if(imageFile == null) return ClipboardBitmapLoadState.Unavailable
 
     val cachedBitmap = cachedClipboardBitmap(imageFile, preferThumbnail)
-    val source = clipboardBitmapSource(imageFile, preferThumbnail)
-    val requestKey = source?.cacheKey
-        ?: "${imageFile.absolutePath}|missing|thumbnail=$preferThumbnail"
+    val requestKey = clipboardBitmapRequestKey(imageFile, preferThumbnail)
     val initialState = when {
         cachedBitmap != null -> ClipboardBitmapLoadState.Loaded(cachedBitmap)
-        source != null -> ClipboardBitmapLoadState.Loading
-        else -> ClipboardBitmapLoadState.Unavailable
+        else -> ClipboardBitmapLoadState.Loading
     }
 
     return produceState<ClipboardBitmapLoadState>(
@@ -207,14 +213,16 @@ internal fun rememberClipboardBitmaps(
     imageFiles: List<File>,
     bitmapOverrides: List<ImageBitmap>?,
     preferThumbnail: Boolean = true,
-    maxCount: Int? = null
+    maxCount: Int? = null,
+    requestVersion: Any? = null
 ): List<ImageBitmap> {
     if(bitmapOverrides != null) return bitmapOverrides
     val requestKeys = clipboardBitmapRequestKeys(imageFiles, preferThumbnail, maxCount)
 
     return produceState<List<ImageBitmap>>(
         initialValue = cachedClipboardBitmaps(imageFiles, preferThumbnail, maxCount),
-        requestKeys
+        requestKeys,
+        requestVersion
     ) {
         value = withContext(Dispatchers.IO) {
             requestedClipboardBitmapFiles(imageFiles, maxCount)
@@ -252,18 +260,22 @@ fun ClipboardEntryView(
     isSelected: Boolean = false
 ) {
     val context = LocalContext.current
+    val clipboardDir = remember(context) {
+        File(context.applicationInfo.dataDir, "files/clipboardfiles")
+    }
     val showEmbed = embedDisplayMode != ClipboardEmbedDisplayMode.ShowRawClipboard
     val shouldBlurPreviewImage = embedDisplayMode == ClipboardEmbedDisplayMode.ShowEmbedBlurred
     val imageFiles = remember(clipboardEntry, embedDisplayMode) {
         when {
-            clipboardEntry.text == null -> listOfNotNull(clipboardEntry.getFile(context))
-            showEmbed -> clipboardEntry.getPreviewFiles(context)
+            clipboardEntry.text == null -> listOfNotNull(clipboardEntry.getFile(clipboardDir))
+            showEmbed -> clipboardEntry.getPreviewFiles(clipboardDir)
             else -> emptyList()
         }
     }
     val previewBitmaps = rememberClipboardBitmaps(
         imageFiles = imageFiles,
-        bitmapOverrides = bitmapOverrides ?: bitmapOverride?.let { listOf(it) }
+        bitmapOverrides = bitmapOverrides ?: bitmapOverride?.let { listOf(it) },
+        requestVersion = clipboardEntry
     )
 
     val cardColor = if(clipboardEntry.pinned) {

@@ -161,16 +161,25 @@ fun File.isClipboardImageFile(): Boolean =
     name.isClipboardImageFileName()
 
 fun ClipboardEntry.getFile(context: Context): File? =
-    backingFile?.let { File(context.clipboardDir, it) }
+    getFile(context.clipboardDir)
+
+fun ClipboardEntry.getFile(clipboardDir: File): File? =
+    backingFile?.let { File(clipboardDir, it) }
 
 fun ClipboardEntry.getPreviewFile(context: Context): File? =
-    previewMediaFileNames().firstOrNull()?.let { previewMediaFile(context, it) }
+    getPreviewFile(context.clipboardDir)
+
+fun ClipboardEntry.getPreviewFile(clipboardDir: File): File? =
+    previewMediaFileNames().firstOrNull()?.let { previewMediaFile(clipboardDir, it) }
 
 fun ClipboardEntry.getPreviewFiles(context: Context): List<File> =
-    previewMediaFileNames().map { previewMediaFile(context, it) }
+    getPreviewFiles(context.clipboardDir)
 
-private fun previewMediaFile(context: Context, fileName: String): File {
-    return File(context.clipboardDir, fileName)
+fun ClipboardEntry.getPreviewFiles(clipboardDir: File): List<File> =
+    previewMediaFileNames().map { previewMediaFile(clipboardDir, it) }
+
+private fun previewMediaFile(clipboardDir: File, fileName: String): File {
+    return File(clipboardDir, fileName)
 }
 
 fun ClipboardEntry.previewMedia(): List<ClipboardPreviewMedia> =
