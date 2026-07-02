@@ -185,6 +185,7 @@ private fun GenericEditTextCompose(
     onEnter: (() -> Unit)? = null,
     autofocus: Boolean = false,
     forceQwerty: Boolean = false,
+    forcedLayout: String? = null,
     inputFilters: Array<InputFilter>? = null,
 ) {
     val context = LocalContext.current
@@ -231,6 +232,7 @@ private fun GenericEditTextCompose(
             privateImeOptions = StringBuilder().apply {
                 if(!autocorrect) append("org.futo.inputmethod.latin.NoSuggestions=1,")
                 if(forceQwerty) append("org.futo.inputmethod.latin.ForceLayout=qwerty,org.futo.inputmethod.latin.ForceLocale=zz,")
+                if(forcedLayout != null) append(forcedLayout)
             }.toString()
 
             setHeight(height.toInt())
@@ -355,6 +357,7 @@ fun SettingsTextEdit(
     autocorrect: Boolean = true,
     autofocus: Boolean = false,
     forceQwerty: Boolean = false,
+    forcedLayout: String? = null,
     error: Boolean = false,
 ) {
     Surface(
@@ -381,6 +384,7 @@ fun SettingsTextEdit(
                     autocorrect = autocorrect,
                     autofocus = autofocus,
                     forceQwerty = forceQwerty,
+                    forcedLayout = forcedLayout,
                     modifier = Modifier.fillMaxWidth()
                 )
             }

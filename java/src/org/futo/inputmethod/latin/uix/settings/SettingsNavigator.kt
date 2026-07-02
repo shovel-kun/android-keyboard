@@ -40,6 +40,7 @@ import org.futo.inputmethod.latin.uix.settings.pages.DeveloperScreen
 import org.futo.inputmethod.latin.uix.settings.pages.HelpMenu
 import org.futo.inputmethod.latin.uix.settings.pages.HomeScreen
 import org.futo.inputmethod.latin.uix.settings.pages.HomeScreenLite
+import org.futo.inputmethod.latin.uix.settings.pages.KASROZMenu
 import org.futo.inputmethod.latin.uix.settings.pages.KeyboardAndTypingScreen
 import org.futo.inputmethod.latin.uix.settings.pages.KeyboardSettingsMenu
 import org.futo.inputmethod.latin.uix.settings.pages.LanguageSettingsLite
@@ -185,6 +186,7 @@ fun SettingsNavigator(
             composable("credits") { CreditsScreen(navController) }
             composable("exportingcfg") { ExportingMenu(navController) }
             composable("exportingClipboard") { ClipboardExportingMenu(navController) }
+            composable("kasroz") { KASROZMenu() }
             dialog("update") {
                 UpdateDialog(navController = navController)
             }
