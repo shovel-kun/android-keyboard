@@ -101,6 +101,15 @@ private data class ClipboardStorageSnapshot(
     val fileNames: Set<String>
 )
 
+internal fun describeClipboardStorageFile(role: String, file: File): String {
+    val exists = file.exists()
+    val decodeSuccess = exists && runCatching {
+        decodeClipboardEntries(file.readText())
+    }.isSuccess
+
+    return "role=$role, name=${file.name}, exists=$exists, byteSize=${if(exists) file.length() else 0L}, decodeSuccess=$decodeSuccess"
+}
+
 internal data class ClipboardPreviewProviderCooldown(
     val provider: ClipboardPreviewProvider,
     val retryAfterEpochMs: Long,
@@ -1479,18 +1488,9 @@ Cause: ${e.message}
 
 Stack trace: ${e.stackTrace.map { it.toString() }}
 
---- main data start --- snip ---
-${if(clipboardFile.exists()) { clipboardFile.readText() } else { "File does not exist" }}
---- main data end --- snip ---
-
-
---- bak data start --- snip ---
-${if(clipboardFileBak.exists()) { clipboardFileBak.readText() } else { "File does not exist" }}
---- bak data end --- snip ---
-
---- swap data start --- snip ---
-${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File does not exist" }}
---- swap data end --- snip ---
+Main: ${describeClipboardStorageFile("main", clipboardFile)}
+Backup: ${describeClipboardStorageFile("backup", clipboardFileBak)}
+Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
 """))
     }
 

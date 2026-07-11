@@ -11,6 +11,63 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
     @Test
+    fun describeClipboardStorageFile_redactsContentsAndReportsMetadata() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val secretMarker = "SECRET_CLIPBOARD_MARKER"
+            val file = File(dir, "clipboard.json")
+            file.writeText(
+                """
+                [
+                  {
+                    "timestamp": 123,
+                    "pinned": false,
+                    "text": "$secretMarker",
+                    "uri": null,
+                    "mimeTypes": ["text/plain"]
+                  }
+                ]
+                """.trimIndent()
+            )
+
+            val description = describeClipboardStorageFile("main", file)
+
+            assertFalse(description.contains(secretMarker))
+            assertTrue(description.contains("role=main"))
+            assertTrue(description.contains("name=clipboard.json"))
+            assertTrue(description.contains("exists=true"))
+            assertTrue(description.contains("byteSize=${file.length()}"))
+            assertTrue(description.contains("decodeSuccess=true"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun describeClipboardStorageFile_reportsMissingAndInvalidFiles() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val missing = File(dir, "missing.json")
+            val invalid = File(dir, "invalid.json").apply {
+                writeText("SECRET_INVALID_CLIPBOARD_MARKER")
+            }
+
+            val missingDescription = describeClipboardStorageFile("backup", missing)
+            val invalidDescription = describeClipboardStorageFile("swap", invalid)
+
+            assertTrue(missingDescription.contains("exists=false"))
+            assertTrue(missingDescription.contains("byteSize=0"))
+            assertTrue(missingDescription.contains("decodeSuccess=false"))
+            assertFalse(invalidDescription.contains("SECRET_INVALID_CLIPBOARD_MARKER"))
+            assertTrue(invalidDescription.contains("exists=true"))
+            assertTrue(invalidDescription.contains("byteSize=${invalid.length()}"))
+            assertTrue(invalidDescription.contains("decodeSuccess=false"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun shouldObserveScreenshots_requiresAllGates() {
         assertFalse(
             shouldObserveScreenshots(
