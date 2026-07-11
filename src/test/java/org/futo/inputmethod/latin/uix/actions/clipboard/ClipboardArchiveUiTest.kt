@@ -242,6 +242,47 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun clipboardArchiveUiSnapshot_usesImmutableStorageMembershipWithoutFileProbes() {
+        val clipboardDir = createTempDirectory().toFile()
+        try {
+            val archive = sampleArchive(
+                media = listOf(
+                    ClipboardArchiveMedia(
+                        sourceUrl = "https://img.example/saved.jpg",
+                        sourceIndex = 0,
+                        fileName = "saved.jpg",
+                        status = ClipboardArchiveMediaStatus.Saved
+                    )
+                )
+            )
+            val archives = mutableListOf(archive)
+            val fileNames = mutableSetOf("saved.jpg")
+            val snapshot = clipboardArchiveUiSnapshot(
+                archives = archives,
+                clipboardDir = clipboardDir,
+                storageFileNames = fileNames,
+                downloadState = ClipboardArchiveDownloadStateSnapshot(
+                    progressByArchiveKey = emptyMap(),
+                    queuedSourceUrlsByArchiveKey = emptyMap(),
+                    cooldownsByProvider = emptyMap(),
+                    activeArchiveKeys = emptySet()
+                ),
+                loadingArchiveKeys = emptySet()
+            )
+
+            archives.clear()
+            fileNames.clear()
+
+            assertEquals(listOf(archive.key), snapshot.archives.map { it.key })
+            assertEquals("saved.jpg", snapshot.previewFilesByArchiveKey[archive.key]?.single()?.name)
+            assertTrue(snapshot.galleryItemsByArchiveKey[archive.key]?.single()?.isShareable == true)
+            assertFalse(File(clipboardDir, "saved.jpg").exists())
+        } finally {
+            clipboardDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun archiveDisplayStatus_usesPlainUserFacingStates() {
         val complete = sampleArchive(
             media = listOf(

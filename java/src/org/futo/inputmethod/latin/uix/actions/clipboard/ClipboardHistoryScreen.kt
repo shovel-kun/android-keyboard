@@ -104,10 +104,13 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             ).filter { it != DefaultClipboardEntry }
         }
     }
+    val archiveUiSnapshot by remember {
+        derivedStateOf { manager.archiveUiSnapshot() }
+    }
     val allArchives by remember(archiveSortMode) {
         derivedStateOf {
             sortedClipboardArchives(
-                archives = manager.archiveRecords(),
+                archives = archiveUiSnapshot.archives,
                 entries = manager.clipboardHistory.toList(),
                 sortMode = archiveSortMode
             )
@@ -144,13 +147,15 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     }
     val archivePreviewFilesByKey by remember {
         derivedStateOf {
-            manager.archivePreviewFilesByKey(visibleArchives)
+            archiveUiSnapshot.previewFilesByArchiveKey.filterKeys { key ->
+                visibleArchives.any { it.key == key }
+            }
         }
     }
     val archiveDownloadItems by remember {
         derivedStateOf {
             if(downloadsVisible) {
-                manager.archiveDownloadItems()
+                archiveUiSnapshot.downloadItems
             } else {
                 emptyList()
             }
@@ -161,7 +166,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             if(downloadsVisible) {
                 archiveDownloadItems.size
             } else {
-                manager.archiveDownloadActionCount()
+                archiveUiSnapshot.downloadActionCount
             }
         }
     }
@@ -491,7 +496,8 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         archiveBackfillInProgress = archiveBackfillInProgress,
                         archiveBackfillRemainingCount = archiveBackfillRemainingCount,
                         useSingleColumn = useSingleColumn,
-                        manager = manager,
+                        loadingArchiveKeys = archiveUiSnapshot.loadingArchiveKeys,
+                        progressByArchiveKey = archiveUiSnapshot.progressByArchiveKey,
                         onResetFilters = {
                             archiveProviderFilter = ClipboardArchiveProviderFilter.All
                             archiveStatusFilter = ClipboardArchiveStatusFilter.All
@@ -547,9 +553,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     previewArchive?.let { archive ->
         ClipboardArchiveGalleryDialog(
             archive = archive,
-            items = manager.galleryItems(archive),
-            loading = manager.isArchiveLoading(archive),
-            progress = manager.archiveDownloadProgress(archive),
+            items = archiveUiSnapshot.galleryItemsByArchiveKey[archive.key].orEmpty(),
+            loading = archive.key in archiveUiSnapshot.loadingArchiveKeys,
+            progress = archiveUiSnapshot.progressByArchiveKey[archive.key],
             onDismiss = { previewArchiveKey = null },
             onRetry = { manager.retryArchive(archive) },
             onDelete = { archiveDeleteRequest = ArchiveDeleteRequest(archive) },
@@ -753,7 +759,8 @@ private fun ClipboardArchivesContent(
     archiveBackfillInProgress: Boolean,
     archiveBackfillRemainingCount: Int,
     useSingleColumn: Boolean,
-    manager: ClipboardHistoryManager,
+    loadingArchiveKeys: Set<String>,
+    progressByArchiveKey: Map<String, ClipboardArchiveDownloadProgress>,
     onResetFilters: () -> Unit,
     onOpen: (ClipboardLinkArchive) -> Unit,
     onRetry: (ClipboardLinkArchive) -> Unit,
@@ -809,8 +816,8 @@ private fun ClipboardArchivesContent(
             ClipboardArchiveCard(
                 archive = archive,
                 previewFiles = previewFilesByKey[archive.key].orEmpty(),
-                loading = manager.isArchiveLoading(archive),
-                progress = manager.archiveDownloadProgress(archive),
+                loading = archive.key in loadingArchiveKeys,
+                progress = progressByArchiveKey[archive.key],
                 onOpen = { onOpen(archive) },
                 onRetry = { onRetry(archive) },
                 onDelete = { onDelete(archive) }

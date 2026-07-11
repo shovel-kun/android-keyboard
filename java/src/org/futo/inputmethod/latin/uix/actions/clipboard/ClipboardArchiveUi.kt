@@ -66,7 +66,7 @@ internal data class ClipboardArchiveGalleryItem(
     val totalCount: Int,
     val displayStatus: ClipboardArchiveDisplayStatus
 ) {
-    val isShareable: Boolean get() = file?.isFile == true
+    val isShareable: Boolean get() = file != null
     val hasFailureDetails: Boolean get() = media.failureDetail?.isNotBlank() == true
 }
 
@@ -640,7 +640,9 @@ internal fun ClipboardLinkArchive.galleryItems(
     existingArchiveFileNames: Set<String>
 ): List<ClipboardArchiveGalleryItem> {
     val archive = withMissingArchiveFilesMarked(existingArchiveFileNames, now = updatedAtEpochMs)
-    return archive.galleryItemsFromNormalizedArchive { clipboardMediaFile(clipboardDir, it) }
+    return archive.galleryItemsFromNormalizedArchive { fileName ->
+        File(clipboardDir, fileName).takeIf { fileName in existingArchiveFileNames }
+    }
 }
 
 private fun ClipboardLinkArchive.galleryItemsFromNormalizedArchive(
@@ -665,7 +667,7 @@ private fun ClipboardLinkArchive.galleryItemsFromNormalizedArchive(
 private fun ClipboardArchiveMedia.displayStatus(file: File?): ClipboardArchiveDisplayStatus =
     when (status) {
         ClipboardArchiveMediaStatus.Saved -> {
-            if(file?.isFile == true) ClipboardArchiveDisplayStatus.Complete else ClipboardArchiveDisplayStatus.Failed
+            if(file != null) ClipboardArchiveDisplayStatus.Complete else ClipboardArchiveDisplayStatus.Failed
         }
         ClipboardArchiveMediaStatus.Pending -> ClipboardArchiveDisplayStatus.Waiting
         ClipboardArchiveMediaStatus.Failed,
