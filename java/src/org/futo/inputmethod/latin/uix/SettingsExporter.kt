@@ -43,8 +43,8 @@ import org.futo.inputmethod.latin.uix.PreferenceUtils.getDefaultSharedPreference
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupCurrentVersion
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveFileName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveFilesDirectoryName
-import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveTombstone
-import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveTombstonesFileName
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveStore
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveStoreState
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupFilesDirectoryName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupManifest
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupManifestFileName
@@ -59,27 +59,18 @@ import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardBackupMetadata
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveFile
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveMetadataDir
-import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveMetadataFile
-import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveTombstonesFile
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardFile
 import org.futo.inputmethod.latin.uix.actions.clipboard.clearEntryArchiveTombstones
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchivesFromPreviewEntries
-import org.futo.inputmethod.latin.uix.actions.clipboard.decodeClipboardArchiveTombstones
 import org.futo.inputmethod.latin.uix.actions.clipboard.decodeClipboardEntries
 import org.futo.inputmethod.latin.uix.actions.clipboard.decodeLegacyClipboardArchives
-import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchive
 import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchives
-import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchiveTombstones
 import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardEntries
 import org.futo.inputmethod.latin.uix.actions.clipboard.extractClipboardBackup
 import org.futo.inputmethod.latin.uix.actions.clipboard.filterDeletedClipboardArchives
-import org.futo.inputmethod.latin.uix.actions.clipboard.loadClipboardArchivesFromMetadataDir
-import org.futo.inputmethod.latin.uix.actions.clipboard.mergeStoredClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.mergeClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.mergeClipboardEntries
-import org.futo.inputmethod.latin.uix.actions.clipboard.reconcileClipboardArchivesWithStorage
-import org.futo.inputmethod.latin.uix.actions.clipboard.reconcileClipboardEntriesWithStorage
 import org.futo.inputmethod.latin.uix.actions.clipboard.referencedClipboardArchiveFileNames
 import org.futo.inputmethod.latin.uix.actions.clipboard.referencedClipboardFileNames
 import org.futo.inputmethod.latin.uix.actions.clipboard.tombstonesRetainedAfterArchiveImport
@@ -312,7 +303,7 @@ object SettingsExporter {
             clipboardFile.inputStream().use { it.copyTo(zipOut) }
             zipOut.closeEntry()
         }
-        val clipboardArchives = loadStoredClipboardArchives(context)
+        val clipboardArchives = ClipboardArchiveStore(context.filesDir).load().archives
         if (clipboardArchives.isNotEmpty()) {
             zipOut.putNextEntry(ZipEntry(ClipboardArchiveFileName))
             zipOut.write(encodeClipboardArchives(clipboardArchives).encodeUtf8().toByteArray())
@@ -412,7 +403,7 @@ object SettingsExporter {
         } else {
             emptyList()
         }
-        val clipboardArchives = loadStoredClipboardArchives(context)
+        val clipboardArchives = ClipboardArchiveStore(context.filesDir).load().archives
         val referencedFiles = referencedClipboardFileNames(clipboardEntries)
         val referencedArchiveFiles = referencedClipboardArchiveFileNames(clipboardArchives)
 
@@ -517,10 +508,9 @@ object SettingsExporter {
                 }
 
                 entry.name == ClipboardArchiveFileName -> {
-                    writeStoredClipboardArchives(
-                        context = context,
-                        archives = decodeLegacyClipboardArchives(zipIn.readAllBytesCompat().toByteString().utf8())
-                    )
+                    val store = ClipboardArchiveStore(context.filesDir)
+                    decodeLegacyClipboardArchives(zipIn.readAllBytesCompat().toByteString().utf8())
+                        .forEach(store::saveArchive)
                 }
 
                 entry.name.startsWith("ext/") -> {
@@ -645,24 +635,6 @@ object SettingsExporter {
         context: Context,
         extracted: ExtractedClipboardBackup
     ) {
-        val clipboardFile = context.clipboardFile
-        val clipboardFileBak = File(context.filesDir, "$ClipboardFileName.bak")
-        val clipboardFileSwap = File(context.filesDir, "$ClipboardFileName.swap")
-
-        listOf(clipboardFile, clipboardFileBak, clipboardFileSwap).forEach {
-            if(it.exists()) it.delete()
-        }
-        context.clipboardDir.deleteRecursively()
-        context.clipboardDir.mkdirs()
-        context.clipboardArchiveFile.delete()
-        context.clipboardArchiveTombstonesFile.delete()
-        File(context.filesDir, "$ClipboardArchiveTombstonesFileName.bak").delete()
-        File(context.filesDir, "$ClipboardArchiveTombstonesFileName.swap").delete()
-        context.clipboardArchiveMetadataDir.deleteRecursively()
-        context.clipboardArchiveDir.deleteRecursively()
-
-        copyImportedClipboardFiles(extracted.filesDir, context.clipboardDir)
-        copyImportedClipboardFiles(extracted.archiveFilesDir, context.clipboardDir)
         val importedTombstones = archiveTombstonesForEntries(emptyList(), extracted.entries)
         val importedDeletedKeys = archiveTombstoneKeys(importedTombstones)
         val importedEntries = clearEntryArchiveTombstones(extracted.entries)
@@ -673,39 +645,29 @@ object SettingsExporter {
             ),
             importedDeletedKeys
         )
-        val reconciled = reconcileClipboardImportResult(
-            clipboardDir = context.clipboardDir,
-            entries = importedEntries,
-            archiveReferencedFileNames = referencedClipboardArchiveFileNames(importedArchives)
+        ClipboardArchiveStore(context.filesDir).stageAndPromote(
+            state = ClipboardArchiveStoreState(importedEntries, importedArchives, importedTombstones),
+            importedMediaDirs = listOf(extracted.filesDir, extracted.archiveFilesDir),
+            preserveExistingMedia = false
         )
-        val reconciledArchives = reconcileClipboardArchiveImportResult(
-            clipboardDir = context.clipboardDir,
-            legacyArchiveDir = context.clipboardArchiveDir,
-            archives = importedArchives
-        )
-        clipboardFile.writeText(encodeClipboardEntries(reconciled))
-        writeClipboardArchiveTombstones(context, importedTombstones)
-        writeStoredClipboardArchives(context, reconciledArchives)
     }
 
     private fun mergeClipboardBackup(
         context: Context,
         extracted: ExtractedClipboardBackup
     ) {
-        context.clipboardDir.mkdirs()
-        copyImportedClipboardFiles(extracted.filesDir, context.clipboardDir)
-        copyImportedClipboardFiles(extracted.archiveFilesDir, context.clipboardDir)
-
+        val store = ClipboardArchiveStore(context.filesDir)
+        val stored = store.load()
         val currentEntries = if(context.clipboardFile.exists()) {
             runCatching { context.clipboardFile.decodeClipboardEntries() }.getOrElse { emptyList() }
         } else {
             emptyList()
         }
-        val currentTombstones = archiveTombstonesForEntries(loadClipboardArchiveTombstones(context), currentEntries)
+        val currentTombstones = archiveTombstonesForEntries(stored.tombstones, currentEntries)
         val currentDeletedArchiveKeys = archiveTombstoneKeys(currentTombstones)
         val retainedTombstones = tombstonesRetainedAfterArchiveImport(currentTombstones, extracted.archives)
         val retainedDeletedArchiveKeys = archiveTombstoneKeys(retainedTombstones)
-        val currentArchives = filterDeletedClipboardArchives(loadStoredClipboardArchives(context), currentDeletedArchiveKeys)
+        val currentArchives = filterDeletedClipboardArchives(stored.archives, currentDeletedArchiveKeys)
         val importedArchives = mergeClipboardArchives(
             currentArchives = extracted.archives,
             importedArchives = clipboardArchivesFromPreviewEntries(extracted.entries)
@@ -716,109 +678,11 @@ object SettingsExporter {
             mergeClipboardArchives(currentArchives, importedArchives),
             retainedDeletedArchiveKeys
         )
-        val reconciled = reconcileClipboardImportResult(
-            clipboardDir = context.clipboardDir,
-            entries = mergedEntries,
-            archiveReferencedFileNames = referencedClipboardArchiveFileNames(mergedArchives)
+        store.stageAndPromote(
+            state = ClipboardArchiveStoreState(mergedEntries, mergedArchives, retainedTombstones),
+            importedMediaDirs = listOf(extracted.filesDir, extracted.archiveFilesDir),
+            preserveExistingMedia = true
         )
-        val reconciledArchives = reconcileClipboardArchiveImportResult(
-            clipboardDir = context.clipboardDir,
-            legacyArchiveDir = context.clipboardArchiveDir,
-            archives = mergedArchives
-        )
-        context.clipboardFile.writeText(encodeClipboardEntries(reconciled))
-        writeClipboardArchiveTombstones(context, retainedTombstones)
-        writeStoredClipboardArchives(context, reconciledArchives)
-    }
-
-    private fun loadClipboardArchiveTombstones(
-        context: Context
-    ) = if(context.clipboardArchiveTombstonesFile.exists()) {
-        runCatching { decodeClipboardArchiveTombstones(context.clipboardArchiveTombstonesFile.readText()) }.getOrElse { emptyList() }
-    } else {
-        val backup = File(context.filesDir, "$ClipboardArchiveTombstonesFileName.bak")
-        if(backup.exists()) {
-            runCatching { decodeClipboardArchiveTombstones(backup.readText()) }.getOrElse { emptyList() }
-        } else {
-            emptyList()
-        }
-    }
-
-    private fun writeClipboardArchiveTombstones(
-        context: Context,
-        tombstones: Collection<ClipboardArchiveTombstone>
-    ) {
-        context.clipboardArchiveTombstonesFile.writeText(encodeClipboardArchiveTombstones(tombstones))
-        File(context.filesDir, "$ClipboardArchiveTombstonesFileName.bak").delete()
-        File(context.filesDir, "$ClipboardArchiveTombstonesFileName.swap").delete()
-    }
-
-    private fun loadStoredClipboardArchives(
-        context: Context
-    ): List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive> =
-        mergeStoredClipboardArchives(
-            legacyArchives = if(context.clipboardArchiveFile.exists()) {
-                runCatching { context.clipboardArchiveFile.decodeLegacyClipboardArchives() }.getOrElse { emptyList() }
-            } else {
-                emptyList()
-            },
-            metadataArchives = loadClipboardArchivesFromMetadataDir(context.clipboardArchiveMetadataDir)
-        )
-
-    private fun writeStoredClipboardArchives(
-        context: Context,
-        archives: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive>
-    ) {
-        context.clipboardArchiveMetadataDir.deleteRecursively()
-        context.clipboardArchiveMetadataDir.mkdirs()
-        archives.forEach { archive ->
-            context.clipboardArchiveMetadataDir
-                .clipboardArchiveMetadataFile(archive.key)
-                .writeText(encodeClipboardArchive(archive))
-        }
-        context.clipboardArchiveFile.delete()
-        File(context.filesDir, "$ClipboardArchiveFileName.bak").delete()
-        File(context.filesDir, "$ClipboardArchiveFileName.swap").delete()
-    }
-
-    private fun copyImportedClipboardFiles(sourceDir: File, destinationDir: File) {
-        sourceDir.listFiles()?.forEach { file ->
-            if(!file.isFile) return@forEach
-
-            val destination = File(destinationDir, file.name)
-            if(!destination.exists()) {
-                file.copyTo(destination, overwrite = false)
-            }
-        }
-    }
-
-    private fun reconcileClipboardImportResult(
-        clipboardDir: File,
-        entries: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry>,
-        archiveReferencedFileNames: Set<String> = emptySet()
-    ): List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry> {
-        return reconcileClipboardEntriesWithStorage(entries, clipboardDir)
-    }
-
-    private fun reconcileClipboardArchiveImportResult(
-        clipboardDir: File,
-        legacyArchiveDir: File,
-        archives: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive>
-    ): List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive> {
-        val reconciledArchives = reconcileClipboardArchivesWithStorage(
-            archives = archives,
-            clipboardDir = clipboardDir,
-            legacyArchiveDir = legacyArchiveDir
-        )
-        val stillReferenced = referencedClipboardArchiveFileNames(reconciledArchives)
-
-        legacyArchiveDir.listFiles()?.forEach { file ->
-            if(file.name !in stillReferenced) {
-                file.delete()
-            }
-        }
-
-        return reconciledArchives
     }
 
     fun triggerExportSettings(context: Context) {

@@ -346,12 +346,7 @@ class ClipboardHistoryManager private constructor(
     private val clipboardFile = context.clipboardFile
     private val clipboardFileBak = File(context.filesDir, "$ClipboardFileName.bak")
     private val clipboardFileSwap = File(context.filesDir, "$ClipboardFileName.swap")
-    private val archiveFile = context.clipboardArchiveFile
-    private val archiveFileBak = File(context.filesDir, "$ClipboardArchiveFileName.bak")
-    private val archiveTombstonesFile = context.clipboardArchiveTombstonesFile
-    private val archiveTombstonesFileBak = File(context.filesDir, "$ClipboardArchiveTombstonesFileName.bak")
-    private val archiveTombstonesFileSwap = File(context.filesDir, "$ClipboardArchiveTombstonesFileName.swap")
-    private val archiveMetadataDir = context.clipboardArchiveMetadataDir
+    private val archiveStore = ClipboardArchiveStore(context.filesDir)
     private val archiveSaveLock = Any()
 
     private var scheduledPreviewSaveJob: Job? = null
@@ -1570,47 +1565,9 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     private fun decodeFile(file: File): List<ClipboardEntry> =
         decodeClipboardEntries(file.readText())
 
-    private fun loadArchives(): List<ClipboardLinkArchive> =
-        mergeStoredClipboardArchives(
-            legacyArchives = loadLegacyArchiveFile(),
-            metadataArchives = loadClipboardArchivesFromMetadataDir(archiveMetadataDir)
-        )
+    private fun loadArchives(): List<ClipboardLinkArchive> = archiveStore.load().archives
 
-    private fun loadLegacyArchiveFile(): List<ClipboardLinkArchive> =
-        if(archiveFile.exists()) {
-            try {
-                archiveFile.decodeLegacyClipboardArchives()
-            } catch(e: Exception) {
-                reportError("loadArchives main, trying bak", e)
-                if(archiveFileBak.exists()) {
-                    archiveFileBak.decodeLegacyClipboardArchives()
-                } else {
-                    throw e
-                }
-            }
-        } else if(archiveFileBak.exists()) {
-            archiveFileBak.decodeLegacyClipboardArchives()
-        } else {
-            emptyList()
-        }
-
-    private fun loadArchiveTombstones(): List<ClipboardArchiveTombstone> =
-        if(archiveTombstonesFile.exists()) {
-            try {
-                archiveTombstonesFile.decodeClipboardArchiveTombstones()
-            } catch(e: Exception) {
-                reportError("loadArchiveTombstones main, trying bak", e)
-                if(archiveTombstonesFileBak.exists()) {
-                    archiveTombstonesFileBak.decodeClipboardArchiveTombstones()
-                } else {
-                    throw e
-                }
-            }
-        } else if(archiveTombstonesFileBak.exists()) {
-            archiveTombstonesFileBak.decodeClipboardArchiveTombstones()
-        } else {
-            emptyList()
-        }
+    private fun loadArchiveTombstones(): List<ClipboardArchiveTombstone> = archiveStore.load().tombstones
 
     private fun fetchPreviewForEntry(text: String, manualRetry: Boolean = false): Boolean {
         val request = previewFetchRequest(text, manualRetry) ?: return false
@@ -2300,27 +2257,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         if(!context.isDirectBootUnlocked) return
         synchronized(archiveSaveLock) {
             try {
-                archiveMetadataDir.mkdirs()
-                val archiveFile = archiveMetadataDir.clipboardArchiveMetadataFile(archive.key)
-                val archiveFileBak = File(archiveMetadataDir, "${archiveFile.name}.bak")
-                val archiveFileSwap = File(archiveMetadataDir, "${archiveFile.name}.swap")
-                val encoded = encodeClipboardArchive(archive)
-                archiveFileSwap.writeText(encoded)
-                if(archiveFileSwap.decodeClipboardArchive() != archive) {
-                    throw Exception("Saved archive data does not match expected data")
-                }
-
-                replaceFileWithBackup(
-                    swapFile = archiveFileSwap,
-                    targetFile = archiveFile,
-                    backupFile = archiveFileBak
-                )
-
-                if(archiveFile.decodeClipboardArchive() != archive) {
-                    throw Exception("Saved archive data does not match expected data")
-                }
-
-                deleteLegacyArchiveAggregateFiles()
+                archiveStore.saveArchive(archive)
             } catch(e: Exception) {
                 clipboardIOFailure.value = true
                 clipboardIOFailureReason = e.toString()
@@ -2391,28 +2328,13 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         flushPendingArchiveSaves()
         linkArchives.values.forEach(::saveArchive)
         deleteStaleArchiveMetadataFiles()
-        deleteLegacyArchiveAggregateFiles()
     }
 
     private fun saveArchiveTombstones(tombstones: Collection<ClipboardArchiveTombstone>) {
         if(!context.isDirectBootUnlocked) return
         synchronized(archiveSaveLock) {
             try {
-                val encoded = encodeClipboardArchiveTombstones(tombstones)
-                archiveTombstonesFileSwap.writeText(encoded)
-                if(archiveTombstonesFileSwap.decodeClipboardArchiveTombstones() != tombstones.sortedBy { it.key }) {
-                    throw Exception("Saved archive tombstones do not match expected data")
-                }
-
-                replaceFileWithBackup(
-                    swapFile = archiveTombstonesFileSwap,
-                    targetFile = archiveTombstonesFile,
-                    backupFile = archiveTombstonesFileBak
-                )
-
-                if(archiveTombstonesFile.decodeClipboardArchiveTombstones() != tombstones.sortedBy { it.key }) {
-                    throw Exception("Saved archive tombstones do not match expected data")
-                }
+                archiveStore.saveTombstones(tombstones)
             } catch(e: Exception) {
                 clipboardIOFailure.value = true
                 clipboardIOFailureReason = e.toString()
@@ -2422,26 +2344,11 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     }
 
     private fun deleteArchiveMetadataFile(archiveKey: String) {
-        val file = archiveMetadataDir.clipboardArchiveMetadataFile(archiveKey)
-        listOf(file, File(archiveMetadataDir, "${file.name}.bak"), File(archiveMetadataDir, "${file.name}.swap"))
-            .forEach { it.delete() }
+        archiveStore.deleteArchiveMetadata(archiveKey)
     }
 
     private fun deleteStaleArchiveMetadataFiles() {
-        val expectedNames = linkArchives.keys
-            .map(::clipboardArchiveMetadataFileName)
-            .flatMap { listOf(it, "$it.bak", "$it.swap") }
-            .toSet()
-        archiveMetadataDir.listFiles()?.forEach { file ->
-            if(file.name !in expectedNames) {
-                file.delete()
-            }
-        }
-    }
-
-    private fun deleteLegacyArchiveAggregateFiles() {
-        listOf(archiveFile, archiveFileBak, File(context.filesDir, "$ClipboardArchiveFileName.swap"))
-            .forEach { it.delete() }
+        archiveStore.deleteStaleArchiveMetadata(linkArchives.keys)
     }
 
     // Callers invoke this from ClipboardIOContext; the filesystem work below therefore

@@ -15,6 +15,167 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
     @Test
+    fun archiveStore_interruptedPromotionRestoresPreviousState() {
+        val root = createTempDirectory().toFile()
+        val oldMedia = createTempDirectory().toFile()
+        val newMedia = createTempDirectory().toFile()
+        try {
+            File(oldMedia, "old.jpg").writeText("old")
+            File(newMedia, "new.jpg").writeText("new")
+            val oldArchive = sampleArchive(
+                media = listOf(savedArchiveMedia("old.jpg", 0))
+            )
+            ClipboardArchiveStore(root).stageAndPromote(
+                state = ClipboardArchiveStoreState(
+                    entries = listOf(sampleEntry("old")),
+                    archives = listOf(oldArchive),
+                    tombstones = emptyList()
+                ),
+                importedMediaDirs = listOf(oldMedia),
+                preserveExistingMedia = false
+            )
+
+            val failingStore = ClipboardArchiveStore(root) { step ->
+                if(step == 3) throw IllegalStateException("interrupted")
+            }
+            try {
+                failingStore.stageAndPromote(
+                    state = ClipboardArchiveStoreState(
+                        entries = listOf(sampleEntry("new")),
+                        archives = listOf(sampleArchive(media = listOf(savedArchiveMedia("new.jpg", 0)))),
+                        tombstones = emptyList()
+                    ),
+                    importedMediaDirs = listOf(newMedia),
+                    preserveExistingMedia = false
+                )
+                throw AssertionError("Expected promotion to fail")
+            } catch(_: IllegalStateException) {
+                // Expected.
+            }
+
+            assertEquals("old", File(root, ClipboardFileName).decodeClipboardEntries().single().text)
+            assertEquals(oldArchive, ClipboardArchiveStore(root).load().archives.single())
+            assertEquals("old", File(File(root, ClipboardBackupFilesDirectoryName), "old.jpg").readText())
+            assertFalse(File(File(root, ClipboardBackupFilesDirectoryName), "new.jpg").exists())
+        } finally {
+            root.deleteRecursively()
+            oldMedia.deleteRecursively()
+            newMedia.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_replacePromotesCompleteValidatedGraph() {
+        val root = createTempDirectory().toFile()
+        val media = createTempDirectory().toFile()
+        try {
+            File(media, "saved.jpg").writeText("image")
+            val archive = sampleArchive(media = listOf(savedArchiveMedia("saved.jpg", 0)))
+            val tombstone = ClipboardArchiveTombstone("twitter:deleted", 10L)
+            val installed = ClipboardArchiveStore(root).stageAndPromote(
+                state = ClipboardArchiveStoreState(
+                    entries = listOf(sampleEntry("replacement")),
+                    archives = listOf(archive),
+                    tombstones = listOf(tombstone)
+                ),
+                importedMediaDirs = listOf(media),
+                preserveExistingMedia = false
+            )
+
+            val loaded = ClipboardArchiveStore(root).load()
+            assertEquals(installed.archives, loaded.archives)
+            assertEquals(listOf(tombstone), loaded.tombstones)
+            assertEquals(installed.entries, File(root, ClipboardFileName).decodeClipboardEntries())
+            assertTrue(File(File(root, ClipboardBackupFilesDirectoryName), "saved.jpg").isFile)
+        } finally {
+            root.deleteRecursively()
+            media.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_mergeKeepsExistingAndImportedRicherMedia() {
+        val root = createTempDirectory().toFile()
+        val oldMedia = createTempDirectory().toFile()
+        val importedMedia = createTempDirectory().toFile()
+        try {
+            File(oldMedia, "one.jpg").writeText("one")
+            File(importedMedia, "two.jpg").writeText("two")
+            val store = ClipboardArchiveStore(root)
+            store.stageAndPromote(
+                ClipboardArchiveStoreState(
+                    entries = emptyList(),
+                    archives = listOf(sampleArchive(media = listOf(savedArchiveMedia("one.jpg", 0)))),
+                    tombstones = emptyList()
+                ),
+                importedMediaDirs = listOf(oldMedia),
+                preserveExistingMedia = false
+            )
+            val richer = sampleArchive(
+                media = listOf(savedArchiveMedia("one.jpg", 0), savedArchiveMedia("two.jpg", 1))
+            )
+            store.stageAndPromote(
+                ClipboardArchiveStoreState(emptyList(), listOf(richer), emptyList()),
+                importedMediaDirs = listOf(importedMedia),
+                preserveExistingMedia = true
+            )
+
+            assertEquals(richer, store.load().archives.single())
+            assertEquals(
+                setOf("one.jpg", "two.jpg"),
+                File(root, ClipboardBackupFilesDirectoryName).listFiles()!!.map { it.name }.toSet()
+            )
+        } finally {
+            root.deleteRecursively()
+            oldMedia.deleteRecursively()
+            importedMedia.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_corruptPrimaryRecoversValidBackup() {
+        val root = createTempDirectory().toFile()
+        try {
+            val metadataDir = File(root, ClipboardArchiveMetadataDirectoryName).apply { mkdirs() }
+            val archive = sampleArchive(media = emptyList())
+            val primary = metadataDir.clipboardArchiveMetadataFile(archive.key)
+            primary.writeText("corrupt")
+            File(metadataDir, "${primary.name}.bak").writeText(encodeClipboardArchive(archive))
+
+            val loaded = ClipboardArchiveStore(root).load()
+
+            assertEquals(listOf(archive), loaded.archives)
+            assertTrue(loaded.corruptRecords.single().recoveredFromBackup)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_corruptPrimaryAndBackupArePreservedFromStaleCleanup() {
+        val root = createTempDirectory().toFile()
+        try {
+            val metadataDir = File(root, ClipboardArchiveMetadataDirectoryName).apply { mkdirs() }
+            val archive = sampleArchive(media = emptyList())
+            val primary = metadataDir.clipboardArchiveMetadataFile(archive.key)
+            val backup = File(metadataDir, "${primary.name}.bak")
+            primary.writeText("corrupt-primary")
+            backup.writeText("corrupt-backup")
+            val store = ClipboardArchiveStore(root)
+
+            val loaded = store.load()
+            store.deleteStaleArchiveMetadata(emptySet())
+
+            assertTrue(loaded.archives.isEmpty())
+            assertFalse(loaded.corruptRecords.single().recoveredFromBackup)
+            assertTrue(primary.isFile)
+            assertTrue(backup.isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun extractClipboardBackup_roundTripsProductionZipContract() {
         val dir = createTempDirectory().toFile()
         try {
@@ -47,6 +208,23 @@ class ClipboardBackupTest {
             dir.deleteRecursively()
         }
     }
+
+    private fun sampleEntry(text: String) = ClipboardEntry(
+        timestamp = 1L,
+        pinned = false,
+        text = text,
+        uri = null,
+        mimeTypes = listOf("text/plain")
+    )
+
+    private fun savedArchiveMedia(fileName: String, sourceIndex: Int) = ClipboardArchiveMedia(
+        sourceUrl = "https://img.example/$fileName",
+        sourceIndex = sourceIndex,
+        mimeType = "image/jpeg",
+        fileName = fileName,
+        status = ClipboardArchiveMediaStatus.Saved,
+        lastAttemptAtEpochMs = 10L
+    )
 
     @Test
     fun extractClipboardBackup_rejectsOversizedManifest() {
