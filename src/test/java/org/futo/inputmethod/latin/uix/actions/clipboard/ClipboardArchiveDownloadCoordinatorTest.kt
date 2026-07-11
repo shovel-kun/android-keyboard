@@ -15,17 +15,18 @@ import org.junit.Test
 
 class ClipboardArchiveDownloadCoordinatorTest {
     @Test
-    fun ingestedArchiveDownloadsPersistsAndReloadsBeforeCompletion() = runBlocking {
+    fun completedDownloadSerializesBeforeCodecReload() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         try {
             val coordinator = ClipboardArchiveDownloadCoordinator(scope) { 20L }
             var liveArchive = pendingArchive()
-            var storedArchive: ClipboardLinkArchive? = null
             var reloadedArchive: ClipboardLinkArchive? = null
+            val events = mutableListOf<String>()
 
             coordinator.launch(
                 archiveKey = liveArchive.key,
                 block = {
+                    events += "download"
                     liveArchive = requireNotNull(
                         reduceArchive(
                             liveArchive,
@@ -39,11 +40,14 @@ class ClipboardArchiveDownloadCoordinatorTest {
                     )
                 },
                 onFinished = {
-                    storedArchive = liveArchive
-                    reloadedArchive = storedArchive
+                    val storedArchives = encodeClipboardArchives(listOf(liveArchive))
+                    events += "persist"
+                    reloadedArchive = decodeClipboardArchives(storedArchives).single()
+                    events += "reload"
                 }
             )?.join()
 
+            assertEquals(listOf("download", "persist", "reload"), events)
             assertEquals(ClipboardArchiveMediaStatus.Saved, reloadedArchive?.media?.single()?.status)
             assertEquals("one.jpg", reloadedArchive?.media?.single()?.fileName)
         } finally {
@@ -83,27 +87,33 @@ class ClipboardArchiveDownloadCoordinatorTest {
     }
 
     @Test
-    fun deleteDuringDownloadCancelsWorkAndClearsQueuedSnapshotState() = runBlocking {
+    fun deleteDuringDownloadCancelsThenFinalizesAndClearsState() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         try {
             val coordinator = ClipboardArchiveDownloadCoordinator(scope)
-            val cancelled = CompletableDeferred<Unit>()
+            val finalized = CompletableDeferred<Unit>()
+            val events = mutableListOf<String>()
             coordinator.queueSourceUrls("twitter:1", setOf("https://img/1.jpg"))
             coordinator.launch(
                 archiveKey = "twitter:1",
                 block = {
+                    events += "download"
                     try {
                         CompletableDeferred<Unit>().await()
                     } finally {
-                        cancelled.complete(Unit)
+                        events += "cancelled"
                     }
                 },
-                onFinished = {}
+                onFinished = {
+                    events += "finalized"
+                    finalized.complete(Unit)
+                }
             )
 
             coordinator.cancel("twitter:1")
-            cancelled.await()
+            finalized.await()
 
+            assertEquals(listOf("download", "cancelled", "finalized"), events)
             assertFalse(coordinator.isActive("twitter:1"))
             assertTrue(coordinator.queuedSourceUrls("twitter:1").isEmpty())
             assertNull(coordinator.progress("twitter:1"))

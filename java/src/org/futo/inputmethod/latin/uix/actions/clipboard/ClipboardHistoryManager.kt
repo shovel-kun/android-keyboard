@@ -867,10 +867,7 @@ class ClipboardHistoryManager private constructor(
     private fun resumeProviderArchiveDownloads() {
         if(!canRunAutomaticClipboardNetworkDownloads()) return
         coroutineScope.launch {
-            val existingArchiveFileNames = withContext(ClipboardIOContext) {
-                scanArchiveFileNames()
-            }
-            applyArchiveFileNames(existingArchiveFileNames)
+            val existingArchiveFileNames = refreshArchiveFileNames()
             val archiveKeys = providerArchiveDownloadResumeKeys(
                 archives = linkArchives.values.toList(),
                 existingArchiveFileNames = existingArchiveFileNames,
@@ -1022,9 +1019,13 @@ class ClipboardHistoryManager private constructor(
     private fun scanArchiveFileNames(): Set<String> =
         existingClipboardMediaFileNames(context.clipboardDir, context.clipboardArchiveDir)
 
-    private fun refreshArchiveFileNames(): Set<String> {
-        val fileNames = scanArchiveFileNames()
-        applyArchiveFileNames(fileNames)
+    private suspend fun refreshArchiveFileNames(): Set<String> {
+        val fileNames = withContext(ClipboardIOContext) {
+            scanArchiveFileNames()
+        }
+        withContext(Dispatchers.Main) {
+            applyArchiveFileNames(fileNames)
+        }
         return fileNames
     }
 
@@ -1763,9 +1764,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         ) ?: return null
 
         if(savedMedia.isNotEmpty()) {
-            withContext(ClipboardIOContext) {
-                refreshArchiveFileNames()
-            }
+            refreshArchiveFileNames()
         }
         linkArchives[archive.key] = archive
         queueArchiveSave(archive)
