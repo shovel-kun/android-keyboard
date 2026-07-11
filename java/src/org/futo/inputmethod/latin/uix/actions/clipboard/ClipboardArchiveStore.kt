@@ -20,18 +20,31 @@ internal data class ClipboardArchiveStoreState(
     val tombstones: List<ClipboardArchiveTombstone>
 )
 
+internal data class ClipboardStorageFile(
+    val fileName: String,
+    val relativePath: String,
+    val bytes: Long
+)
+
 internal data class ClipboardStorageInventory(
     val totalBytes: Long,
     val mediaBytes: Long,
     val clipboardMediaBytes: Long,
     val archiveMediaBytes: Long,
     val sharedMediaBytes: Long,
-    val unreferencedMediaBytes: Long,
-    val unreferencedMediaFileCount: Int,
-    val unreferencedMediaFileNames: Set<String>,
+    val unreferencedMediaFiles: List<ClipboardStorageFile>,
     val mediaFileNames: Set<String>,
     val archiveBytesByKey: Map<String, Long>
 ) {
+    val unreferencedMediaBytes: Long
+        get() = unreferencedMediaFiles.sumOf { it.bytes }
+
+    val unreferencedMediaFileCount: Int
+        get() = unreferencedMediaFiles.size
+
+    val unreferencedMediaFileNames: Set<String>
+        get() = unreferencedMediaFiles.mapTo(mutableSetOf()) { it.fileName }
+
     companion object {
         val Empty = ClipboardStorageInventory(
             totalBytes = 0L,
@@ -39,9 +52,7 @@ internal data class ClipboardStorageInventory(
             clipboardMediaBytes = 0L,
             archiveMediaBytes = 0L,
             sharedMediaBytes = 0L,
-            unreferencedMediaBytes = 0L,
-            unreferencedMediaFileCount = 0,
-            unreferencedMediaFileNames = emptySet(),
+            unreferencedMediaFiles = emptyList(),
             mediaFileNames = emptySet(),
             archiveBytesByKey = emptyMap()
         )
@@ -169,9 +180,18 @@ internal class ClipboardArchiveStore(
             sharedMediaBytes = mediaFiles
                 .filter { it.name in clipboardFileNames && it.name in archiveFileNames }
                 .sumOf(File::length),
-            unreferencedMediaBytes = unreferencedFiles.sumOf(File::length),
-            unreferencedMediaFileCount = unreferencedFiles.size,
-            unreferencedMediaFileNames = unreferencedFiles.map(File::getName).toSet(),
+            unreferencedMediaFiles = unreferencedFiles
+                .map { file ->
+                    ClipboardStorageFile(
+                        fileName = file.name,
+                        relativePath = file.relativeTo(filesDir).invariantSeparatorsPath,
+                        bytes = file.length()
+                    )
+                }
+                .sortedWith(
+                    compareByDescending<ClipboardStorageFile> { it.bytes }
+                        .thenBy { it.relativePath }
+                ),
             mediaFileNames = mediaFiles.map(File::getName).toSet(),
             archiveBytesByKey = archives.associate { archive ->
                 val fileNames = referencedClipboardArchiveFileNames(listOf(archive))

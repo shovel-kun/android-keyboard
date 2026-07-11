@@ -278,6 +278,8 @@ class ClipboardBackupTest {
             File(mediaDir, "archive.jpg").writeBytes(ByteArray(4))
             File(mediaDir, "shared.jpg").writeBytes(ByteArray(5))
             File(mediaDir, "unused.jpg").writeBytes(ByteArray(6))
+            val legacyMediaDir = File(root, ClipboardArchiveFilesDirectoryName).apply { mkdirs() }
+            File(legacyMediaDir, "legacy-unused.webp").writeBytes(ByteArray(7))
             val entries = listOf(
                 sampleEntry("clip").copy(backingFile = "clip.jpg"),
                 sampleEntry("shared").copy(backingFile = "shared.jpg")
@@ -291,15 +293,33 @@ class ClipboardBackupTest {
 
             val inventory = ClipboardArchiveStore(root).storageInventory(entries, listOf(archive))
 
-            assertEquals(18L, inventory.mediaBytes)
+            assertEquals(25L, inventory.mediaBytes)
             assertEquals(8L, inventory.clipboardMediaBytes)
             assertEquals(9L, inventory.archiveMediaBytes)
             assertEquals(5L, inventory.sharedMediaBytes)
-            assertEquals(6L, inventory.unreferencedMediaBytes)
-            assertEquals(1, inventory.unreferencedMediaFileCount)
-            assertEquals(setOf("unused.jpg"), inventory.unreferencedMediaFileNames)
+            assertEquals(13L, inventory.unreferencedMediaBytes)
+            assertEquals(2, inventory.unreferencedMediaFileCount)
+            assertEquals(setOf("unused.jpg", "legacy-unused.webp"), inventory.unreferencedMediaFileNames)
+            assertEquals(
+                listOf(
+                    ClipboardStorageFile(
+                        fileName = "legacy-unused.webp",
+                        relativePath = "$ClipboardArchiveFilesDirectoryName/legacy-unused.webp",
+                        bytes = 7L
+                    ),
+                    ClipboardStorageFile(
+                        fileName = "unused.jpg",
+                        relativePath = "$ClipboardBackupFilesDirectoryName/unused.jpg",
+                        bytes = 6L
+                    )
+                ),
+                inventory.unreferencedMediaFiles
+            )
             assertEquals(9L, inventory.archiveBytesByKey[archive.key])
-            assertEquals(setOf("clip.jpg", "archive.jpg", "shared.jpg", "unused.jpg"), inventory.mediaFileNames)
+            assertEquals(
+                setOf("clip.jpg", "archive.jpg", "shared.jpg", "unused.jpg", "legacy-unused.webp"),
+                inventory.mediaFileNames
+            )
         } finally {
             root.deleteRecursively()
         }
