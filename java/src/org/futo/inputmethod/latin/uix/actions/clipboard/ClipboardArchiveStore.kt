@@ -99,6 +99,11 @@ internal class ClipboardArchiveStore(
         require(tombstonesFile.decodeClipboardArchiveTombstones() == expected) { "Saved archive tombstones do not match expected data" }
     }
 
+    fun replaceArchiveMetadata(archives: Collection<ClipboardLinkArchive>) {
+        archives.forEach(::saveArchive)
+        deleteStaleArchiveMetadata(archives.map { it.key }.toSet())
+    }
+
     fun deleteArchiveMetadata(key: String) {
         val file = metadataDir.clipboardArchiveMetadataFile(key)
         listOf(file, File(metadataDir, "${file.name}.bak"), File(metadataDir, "${file.name}.swap"))
@@ -189,11 +194,14 @@ internal class ClipboardArchiveStore(
             legacyArchiveMediaDir.deleteRecursively()
             deleteSupersededSwapFiles()
             promotionMarker.delete()
+            previousDir.deleteRecursively()
         } catch(e: Exception) {
             installed.asReversed().forEach { File(filesDir, it).deleteRecursively() }
             movedCurrent.asReversed().forEach { name ->
                 File(previousDir, name).renameTo(File(filesDir, name))
             }
+            promotionMarker.delete()
+            previousDir.deleteRecursively()
             throw e
         } finally {
             stageDir.deleteRecursively()
@@ -220,6 +228,7 @@ internal class ClipboardArchiveStore(
             }
         }
         promotionMarker.delete()
+        previousDir.deleteRecursively()
     }
 
     private fun validateStage(stageDir: File, expected: ClipboardArchiveStoreState) {

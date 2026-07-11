@@ -1528,7 +1528,8 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
                 else -> listOf(DefaultClipboardEntry)
             }
 
-            val loadedTombstones = loadArchiveTombstones()
+            val storedArchives = archiveStore.load()
+            val loadedTombstones = storedArchives.tombstones
             val migratedTombstones = archiveTombstonesForEntries(loadedTombstones, loadedEntries)
             if(migratedTombstones != loadedTombstones) {
                 saveArchiveTombstones(migratedTombstones)
@@ -1537,7 +1538,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             val tombstoneKeys = archiveTombstoneKeys(migratedTombstones)
             val activeEntries = clearEntryArchiveTombstones(loadedEntries)
             val loadedArchives = filterDeletedClipboardArchives(
-                archives = loadArchives(),
+                archives = storedArchives.archives,
                 deletedArchiveKeys = tombstoneKeys
             )
             val archiveFileNames = scanArchiveFileNames()
@@ -1564,10 +1565,6 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
 
     private fun decodeFile(file: File): List<ClipboardEntry> =
         decodeClipboardEntries(file.readText())
-
-    private fun loadArchives(): List<ClipboardLinkArchive> = archiveStore.load().archives
-
-    private fun loadArchiveTombstones(): List<ClipboardArchiveTombstone> = archiveStore.load().tombstones
 
     private fun fetchPreviewForEntry(text: String, manualRetry: Boolean = false): Boolean {
         val request = previewFetchRequest(text, manualRetry) ?: return false

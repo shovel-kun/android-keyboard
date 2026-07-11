@@ -57,6 +57,7 @@ class ClipboardBackupTest {
             assertEquals(oldArchive, ClipboardArchiveStore(root).load().archives.single())
             assertEquals("old", File(File(root, ClipboardBackupFilesDirectoryName), "old.jpg").readText())
             assertFalse(File(File(root, ClipboardBackupFilesDirectoryName), "new.jpg").exists())
+            assertFalse(File(root, ".clipboard-store-previous").exists())
         } finally {
             root.deleteRecursively()
             oldMedia.deleteRecursively()
@@ -87,6 +88,7 @@ class ClipboardBackupTest {
             assertEquals(listOf(tombstone), loaded.tombstones)
             assertEquals(installed.entries, File(root, ClipboardFileName).decodeClipboardEntries())
             assertTrue(File(File(root, ClipboardBackupFilesDirectoryName), "saved.jpg").isFile)
+            assertFalse(File(root, ".clipboard-store-previous").exists())
         } finally {
             root.deleteRecursively()
             media.deleteRecursively()
@@ -170,6 +172,28 @@ class ClipboardBackupTest {
             assertFalse(loaded.corruptRecords.single().recoveredFromBackup)
             assertTrue(primary.isFile)
             assertTrue(backup.isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_replaceArchiveMetadataRemovesStaleRecords() {
+        val root = createTempDirectory().toFile()
+        try {
+            val store = ClipboardArchiveStore(root)
+            val stale = sampleArchive(media = emptyList()).copy(key = "twitter:stale")
+            val replacement = sampleArchive(media = emptyList()).copy(key = "pixiv:replacement")
+            store.saveArchive(stale)
+
+            store.replaceArchiveMetadata(listOf(replacement))
+
+            assertEquals(listOf(replacement), store.load().archives)
+            assertFalse(
+                File(root, ClipboardArchiveMetadataDirectoryName)
+                    .clipboardArchiveMetadataFile(stale.key)
+                    .exists()
+            )
         } finally {
             root.deleteRecursively()
         }

@@ -509,8 +509,9 @@ object SettingsExporter {
 
                 entry.name == ClipboardArchiveFileName -> {
                     val store = ClipboardArchiveStore(context.filesDir)
-                    decodeLegacyClipboardArchives(zipIn.readAllBytesCompat().toByteString().utf8())
-                        .forEach(store::saveArchive)
+                    store.replaceArchiveMetadata(
+                        decodeLegacyClipboardArchives(zipIn.readAllBytesCompat().toByteString().utf8())
+                    )
                 }
 
                 entry.name.startsWith("ext/") -> {
