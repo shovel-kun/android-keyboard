@@ -1341,18 +1341,19 @@ class ClipboardHistoryManager private constructor(
     fun removeAll(items: Collection<ClipboardEntry>) {
         if(items.isEmpty()) return
 
+        val itemsToRemove = items.toList()
+        val archiveKeysToDelete = archiveKeysOnlyReferencedBy(itemsToRemove)
+        applyEntryMutations(itemsToRemove) { null }
+
         coroutineScope.launch {
-            // Suspend immediately off the main thread (coroutineScope is Main.immediate, so
-            // a plain launch would otherwise run inline up to the first suspension and block
-            // the caller). This lets the confirmation dialog's onClick return and the popup
-            // dismiss without waiting. It also enumerates the media directory once here
-            // instead of a per-file File.isFile stat on the UI thread inside the loop below.
-            val existingMediaNames = withContext(ClipboardIOContext) {
-                existingClipboardMediaFileNames(context.clipboardDir)
+            clearPrimaryClipIfNeeded(itemsToRemove)
+
+            if(archiveKeysToDelete.isNotEmpty()) {
+                val existingMediaNames = withContext(ClipboardIOContext) {
+                    existingClipboardMediaFileNames(context.clipboardDir)
+                }
+                archiveKeysToDelete.forEach { deleteArchiveByKey(it, existingMediaNames) }
             }
-            deleteArchivesOnlyReferencedBy(items, existingMediaNames)
-            applyEntryMutations(items) { null }
-            clearPrimaryClipIfNeeded(items)
         }
     }
 
@@ -1784,20 +1785,16 @@ ${if(clipboardFileSwap.exists()) { clipboardFileSwap.readText() } else { "File d
         saveClipboard()
     }
 
-    private fun deleteArchivesOnlyReferencedBy(
-        items: Collection<ClipboardEntry>,
-        existingMediaNames: Set<String>
-    ) {
-        val itemSet = items.toHashSet()
-        items
+    private fun archiveKeysOnlyReferencedBy(items: Collection<ClipboardEntry>): List<String> {
+        val itemKeys = items.map { it.selectionKey() }.toSet()
+        return items
             .mapNotNull { it.archiveBackfillKey() ?: it.previewMetadata?.archiveKey() }
             .distinct()
             .filter { archiveKey ->
                 clipboardHistory.none { entry ->
-                    entry !in itemSet && entry.matchesDeletedArchiveKey(archiveKey)
+                    entry.selectionKey() !in itemKeys && entry.matchesDeletedArchiveKey(archiveKey)
                 }
             }
-            .forEach { deleteArchiveByKey(it, existingMediaNames) }
     }
 
     private fun replaceEntries(updatedEntries: List<ClipboardEntry>) {
