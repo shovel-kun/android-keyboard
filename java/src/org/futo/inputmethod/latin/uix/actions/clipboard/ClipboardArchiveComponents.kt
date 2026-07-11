@@ -3,6 +3,7 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.text.format.Formatter
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -51,6 +52,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -73,7 +75,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -1128,9 +1132,211 @@ private fun ClipboardArchiveSingleImageCardMedia(bitmap: ImageBitmap) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ClipboardArchiveStorageSheet(
+    inventory: ClipboardStorageInventory,
+    downloadsActive: Boolean,
+    cleanupInProgress: Boolean,
+    cleanupError: Boolean,
+    onDeleteUnused: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var confirmDelete by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        ClipboardArchiveStorageContent(
+            inventory = inventory,
+            downloadsActive = downloadsActive,
+            cleanupInProgress = cleanupInProgress,
+            cleanupError = cleanupError,
+            onDeleteUnused = { confirmDelete = true },
+            onDismiss = onDismiss
+        )
+    }
+
+    if(confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(stringResource(R.string.clipboard_history_storage_delete_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.clipboard_history_storage_delete_text,
+                        formatClipboardStorageBytes(inventory.unreferencedMediaBytes)
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        onDeleteUnused()
+                    }
+                ) {
+                    Text(stringResource(R.string.clipboard_history_storage_delete_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text(stringResource(R.string.action_clipboard_manager_cancel_action_button))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ClipboardArchiveStorageContent(
+    inventory: ClipboardStorageInventory,
+    downloadsActive: Boolean,
+    cleanupInProgress: Boolean,
+    cleanupError: Boolean,
+    onDeleteUnused: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val unusedFileCount = pluralStringResource(
+        R.plurals.clipboard_history_storage_file_count,
+        inventory.unreferencedMediaFileCount,
+        inventory.unreferencedMediaFileCount
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.clipboard_history_storage_title),
+            style = MaterialTheme.typography.titleMedium
+        )
+        Text(
+            text = stringResource(R.string.clipboard_history_storage_description),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        HorizontalDivider()
+        ClipboardArchiveStorageRow(
+            label = stringResource(R.string.clipboard_history_storage_total),
+            value = formatClipboardStorageBytes(inventory.totalBytes)
+        )
+        ClipboardArchiveStorageRow(
+            label = stringResource(R.string.clipboard_history_storage_media),
+            value = formatClipboardStorageBytes(inventory.mediaBytes)
+        )
+        ClipboardArchiveStorageRow(
+            label = stringResource(R.string.clipboard_history_storage_archive_media),
+            value = formatClipboardStorageBytes(inventory.archiveMediaBytes)
+        )
+        ClipboardArchiveStorageRow(
+            label = stringResource(R.string.clipboard_history_storage_shared_media),
+            value = formatClipboardStorageBytes(inventory.sharedMediaBytes)
+        )
+        ClipboardArchiveStorageRow(
+            label = stringResource(R.string.clipboard_history_storage_unused),
+            value = if(inventory.unreferencedMediaFileCount == 0) {
+                stringResource(R.string.clipboard_history_storage_no_unused)
+            } else {
+                "$unusedFileCount · ${formatClipboardStorageBytes(inventory.unreferencedMediaBytes)}"
+            }
+        )
+        if(downloadsActive) {
+            Text(
+                text = stringResource(R.string.clipboard_history_storage_downloads_active),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if(cleanupError) {
+            Text(
+                text = stringResource(R.string.clipboard_history_storage_cleanup_error),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onDeleteUnused,
+                enabled = inventory.unreferencedMediaFileCount > 0 && !downloadsActive && !cleanupInProgress,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(stringResource(R.string.clipboard_history_storage_delete_unused))
+            }
+            Button(
+                onClick = onDismiss,
+                enabled = !cleanupInProgress,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(stringResource(R.string.clipboard_history_archive_filter_done))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClipboardArchiveStorageRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun formatClipboardStorageBytes(bytes: Long): String =
+    Formatter.formatShortFileSize(LocalContext.current, bytes)
+
+@Preview(widthDp = 390, heightDp = 560)
+@Composable
+private fun ClipboardArchiveStorageContentPreview() {
+    MaterialTheme {
+        Surface {
+            ClipboardArchiveStorageContent(
+                inventory = ClipboardStorageInventory.Empty.copy(
+                    totalBytes = 734_003_200L,
+                    mediaBytes = 713_031_680L,
+                    archiveMediaBytes = 618_659_840L,
+                    sharedMediaBytes = 83_886_080L,
+                    unreferencedMediaBytes = 12_582_912L,
+                    unreferencedMediaFileCount = 4
+                ),
+                downloadsActive = false,
+                cleanupInProgress = false,
+                cleanupError = false,
+                onDeleteUnused = {},
+                onDismiss = {}
+            )
+        }
+    }
+}
+
 @Composable
 internal fun ClipboardArchiveDeleteConfirmationDialog(
     request: ArchiveDeleteRequest,
+    storedBytes: Long,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
@@ -1139,10 +1345,18 @@ internal fun ClipboardArchiveDeleteConfirmationDialog(
         title = { Text(stringResource(R.string.clipboard_history_archive_delete_title)) },
         text = {
             Text(
-                stringResource(
-                    R.string.clipboard_history_archive_delete_text,
-                    request.archive.displayTitle()
-                )
+                if(storedBytes > 0L) {
+                    stringResource(
+                        R.string.clipboard_history_archive_delete_text_with_size,
+                        formatClipboardStorageBytes(storedBytes),
+                        request.archive.displayTitle()
+                    )
+                } else {
+                    stringResource(
+                        R.string.clipboard_history_archive_delete_text,
+                        request.archive.displayTitle()
+                    )
+                }
             )
         },
         confirmButton = {

@@ -235,7 +235,27 @@
     <string name="clipboard_history_downloads_progress_bytes">%1$s downloaded</string>
     <string name="clipboard_history_archive_delete_title">Delete archive?</string>
     <string name="clipboard_history_archive_delete_text">This removes saved media for %1$s without deleting the clipboard item.</string>
+    <string name="clipboard_history_archive_delete_text_with_size">This removes %1$s of saved media for %2$s without deleting the clipboard item.</string>
     <string name="clipboard_history_archive_delete_action">Delete</string>
+    <string name="clipboard_history_storage_open">Archive storage</string>
+    <string name="clipboard_history_storage_title">Archive storage</string>
+    <string name="clipboard_history_storage_description">Storage is never cleaned automatically. Only files that are no longer referenced by any clip or archive can be deleted here.</string>
+    <string name="clipboard_history_storage_total">Total clipboard storage</string>
+    <string name="clipboard_history_storage_media">Saved media</string>
+    <string name="clipboard_history_storage_archive_media">Archive media</string>
+    <string name="clipboard_history_storage_shared_media">Shared with clips</string>
+    <string name="clipboard_history_storage_unused">Unused files</string>
+    <string name="clipboard_history_storage_no_unused">No unused files</string>
+    <string name="clipboard_history_storage_delete_unused">Delete unused files</string>
+    <string name="clipboard_history_storage_downloads_active">Finish active archive downloads before deleting unused files.</string>
+    <string name="clipboard_history_storage_cleanup_error">Unused files could not be deleted.</string>
+    <string name="clipboard_history_storage_delete_title">Delete unused files?</string>
+    <string name="clipboard_history_storage_delete_text">Delete %1$s of files that are not referenced by any clip or archive? Archive records and referenced media will not be changed.</string>
+    <string name="clipboard_history_storage_delete_action">Delete files</string>
+    <plurals name="clipboard_history_storage_file_count">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
 
     <!-- For keyboard modes action -->
     <string name="action_keyboard_modes_title">Keyboard Modes</string>

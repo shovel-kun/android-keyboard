@@ -270,6 +270,69 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun archiveStore_storageInventoryClassifiesPhysicalMediaByReferences() {
+        val root = createTempDirectory().toFile()
+        try {
+            val mediaDir = File(root, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
+            File(mediaDir, "clip.jpg").writeBytes(ByteArray(3))
+            File(mediaDir, "archive.jpg").writeBytes(ByteArray(4))
+            File(mediaDir, "shared.jpg").writeBytes(ByteArray(5))
+            File(mediaDir, "unused.jpg").writeBytes(ByteArray(6))
+            val entries = listOf(
+                sampleEntry("clip").copy(backingFile = "clip.jpg"),
+                sampleEntry("shared").copy(backingFile = "shared.jpg")
+            )
+            val archive = sampleArchive(
+                media = listOf(
+                    savedArchiveMedia("archive.jpg", 0),
+                    savedArchiveMedia("shared.jpg", 1)
+                )
+            )
+
+            val inventory = ClipboardArchiveStore(root).storageInventory(entries, listOf(archive))
+
+            assertEquals(18L, inventory.mediaBytes)
+            assertEquals(8L, inventory.clipboardMediaBytes)
+            assertEquals(9L, inventory.archiveMediaBytes)
+            assertEquals(5L, inventory.sharedMediaBytes)
+            assertEquals(6L, inventory.unreferencedMediaBytes)
+            assertEquals(1, inventory.unreferencedMediaFileCount)
+            assertEquals(setOf("unused.jpg"), inventory.unreferencedMediaFileNames)
+            assertEquals(9L, inventory.archiveBytesByKey[archive.key])
+            assertEquals(setOf("clip.jpg", "archive.jpg", "shared.jpg", "unused.jpg"), inventory.mediaFileNames)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_deleteUnreferencedMediaPreservesClipAndArchiveFiles() {
+        val root = createTempDirectory().toFile()
+        try {
+            val mediaDir = File(root, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
+            val clip = File(mediaDir, "clip.jpg").apply { writeText("clip") }
+            val archived = File(mediaDir, "archive.jpg").apply { writeText("archive") }
+            val unused = File(mediaDir, "unused.jpg").apply { writeText("unused") }
+            val entries = listOf(sampleEntry("clip").copy(backingFile = clip.name))
+            val archive = sampleArchive(media = listOf(savedArchiveMedia(archived.name, 0)))
+
+            val inventory = ClipboardArchiveStore(root).deleteUnreferencedMedia(
+                entries,
+                listOf(archive),
+                setOf(clip.name, archived.name, unused.name)
+            )
+
+            assertTrue(clip.isFile)
+            assertTrue(archived.isFile)
+            assertFalse(unused.exists())
+            assertEquals(0L, inventory.unreferencedMediaBytes)
+            assertEquals(0, inventory.unreferencedMediaFileCount)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun extractClipboardBackup_roundTripsProductionZipContract() {
         val dir = createTempDirectory().toFile()
         try {

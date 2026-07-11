@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -39,15 +40,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.uix.SettingsTextEdit
 import org.futo.inputmethod.latin.uix.settings.ScrollableList
@@ -76,6 +80,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     var archiveStatusFilter by remember { mutableStateOf(ClipboardArchiveStatusFilter.All) }
     var archiveDownloadProviderFilter by remember { mutableStateOf(ClipboardArchiveProviderFilter.All) }
     var archiveFiltersVisible by remember { mutableStateOf(false) }
+    var archiveStorageVisible by remember { mutableStateOf(false) }
+    var archiveStorageBusy by remember { mutableStateOf(false) }
+    var archiveStorageCleanupError by remember { mutableStateOf(false) }
     val selectedKeys = remember { mutableStateListOf<String>() }
     var selectionMode by remember { mutableStateOf(false) }
     var previewEntryKey by remember { mutableStateOf<String?>(null) }
@@ -89,10 +96,23 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val activeGridState = if(activeMode == ClipboardHistoryContentMode.Clips) clipsGridState else archivesGridState
     val archiveBackfillInProgress by manager.archiveBackfillInProgress
     val archiveBackfillRemainingCount by manager.archiveBackfillRemainingCount
+    val storageInventory by manager.clipboardStorageInventory
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(uiState.shouldRefreshPreviews) {
         if(uiState.shouldRefreshPreviews) {
             manager.refreshMissingLinkPreviews()
+        }
+    }
+
+    LaunchedEffect(archiveStorageVisible) {
+        if(archiveStorageVisible) {
+            archiveStorageBusy = true
+            try {
+                manager.refreshClipboardStorageInventory()
+            } finally {
+                archiveStorageBusy = false
+            }
         }
     }
 
@@ -292,6 +312,19 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             badgeCount = archiveDownloadItems.size.takeIf { downloadsVisible },
             actions = {
                 if(!selectionMode && !downloadsVisible && uiState.historyEnabled && uiState.historyVisible) {
+                    if(activeMode == ClipboardHistoryContentMode.Archives) {
+                        IconButton(
+                            onClick = {
+                                archiveStorageCleanupError = false
+                                archiveStorageVisible = true
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = stringResource(R.string.clipboard_history_storage_open)
+                            )
+                        }
+                    }
                     IconButton(onClick = { downloadsVisible = true }) {
                         BadgedBox(
                             badge = {
@@ -586,6 +619,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     archiveDeleteRequest?.let { request ->
         ClipboardArchiveDeleteConfirmationDialog(
             request = request,
+            storedBytes = storageInventory.archiveBytesByKey[request.archive.key] ?: 0L,
             onDismiss = { archiveDeleteRequest = null },
             onConfirm = {
                 manager.deleteArchive(request.archive)
@@ -611,6 +645,31 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                 archiveSortModeSetting.setValue(ClipboardArchiveSortMode.ClipDate.storedValue)
             },
             onDismiss = { archiveFiltersVisible = false }
+        )
+    }
+
+    if(archiveStorageVisible) {
+        ClipboardArchiveStorageSheet(
+            inventory = storageInventory,
+            downloadsActive = manager.hasActiveArchiveDownloads(),
+            cleanupInProgress = archiveStorageBusy,
+            cleanupError = archiveStorageCleanupError,
+            onDeleteUnused = {
+                coroutineScope.launch {
+                    archiveStorageBusy = true
+                    archiveStorageCleanupError = false
+                    try {
+                        manager.deleteUnreferencedClipboardMedia()
+                    } catch(e: CancellationException) {
+                        throw e
+                    } catch(e: Exception) {
+                        archiveStorageCleanupError = true
+                    } finally {
+                        archiveStorageBusy = false
+                    }
+                }
+            },
+            onDismiss = { archiveStorageVisible = false }
         )
     }
 }

@@ -20,6 +20,34 @@ internal data class ClipboardArchiveStoreState(
     val tombstones: List<ClipboardArchiveTombstone>
 )
 
+internal data class ClipboardStorageInventory(
+    val totalBytes: Long,
+    val mediaBytes: Long,
+    val clipboardMediaBytes: Long,
+    val archiveMediaBytes: Long,
+    val sharedMediaBytes: Long,
+    val unreferencedMediaBytes: Long,
+    val unreferencedMediaFileCount: Int,
+    val unreferencedMediaFileNames: Set<String>,
+    val mediaFileNames: Set<String>,
+    val archiveBytesByKey: Map<String, Long>
+) {
+    companion object {
+        val Empty = ClipboardStorageInventory(
+            totalBytes = 0L,
+            mediaBytes = 0L,
+            clipboardMediaBytes = 0L,
+            archiveMediaBytes = 0L,
+            sharedMediaBytes = 0L,
+            unreferencedMediaBytes = 0L,
+            unreferencedMediaFileCount = 0,
+            unreferencedMediaFileNames = emptySet(),
+            mediaFileNames = emptySet(),
+            archiveBytesByKey = emptyMap()
+        )
+    }
+}
+
 /** Owns the filesystem boundary for clipboard entries, archive metadata, tombstones, and media. */
 internal class ClipboardArchiveStore(
     private val filesDir: File,
@@ -120,6 +148,52 @@ internal class ClipboardArchiveStore(
             if(file.name !in expectedNames) file.delete()
         }
         deleteLegacyAggregateFiles()
+    }
+
+    fun storageInventory(
+        entries: List<ClipboardEntry>,
+        archives: Collection<ClipboardLinkArchive>
+    ): ClipboardStorageInventory {
+        val mediaFiles = listOf(mediaDir, legacyArchiveMediaDir)
+            .flatMap { it.listFiles()?.filter(File::isFile).orEmpty() }
+        val clipboardFileNames = referencedClipboardFileNames(entries)
+        val archiveFileNames = referencedClipboardArchiveFileNames(archives)
+        val referencedFileNames = clipboardFileNames + archiveFileNames
+        val unreferencedFiles = mediaFiles.filter { it.name !in referencedFileNames }
+
+        return ClipboardStorageInventory(
+            totalBytes = clipboardStorageFiles().sumOf(File::length),
+            mediaBytes = mediaFiles.sumOf(File::length),
+            clipboardMediaBytes = mediaFiles.filter { it.name in clipboardFileNames }.sumOf(File::length),
+            archiveMediaBytes = mediaFiles.filter { it.name in archiveFileNames }.sumOf(File::length),
+            sharedMediaBytes = mediaFiles
+                .filter { it.name in clipboardFileNames && it.name in archiveFileNames }
+                .sumOf(File::length),
+            unreferencedMediaBytes = unreferencedFiles.sumOf(File::length),
+            unreferencedMediaFileCount = unreferencedFiles.size,
+            unreferencedMediaFileNames = unreferencedFiles.map(File::getName).toSet(),
+            mediaFileNames = mediaFiles.map(File::getName).toSet(),
+            archiveBytesByKey = archives.associate { archive ->
+                val fileNames = referencedClipboardArchiveFileNames(listOf(archive))
+                archive.key to mediaFiles.filter { it.name in fileNames }.sumOf(File::length)
+            }
+        )
+    }
+
+    fun deleteUnreferencedMedia(
+        entries: List<ClipboardEntry>,
+        archives: Collection<ClipboardLinkArchive>,
+        candidateFileNames: Set<String>
+    ): ClipboardStorageInventory {
+        val referencedFileNames = referencedClipboardFileNames(entries) +
+            referencedClipboardArchiveFileNames(archives)
+        listOf(mediaDir, legacyArchiveMediaDir)
+            .flatMap { it.listFiles()?.filter(File::isFile).orEmpty() }
+            .filter { it.name in candidateFileNames && it.name !in referencedFileNames }
+            .forEach { file ->
+                check(file.delete()) { "Could not delete unused clipboard media: ${file.name}" }
+            }
+        return storageInventory(entries, archives)
     }
 
     fun stageAndPromote(
@@ -283,5 +357,23 @@ internal class ClipboardArchiveStore(
             val target = File(destination, file.name)
             if(overwrite || !target.exists()) file.copyTo(target, overwrite = overwrite)
         }
+    }
+
+    private fun clipboardStorageFiles(): List<File> = buildList {
+        listOf(
+            clipboardFile,
+            File(filesDir, "$ClipboardFileName.bak"),
+            File(filesDir, "$ClipboardFileName.swap"),
+            tombstonesFile,
+            File(filesDir, "$ClipboardArchiveTombstonesFileName.bak"),
+            File(filesDir, "$ClipboardArchiveTombstonesFileName.swap"),
+            legacyArchiveFile,
+            File(filesDir, "$ClipboardArchiveFileName.bak"),
+            File(filesDir, "$ClipboardArchiveFileName.swap")
+        ).filterTo(this, File::isFile)
+        listOf(mediaDir, legacyArchiveMediaDir, metadataDir, previousDir)
+            .forEach { directory ->
+                directory.walkTopDown().filter(File::isFile).forEach(::add)
+            }
     }
 }

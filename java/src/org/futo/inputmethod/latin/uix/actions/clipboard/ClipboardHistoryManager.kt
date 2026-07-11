@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -98,7 +99,8 @@ private data class ClipboardArchiveProgressSnapshot(
 }
 
 private data class ClipboardStorageSnapshot(
-    val fileNames: Set<String>
+    val fileNames: Set<String>,
+    val inventory: ClipboardStorageInventory
 )
 
 internal fun describeClipboardStorageFile(role: String, file: File): String {
@@ -312,7 +314,10 @@ class ClipboardHistoryManager private constructor(
     var clipboardIOFailureReason = ""
     val clipboardIOFailure = mutableStateOf(false)
     val previewLoadingByText = mutableStateMapOf<String, Boolean>()
-    private val clipboardStorageSnapshot = mutableStateOf(ClipboardStorageSnapshot(emptySet()))
+    private val clipboardStorageSnapshot = mutableStateOf(
+        ClipboardStorageSnapshot(emptySet(), ClipboardStorageInventory.Empty)
+    )
+    internal val clipboardStorageInventory = derivedStateOf { clipboardStorageSnapshot.value.inventory }
     val archiveBackfillInProgress = mutableStateOf(false)
     val archiveBackfillRemainingCount = mutableStateOf(0)
 
@@ -355,6 +360,7 @@ class ClipboardHistoryManager private constructor(
     private val archiveTombstonesByKey = mutableMapOf<String, ClipboardArchiveTombstone>()
     private var archiveBackfillCompletionPending = false
     private var archiveBackfillBlockedByCooldown = false
+    private var storageCleanupInProgress = false
     private val pendingArchiveSavesByKey = mutableMapOf<String, ClipboardLinkArchive>()
     private var scheduledArchiveSaveJob: Job? = null
 
@@ -913,6 +919,57 @@ class ClipboardHistoryManager private constructor(
         loadingArchiveKeys = previewLoadingByText.filterValues { it }.keys
     )
 
+    internal fun hasActiveArchiveDownloads(): Boolean =
+        archiveDownloadCoordinator.snapshot().activeArchiveKeys.isNotEmpty() ||
+            previewLoadingByText.keys.any { it in linkArchives }
+
+    internal suspend fun refreshClipboardStorageInventory(): ClipboardStorageInventory {
+        val (entries, archives) = withContext(Dispatchers.Main) {
+            clipboardHistory.toList() to linkArchives.values.toList()
+        }
+        val inventory = withContext(ClipboardIOContext) {
+            archiveStore.storageInventory(entries, archives)
+        }
+        withContext(Dispatchers.Main) {
+            clipboardStorageSnapshot.value = ClipboardStorageSnapshot(
+                fileNames = inventory.mediaFileNames,
+                inventory = inventory
+            )
+        }
+        return inventory
+    }
+
+    internal suspend fun deleteUnreferencedClipboardMedia(): Boolean {
+        val snapshots = withContext(Dispatchers.Main) {
+            if(storageCleanupInProgress || hasActiveArchiveDownloads()) {
+                null
+            } else {
+                storageCleanupInProgress = true
+                Triple(
+                    clipboardHistory.toList(),
+                    linkArchives.values.toList(),
+                    clipboardStorageSnapshot.value.inventory.unreferencedMediaFileNames
+                )
+            }
+        } ?: return false
+        return try {
+            val inventory = withContext(ClipboardIOContext) {
+                archiveStore.deleteUnreferencedMedia(snapshots.first, snapshots.second, snapshots.third)
+            }
+            withContext(Dispatchers.Main) {
+                clipboardStorageSnapshot.value = ClipboardStorageSnapshot(
+                    fileNames = inventory.mediaFileNames,
+                    inventory = inventory
+                )
+            }
+            true
+        } finally {
+            withContext(Dispatchers.Main) {
+                storageCleanupInProgress = false
+            }
+        }
+    }
+
     internal fun providerCooldown(provider: ClipboardPreviewProvider): ClipboardPreviewProviderCooldown? =
         archiveDownloadCoordinator.providerCooldown(provider)
 
@@ -1020,17 +1077,11 @@ class ClipboardHistoryManager private constructor(
         existingClipboardMediaFileNames(context.clipboardDir, context.clipboardArchiveDir)
 
     private suspend fun refreshArchiveFileNames(): Set<String> {
-        val fileNames = withContext(ClipboardIOContext) {
-            scanArchiveFileNames()
-        }
-        withContext(Dispatchers.Main) {
-            applyArchiveFileNames(fileNames)
-        }
-        return fileNames
+        return refreshClipboardStorageInventory().mediaFileNames
     }
 
     private fun applyArchiveFileNames(fileNames: Set<String>) {
-        clipboardStorageSnapshot.value = ClipboardStorageSnapshot(fileNames.toSet())
+        clipboardStorageSnapshot.value = clipboardStorageSnapshot.value.copy(fileNames = fileNames.toSet())
     }
 
     private fun currentArchiveFileNames(): Set<String> = clipboardStorageSnapshot.value.fileNames
@@ -1043,8 +1094,8 @@ class ClipboardHistoryManager private constructor(
                 add(thumbnailName)
             }
         }
-        clipboardStorageSnapshot.value = ClipboardStorageSnapshot(
-            clipboardStorageSnapshot.value.fileNames + savedFileNames
+        clipboardStorageSnapshot.value = clipboardStorageSnapshot.value.copy(
+            fileNames = clipboardStorageSnapshot.value.fileNames + savedFileNames
         )
     }
 
@@ -1171,7 +1222,6 @@ class ClipboardHistoryManager private constructor(
         // UI updates immediately; the filesystem work runs off the main thread.
         val tombstones = archiveTombstonesByKey.values.toList()
         val entriesSnapshot = clipboardHistory.toList()
-        val archivesSnapshot = linkArchives.values.toList()
         coroutineScope.launch(ClipboardIOContext) {
             saveArchiveTombstones(tombstones)
             deleteArchiveMetadataFile(archiveKey)
@@ -1182,7 +1232,6 @@ class ClipboardHistoryManager private constructor(
             orphanedSharedArchiveFileNamesAfterArchiveDelete(archivedFileNames, entriesSnapshot)
                 .forEach { fileName -> File(context.clipboardDir, fileName).delete() }
             refreshArchiveFileNames()
-            saveArchives(archivesSnapshot)
         }
         saveClipboard(reconcileBeforeSave = true)
     }
@@ -1306,10 +1355,6 @@ class ClipboardHistoryManager private constructor(
     override suspend fun cleanUp() {
         flushPendingArchiveSavesOnIo()
         saveClipboard(reconcileBeforeSave = true)?.join()
-        val archivesSnapshot = withContext(Dispatchers.Main) { linkArchives.values.toList() }
-        withContext(NonCancellable + ClipboardIOContext) {
-            saveArchives(archivesSnapshot)
-        }
     }
 
     override fun close() {
@@ -1827,6 +1872,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     }
 
     private suspend fun downloadArchiveMediaWithLoading(text: String?, archiveKey: String) {
+        if(withContext(Dispatchers.Main) { storageCleanupInProgress }) return
         coroutineContext[Job]?.let { archiveDownloadCoordinator.registerCurrentJob(archiveKey, it) }
         try {
             withArchiveLoading(archiveKey) {
@@ -2215,15 +2261,6 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             pendingArchiveSavesByKey.remove(archiveKey)
         }
 
-    private fun flushPendingArchiveSaves() {
-        val archives = synchronized(archiveSaveLock) {
-            pendingArchiveSavesByKey.values.toList().also {
-                pendingArchiveSavesByKey.clear()
-            }
-        }
-        archives.forEach(::saveArchive)
-    }
-
     private suspend fun flushPendingArchiveSavesOnIo() {
         val archives = synchronized(archiveSaveLock) {
             pendingArchiveSavesByKey.values.toList().also {
@@ -2234,12 +2271,6 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         withContext(NonCancellable + ClipboardIOContext) {
             archives.forEach(::saveArchive)
         }
-    }
-
-    private fun saveArchives(archives: Collection<ClipboardLinkArchive>) {
-        flushPendingArchiveSaves()
-        archives.forEach(::saveArchive)
-        deleteStaleArchiveMetadataFiles(archives.map { it.key }.toSet())
     }
 
     private fun saveArchiveTombstones(tombstones: Collection<ClipboardArchiveTombstone>) {
@@ -2280,12 +2311,14 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             legacyArchiveDir = context.clipboardArchiveDir
         )
         if(reconciled.associateBy { it.key } != archiveMapSnapshot) {
+            val changedArchives = reconciled.filter { archiveMapSnapshot[it.key] != it }
             withContext(Dispatchers.Main) {
                 linkArchives.clear()
                 linkArchives.putAll(reconciled.associateBy { it.key })
             }
-            saveArchives(reconciled)
+            changedArchives.forEach(::saveArchive)
         }
+        deleteStaleArchiveMetadataFiles(reconciled.map { it.key }.toSet())
 
         context.clipboardArchiveDir.listFiles()?.forEach { file ->
             if(file.name !in referencedArchiveFiles) {
