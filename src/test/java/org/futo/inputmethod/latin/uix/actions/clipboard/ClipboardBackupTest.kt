@@ -35,9 +35,12 @@ class ClipboardBackupTest {
                 preserveExistingMedia = false
             )
 
-            val failingStore = ClipboardArchiveStore(root) { step ->
-                if(step == 3) throw IllegalStateException("interrupted")
-            }
+            val failingStore = ClipboardArchiveStore(
+                filesDir = root,
+                promotionStep = { step ->
+                    if(step == 3) throw IllegalStateException("interrupted")
+                }
+            )
             try {
                 failingStore.stageAndPromote(
                     state = ClipboardArchiveStoreState(
@@ -58,6 +61,73 @@ class ClipboardBackupTest {
             assertEquals("old", File(File(root, ClipboardBackupFilesDirectoryName), "old.jpg").readText())
             assertFalse(File(File(root, ClipboardBackupFilesDirectoryName), "new.jpg").exists())
             assertFalse(File(root, ".clipboard-store-previous").exists())
+        } finally {
+            root.deleteRecursively()
+            oldMedia.deleteRecursively()
+            newMedia.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_failedRollbackPreservesRecoveryTreeForNextLoad() {
+        val root = createTempDirectory().toFile()
+        val oldMedia = createTempDirectory().toFile()
+        val newMedia = createTempDirectory().toFile()
+        try {
+            File(oldMedia, "old.jpg").writeText("old")
+            File(newMedia, "new.jpg").writeText("new")
+            val oldArchive = sampleArchive(media = listOf(savedArchiveMedia("old.jpg", 0)))
+            ClipboardArchiveStore(root).stageAndPromote(
+                ClipboardArchiveStoreState(
+                    entries = listOf(sampleEntry("old")),
+                    archives = listOf(oldArchive),
+                    tombstones = emptyList()
+                ),
+                importedMediaDirs = listOf(oldMedia),
+                preserveExistingMedia = false
+            )
+
+            var failNextRestore = true
+            val failingStore = ClipboardArchiveStore(
+                filesDir = root,
+                promotionStep = { step ->
+                    if(step == 3) throw IllegalStateException("interrupted")
+                },
+                move = { source, destination ->
+                    if(failNextRestore && source.parentFile?.name == ".clipboard-store-previous") {
+                        failNextRestore = false
+                        false
+                    } else {
+                        source.renameTo(destination)
+                    }
+                }
+            )
+            val failure = try {
+                failingStore.stageAndPromote(
+                    ClipboardArchiveStoreState(
+                        entries = listOf(sampleEntry("new")),
+                        archives = listOf(sampleArchive(media = listOf(savedArchiveMedia("new.jpg", 0)))),
+                        tombstones = emptyList()
+                    ),
+                    importedMediaDirs = listOf(newMedia),
+                    preserveExistingMedia = false
+                )
+                throw AssertionError("Expected promotion to fail")
+            } catch(e: IllegalStateException) {
+                e
+            }
+
+            val recoveryDir = File(root, ".clipboard-store-previous")
+            assertTrue(failure.message!!.contains("Could not restore previous clipboard path"))
+            assertEquals("interrupted", failure.cause?.message)
+            assertTrue(File(recoveryDir, "promotion-in-progress").isFile)
+
+            val recovered = ClipboardArchiveStore(root).load()
+            assertEquals("old", File(root, ClipboardFileName).decodeClipboardEntries().single().text)
+            assertEquals(oldArchive, recovered.archives.single())
+            assertEquals("old", File(File(root, ClipboardBackupFilesDirectoryName), "old.jpg").readText())
+            assertFalse(File(File(root, ClipboardBackupFilesDirectoryName), "new.jpg").exists())
+            assertFalse(recoveryDir.exists())
         } finally {
             root.deleteRecursively()
             oldMedia.deleteRecursively()

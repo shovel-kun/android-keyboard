@@ -23,7 +23,8 @@ internal data class ClipboardArchiveStoreState(
 /** Owns the filesystem boundary for clipboard entries, archive metadata, tombstones, and media. */
 internal class ClipboardArchiveStore(
     private val filesDir: File,
-    private val promotionStep: (Int) -> Unit = {}
+    private val promotionStep: (Int) -> Unit = {},
+    private val move: (File, File) -> Boolean = { source, destination -> source.renameTo(destination) }
 ) {
     private val clipboardFile = File(filesDir, ClipboardFileName)
     private val metadataDir = File(filesDir, ClipboardArchiveMetadataDirectoryName)
@@ -181,12 +182,12 @@ internal class ClipboardArchiveStore(
             names.forEachIndexed { index, name ->
                 val current = File(filesDir, name)
                 if(current.exists()) {
-                    require(current.renameTo(File(previousDir, name))) { "Could not preserve current clipboard state" }
+                    require(move(current, File(previousDir, name))) { "Could not preserve current clipboard state" }
                     movedCurrent += name
                 }
                 promotionStep(index * 2)
                 val staged = File(stageDir, name)
-                require(staged.renameTo(current)) { "Could not install staged clipboard state" }
+                require(move(staged, current)) { "Could not install staged clipboard state" }
                 installed += name
                 promotionStep(index * 2 + 1)
             }
@@ -197,9 +198,15 @@ internal class ClipboardArchiveStore(
             previousDir.deleteRecursively()
         } catch(e: Exception) {
             installed.asReversed().forEach { File(filesDir, it).deleteRecursively() }
+            var rollbackFailure: IllegalStateException? = null
             movedCurrent.asReversed().forEach { name ->
-                File(previousDir, name).renameTo(File(filesDir, name))
+                val previous = File(previousDir, name)
+                if(previous.exists() && !move(previous, File(filesDir, name))) {
+                    val failure = IllegalStateException("Could not restore previous clipboard path: $name", e)
+                    if(rollbackFailure == null) rollbackFailure = failure else rollbackFailure?.addSuppressed(failure)
+                }
             }
+            rollbackFailure?.let { throw it }
             promotionMarker.delete()
             previousDir.deleteRecursively()
             throw e
@@ -222,7 +229,7 @@ internal class ClipboardArchiveStore(
             when {
                 previous.exists() -> {
                     current.deleteRecursively()
-                    require(previous.renameTo(current)) { "Could not recover previous clipboard state" }
+                    require(move(previous, current)) { "Could not recover previous clipboard state" }
                 }
                 name !in previousNames -> current.deleteRecursively()
             }
