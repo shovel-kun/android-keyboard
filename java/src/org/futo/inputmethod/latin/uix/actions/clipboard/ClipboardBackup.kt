@@ -3,8 +3,12 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.Date
+import java.util.zip.ZipInputStream
 
 private val ClipboardJson = Json {
     ignoreUnknownKeys = true
@@ -13,6 +17,31 @@ private val ClipboardJson = Json {
 const val ClipboardBackupCurrentVersion = 1
 const val ClipboardBackupManifestFileName = "manifest.json"
 const val ClipboardBackupFilesDirectoryName = "clipboardfiles"
+
+internal const val ClipboardBackupManifestMaxBytes = 64L * 1024L
+internal const val ClipboardBackupEntriesMaxBytes = 32L * 1024L * 1024L
+internal const val ClipboardBackupArchivesMaxBytes = 32L * 1024L * 1024L
+// Archive imports allow a little headroom above the current 50 MiB stored-media cap.
+internal const val ClipboardBackupMediaMaxBytes = 52L * 1024L * 1024L
+internal const val ClipboardBackupMaxEntryCount = 10_000
+internal const val ClipboardBackupTotalExpandedMaxBytes = 1024L * 1024L * 1024L
+
+internal data class ClipboardBackupExtractionLimits(
+    val manifestMaxBytes: Long = ClipboardBackupManifestMaxBytes,
+    val entriesMaxBytes: Long = ClipboardBackupEntriesMaxBytes,
+    val archivesMaxBytes: Long = ClipboardBackupArchivesMaxBytes,
+    val mediaMaxBytes: Long = ClipboardBackupMediaMaxBytes,
+    val maxEntryCount: Int = ClipboardBackupMaxEntryCount,
+    val totalExpandedMaxBytes: Long = ClipboardBackupTotalExpandedMaxBytes
+)
+
+internal data class ExtractedClipboardBackup(
+    val manifest: ClipboardBackupManifest,
+    val entries: List<ClipboardEntry>,
+    val filesDir: File,
+    val archives: List<ClipboardLinkArchive>,
+    val archiveFilesDir: File
+)
 
 @Serializable
 data class ClipboardBackupManifest(
@@ -54,6 +83,110 @@ fun clipboardBackupMetadata(manifest: ClipboardBackupManifest): ClipboardBackupM
         dateExported = Date(manifest.createdAtEpochMs),
         isNewer = manifest.version > ClipboardBackupCurrentVersion
     )
+
+internal fun extractClipboardBackup(
+    inputStream: InputStream,
+    tempRoot: File,
+    limits: ClipboardBackupExtractionLimits = ClipboardBackupExtractionLimits()
+): ExtractedClipboardBackup = ZipInputStream(inputStream).use { zipIn ->
+    val tempFilesDir = File(tempRoot, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
+    val tempArchiveFilesDir = File(tempRoot, ClipboardBackupArchiveFilesDirectoryName).apply { mkdirs() }
+    var manifest: ClipboardBackupManifest? = null
+    var entries: List<ClipboardEntry>? = null
+    var archives: List<ClipboardLinkArchive>? = null
+    var entryCount = 0
+    var totalExpandedBytes = 0L
+    val singletonEntries = mutableSetOf<String>()
+
+    fun copyCurrentEntry(output: OutputStream, entryLimit: Long) {
+        val buffer = ByteArray(8 * 1024)
+        var entryBytes = 0L
+        while(true) {
+            val read = zipIn.read(buffer)
+            if(read <= 0) break
+            entryBytes += read
+            totalExpandedBytes += read
+            require(entryBytes <= entryLimit) { "Clipboard backup entry exceeds size limit" }
+            require(totalExpandedBytes <= limits.totalExpandedMaxBytes) {
+                "Clipboard backup exceeds total expanded size limit"
+            }
+            output.write(buffer, 0, read)
+        }
+    }
+
+    var zipEntry = zipIn.nextEntry
+    while(zipEntry != null) {
+        entryCount += 1
+        require(entryCount <= limits.maxEntryCount) { "Clipboard backup has too many entries" }
+        require(!zipEntry.isDirectory) { "Unsupported clipboard backup path: ${zipEntry.name}" }
+
+        when {
+            zipEntry.name == ClipboardBackupManifestFileName -> {
+                require(singletonEntries.add(zipEntry.name)) {
+                    "Duplicate clipboard backup entry: ${zipEntry.name}"
+                }
+                val output = ByteArrayOutputStream()
+                copyCurrentEntry(output, limits.manifestMaxBytes)
+                manifest = ClipboardJson.decodeFromString(output.toString(Charsets.UTF_8.name()))
+            }
+
+            zipEntry.name == ClipboardFileName -> {
+                require(singletonEntries.add(zipEntry.name)) {
+                    "Duplicate clipboard backup entry: ${zipEntry.name}"
+                }
+                val output = ByteArrayOutputStream()
+                copyCurrentEntry(output, limits.entriesMaxBytes)
+                entries = decodeClipboardEntries(output.toString(Charsets.UTF_8.name()))
+            }
+
+            zipEntry.name == ClipboardArchiveFileName -> {
+                require(singletonEntries.add(zipEntry.name)) {
+                    "Duplicate clipboard backup entry: ${zipEntry.name}"
+                }
+                val output = ByteArrayOutputStream()
+                copyCurrentEntry(output, limits.archivesMaxBytes)
+                archives = decodeLegacyClipboardArchives(output.toString(Charsets.UTF_8.name()))
+            }
+
+            zipEntry.name.startsWith("$ClipboardBackupFilesDirectoryName/") -> {
+                val relativePath = zipEntry.name.removePrefix("$ClipboardBackupFilesDirectoryName/")
+                require(relativePath.isNotBlank() && !relativePath.contains('/')) {
+                    "Unsupported clipboard backup file path: ${zipEntry.name}"
+                }
+                File(tempFilesDir, relativePath).outputStream().use {
+                    copyCurrentEntry(it, limits.mediaMaxBytes)
+                }
+            }
+
+            zipEntry.name.startsWith("$ClipboardBackupArchiveFilesDirectoryName/") -> {
+                val relativePath = zipEntry.name.removePrefix("$ClipboardBackupArchiveFilesDirectoryName/")
+                require(relativePath.isNotBlank() && !relativePath.contains('/')) {
+                    "Unsupported clipboard archive backup file path: ${zipEntry.name}"
+                }
+                File(tempArchiveFilesDir, relativePath).outputStream().use {
+                    copyCurrentEntry(it, limits.mediaMaxBytes)
+                }
+            }
+
+            else -> throw IllegalArgumentException("Unsupported clipboard backup path: ${zipEntry.name}")
+        }
+
+        zipIn.closeEntry()
+        zipEntry = zipIn.nextEntry
+    }
+
+    val extractedManifest = requireNotNull(manifest) { "Clipboard backup manifest missing" }
+    require(extractedManifest.version >= 1) { "Invalid clipboard backup version" }
+    require(extractedManifest.createdAtEpochMs >= 0L) { "Invalid clipboard backup creation time" }
+
+    ExtractedClipboardBackup(
+        manifest = extractedManifest,
+        entries = entries.orEmpty(),
+        filesDir = tempFilesDir,
+        archives = archives.orEmpty(),
+        archiveFilesDir = tempArchiveFilesDir
+    )
+}
 
 fun referencedClipboardFileNames(entries: List<ClipboardEntry>): Set<String> =
     entries

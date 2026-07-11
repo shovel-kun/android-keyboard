@@ -76,6 +76,10 @@ jobs:
             echo "Crash reporting secret not configured; release build will keep crash reporting disabled."
           fi
 
+      - name: Test clipboard backup
+        run: |
+          ./gradlew testStableDebugUnitTest --tests 'org.futo.inputmethod.latin.uix.actions.clipboard.*' --stacktrace
+
       - name: Build stable APKs
         run: |
           ./gradlew assembleStable --stacktrace

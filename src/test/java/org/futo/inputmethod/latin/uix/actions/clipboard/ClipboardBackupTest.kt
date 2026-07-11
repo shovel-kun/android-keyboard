@@ -6,10 +6,134 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
+    @Test
+    fun extractClipboardBackup_roundTripsProductionZipContract() {
+        val dir = createTempDirectory().toFile()
+        try {
+            val entry = ClipboardEntry(
+                timestamp = 123L,
+                pinned = false,
+                text = "hello",
+                uri = null,
+                mimeTypes = listOf("text/plain"),
+                backingFile = "clip.png"
+            )
+            val archive = sampleArchive(media = emptyList())
+            val extracted = extractClipboardBackup(
+                zip(
+                    ClipboardBackupManifestFileName to manifestJson().toByteArray(),
+                    ClipboardFileName to encodeClipboardEntries(listOf(entry)).toByteArray(),
+                    ClipboardArchiveFileName to encodeClipboardArchives(listOf(archive)).toByteArray(),
+                    "$ClipboardBackupFilesDirectoryName/clip.png" to "image".toByteArray()
+                ),
+                dir
+            )
+
+            assertEquals(ClipboardBackupCurrentVersion, extracted.manifest.version)
+            assertEquals(listOf(entry), extracted.entries)
+            assertEquals(archive.key, extracted.archives.single().key)
+            assertEquals(archive.provider, extracted.archives.single().provider)
+            assertEquals(archive.sourceUrl, extracted.archives.single().sourceUrl)
+            assertEquals("image", File(extracted.filesDir, "clip.png").readText())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractClipboardBackup_rejectsOversizedManifest() {
+        assertExtractionFails(
+            zip(ClipboardBackupManifestFileName to manifestJson().toByteArray()),
+            ClipboardBackupExtractionLimits(manifestMaxBytes = 8)
+        )
+    }
+
+    @Test
+    fun extractClipboardBackup_rejectsOversizedMedia() {
+        assertExtractionFails(
+            zip(
+                ClipboardBackupManifestFileName to manifestJson().toByteArray(),
+                "$ClipboardBackupFilesDirectoryName/clip.png" to ByteArray(5)
+            ),
+            ClipboardBackupExtractionLimits(mediaMaxBytes = 4)
+        )
+    }
+
+    @Test
+    fun extractClipboardBackup_rejectsOversizedAggregate() {
+        val manifest = manifestJson().toByteArray()
+        assertExtractionFails(
+            zip(
+                ClipboardBackupManifestFileName to manifest,
+                ClipboardFileName to "[]".toByteArray(),
+                "$ClipboardBackupFilesDirectoryName/clip.png" to byteArrayOf(1)
+            ),
+            ClipboardBackupExtractionLimits(totalExpandedMaxBytes = manifest.size.toLong() + 2L)
+        )
+    }
+
+    @Test
+    fun extractClipboardBackup_rejectsTooManyEntries() {
+        assertExtractionFails(
+            zip(
+                ClipboardBackupManifestFileName to manifestJson().toByteArray(),
+                ClipboardFileName to "[]".toByteArray()
+            ),
+            ClipboardBackupExtractionLimits(maxEntryCount = 1)
+        )
+    }
+
+    @Test
+    fun extractClipboardBackup_rejectsDuplicateSingletonEntry() {
+        assertExtractionFails(
+            duplicateManifestZip()
+        )
+    }
+
+    @Test
+    fun extractClipboardBackup_rejectsUnsupportedPathBeforeWritingFiles() {
+        val liveDir = createTempDirectory().toFile()
+        val tempDir = createTempDirectory().toFile()
+        try {
+            val liveFile = File(liveDir, ClipboardFileName).apply { writeText("live clipboard") }
+            val backup = zip(
+                ClipboardBackupManifestFileName to manifestJson().toByteArray(),
+                "unsupported/file.bin" to "data".toByteArray()
+            )
+
+            try {
+                extractClipboardBackup(backup, tempDir)
+                throw AssertionError("Expected extraction to fail")
+            } catch(_: IllegalArgumentException) {
+                // Expected.
+            }
+
+            assertEquals("live clipboard", liveFile.readText())
+            assertFalse(File(tempDir, "unsupported").exists())
+        } finally {
+            liveDir.deleteRecursively()
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractClipboardBackup_rejectsMalformedDecodedRecords() {
+        assertExtractionFails(
+            zip(
+                ClipboardBackupManifestFileName to manifestJson().toByteArray(),
+                ClipboardFileName to "not-json".toByteArray()
+            )
+        )
+    }
+
     @Test
     fun describeClipboardStorageFile_redactsContentsAndReportsMetadata() {
         val dir = createTempDirectory().toFile()
@@ -1087,6 +1211,55 @@ class ClipboardBackupTest {
             merged.single().media.map { it.status }
         )
         assertEquals("one.jpg", merged.single().media.first().fileName)
+    }
+
+    private fun manifestJson(): String =
+        """{"version":$ClipboardBackupCurrentVersion,"createdAtEpochMs":123}"""
+
+    private fun zip(vararg entries: Pair<String, ByteArray>): ByteArrayInputStream {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            entries.forEach { (name, bytes) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        return ByteArrayInputStream(output.toByteArray())
+    }
+
+    private fun duplicateManifestZip(): ByteArrayInputStream {
+        val alternateName = "qanifest.json"
+        val bytes = zip(
+            ClipboardBackupManifestFileName to manifestJson().toByteArray(),
+            alternateName to manifestJson().toByteArray()
+        ).readBytes()
+        val encodedAlternateName = alternateName.toByteArray()
+        bytes.indices.forEach { index ->
+            if(index + encodedAlternateName.size <= bytes.size &&
+                bytes.copyOfRange(index, index + encodedAlternateName.size).contentEquals(encodedAlternateName)
+            ) {
+                bytes[index] = 'm'.code.toByte()
+            }
+        }
+        return ByteArrayInputStream(bytes)
+    }
+
+    private fun assertExtractionFails(
+        backup: ByteArrayInputStream,
+        limits: ClipboardBackupExtractionLimits = ClipboardBackupExtractionLimits()
+    ) {
+        val dir = createTempDirectory().toFile()
+        try {
+            try {
+                extractClipboardBackup(backup, dir, limits)
+                throw AssertionError("Expected extraction to fail")
+            } catch(_: IllegalArgumentException) {
+                // Expected.
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     private fun sampleArchive(

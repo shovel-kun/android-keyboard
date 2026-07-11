@@ -45,11 +45,11 @@ import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveFileName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveFilesDirectoryName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveTombstone
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardArchiveTombstonesFileName
-import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupArchiveFilesDirectoryName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupFilesDirectoryName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupManifest
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupManifestFileName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupMetadata
+import org.futo.inputmethod.latin.uix.actions.clipboard.ExtractedClipboardBackup
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardFileName
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardHistoryManager.Companion.onClipboardImportedFlow
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardImportMode
@@ -72,6 +72,7 @@ import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchive
 import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardArchiveTombstones
 import org.futo.inputmethod.latin.uix.actions.clipboard.encodeClipboardEntries
+import org.futo.inputmethod.latin.uix.actions.clipboard.extractClipboardBackup
 import org.futo.inputmethod.latin.uix.actions.clipboard.filterDeletedClipboardArchives
 import org.futo.inputmethod.latin.uix.actions.clipboard.loadClipboardArchivesFromMetadataDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.mergeStoredClipboardArchives
@@ -150,14 +151,6 @@ data class PersonalWord(
 
 @Suppress("HardCodedStringLiteral")
 object SettingsExporter {
-    private data class ExtractedClipboardBackup(
-        val manifest: ClipboardBackupManifest,
-        val entries: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardEntry>,
-        val filesDir: File,
-        val archives: List<org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkArchive>,
-        val archiveFilesDir: File
-    )
-
     @Suppress("HardCodedStringLiteral")
     @Throws(Exception::class)
     private fun writeSharedPrefs(
@@ -646,79 +639,6 @@ object SettingsExporter {
         } finally {
             tempRoot.deleteRecursively()
         }
-    }
-
-    private fun extractClipboardBackup(
-        inputStream: InputStream,
-        tempRoot: File
-    ): ExtractedClipboardBackup = ZipInputStream(inputStream).use { zipIn ->
-        val tempFilesDir = File(tempRoot, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
-        val tempArchiveFilesDir = File(tempRoot, ClipboardBackupArchiveFilesDirectoryName).apply { mkdirs() }
-        val tempClipboardFile = File(tempRoot, clipboardFileName)
-        val tempArchiveFile = File(tempRoot, ClipboardArchiveFileName)
-        var manifest: ClipboardBackupManifest? = null
-        var entry = zipIn.nextEntry
-
-        while (entry != null) {
-            when {
-                entry.name == ClipboardBackupManifestFileName -> {
-                    manifest = Json.decodeFromString(
-                        zipIn.readAllBytesCompat().toByteString().utf8()
-                    )
-                }
-
-                entry.name == clipboardFileName -> {
-                    tempClipboardFile.parentFile?.mkdirs()
-                    tempClipboardFile.outputStream().use { zipIn.copyTo(it) }
-                }
-
-                entry.name == ClipboardArchiveFileName -> {
-                    tempArchiveFile.parentFile?.mkdirs()
-                    tempArchiveFile.outputStream().use { zipIn.copyTo(it) }
-                }
-
-                entry.name.startsWith("$ClipboardBackupFilesDirectoryName/") -> {
-                    val relativePath = entry.name.removePrefix("$ClipboardBackupFilesDirectoryName/")
-                    require(relativePath.isNotBlank() && !relativePath.contains('/')) {
-                        "Unsupported clipboard backup file path: ${entry.name}"
-                    }
-
-                    File(tempFilesDir, relativePath).outputStream().use { zipIn.copyTo(it) }
-                }
-
-                entry.name.startsWith("$ClipboardBackupArchiveFilesDirectoryName/") -> {
-                    val relativePath = entry.name.removePrefix("$ClipboardBackupArchiveFilesDirectoryName/")
-                    require(relativePath.isNotBlank() && !relativePath.contains('/')) {
-                        "Unsupported clipboard archive backup file path: ${entry.name}"
-                    }
-
-                    File(tempArchiveFilesDir, relativePath).outputStream().use { zipIn.copyTo(it) }
-                }
-            }
-
-            zipIn.closeEntry()
-            entry = zipIn.nextEntry
-        }
-
-        val extractedManifest = manifest ?: throw IllegalArgumentException("Clipboard backup manifest missing")
-        val entries = if(tempClipboardFile.isFile) {
-            tempClipboardFile.decodeClipboardEntries()
-        } else {
-            emptyList()
-        }
-        val archives = if(tempArchiveFile.isFile) {
-            decodeLegacyClipboardArchives(tempArchiveFile.readText())
-        } else {
-            emptyList()
-        }
-
-        ExtractedClipboardBackup(
-            manifest = extractedManifest,
-            entries = entries,
-            filesDir = tempFilesDir,
-            archives = archives,
-            archiveFilesDir = tempArchiveFilesDir
-        )
     }
 
     private fun replaceClipboardBackup(
