@@ -102,6 +102,16 @@ val ClipboardPixivSessionId = SettingsKey(
     ""
 )
 
+val ClipboardXLinkPasteDomain = SettingsKey(
+    stringPreferencesKey("clipboard_x_link_paste_domain"),
+    "fixupx.com"
+)
+
+val ClipboardPixivLinkPasteDomain = SettingsKey(
+    stringPreferencesKey("clipboard_pixiv_link_paste_domain"),
+    "www.phixiv.net"
+)
+
 val ClipboardRedditAccessToken = SettingsKey(
     stringPreferencesKey("clipboard_reddit_access_token"),
     ""
@@ -251,6 +261,52 @@ val ClipboardHistoryAction = Action(
                 subtitle = R.string.action_clipboard_manager_settings_link_previews_subtitle,
                 setting = ClipboardLinkPreviewsEnabled
             ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_x_link_paste_domain,
+                subtitle = R.string.action_clipboard_manager_settings_x_link_paste_domain_subtitle,
+                component = {
+                    val domain = useDataStore(ClipboardXLinkPasteDomain)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp, 8.dp)
+                    ) {
+                        Text(stringResource(R.string.action_clipboard_manager_settings_x_link_paste_domain))
+                        TextField(
+                            value = domain.value,
+                            onValueChange = domain.setValue,
+                            placeholder = { Text("fixupx.com") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }
+            ),
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_pixiv_link_paste_domain,
+                subtitle = R.string.action_clipboard_manager_settings_pixiv_link_paste_domain_subtitle,
+                component = {
+                    val domain = useDataStore(ClipboardPixivLinkPasteDomain)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp, 8.dp)
+                    ) {
+                        Text(stringResource(R.string.action_clipboard_manager_settings_pixiv_link_paste_domain))
+                        TextField(
+                            value = domain.value,
+                            onValueChange = domain.setValue,
+                            placeholder = { Text("www.phixiv.net") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }
+            ),
             userSettingToggleDataStore(
                 title = R.string.action_clipboard_manager_settings_limit_mobile_data,
                 subtitle = R.string.action_clipboard_manager_settings_limit_mobile_data_subtitle,

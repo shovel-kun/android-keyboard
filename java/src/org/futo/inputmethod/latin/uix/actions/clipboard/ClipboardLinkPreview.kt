@@ -89,14 +89,20 @@ internal data class PhixivArtworkPasteUrl(
     val pageIndex: Int?
 )
 
-internal class PhixivArtworkPasteSession {
+internal class PhixivArtworkPasteSession(private val targetDomain: String = "www.phixiv.net") {
+    private val normalizedTargetDomain = targetDomain
+        .trim()
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .trimEnd('/')
+
     private val lastPageByBaseUrl = mutableMapOf<String, Int>()
 
     fun textForPaste(rawText: String): String {
         val trimmed = rawText.trim()
         val spoilerWrapped = trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4
         val text = if(spoilerWrapped) trimmed.substring(2, trimmed.length - 2).trim() else rawText
-        val artworkUrl = ClipboardLinkPreviewFetcher.phixivArtworkPasteUrl(text)
+        val artworkUrl = ClipboardLinkPreviewFetcher.phixivArtworkPasteUrl(text, normalizedTargetDomain)
             ?: return ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
         val startingPage = artworkUrl.pageIndex ?: 1
         val lastPage = lastPageByBaseUrl[artworkUrl.baseUrl]
@@ -108,6 +114,36 @@ internal class PhixivArtworkPasteSession {
         val pasteText = if(page <= 1) artworkUrl.baseUrl else "${artworkUrl.baseUrl}/$page"
         val wrappedPasteText = if(spoilerWrapped) "||$pasteText||" else pasteText
         return if(lastPage != null) "\n$wrappedPasteText" else wrappedPasteText
+    }
+
+    fun wrappedTextForPaste(rawText: String): String {
+        val text = textForPaste(rawText)
+        val prefix = if(text.startsWith("\n")) "\n" else ""
+        val body = text.removePrefix("\n")
+        val trimmed = body.trim()
+        return if(trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4) {
+            text
+        } else {
+            "$prefix||$body||"
+        }
+    }
+}
+
+internal class XLinkPasteSession(private val targetDomain: String) {
+    private val normalizedTargetDomain = targetDomain
+        .trim()
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .trimEnd('/')
+
+    fun textForPaste(rawText: String): String {
+        val trimmed = rawText.trim()
+        val spoilerWrapped = trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4
+        val text = if(spoilerWrapped) trimmed.substring(2, trimmed.length - 2).trim() else rawText
+        val pasteUrl = ClipboardLinkPreviewFetcher.xLinkPasteUrl(text, normalizedTargetDomain)
+            ?: return ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
+        val wrappedPasteUrl = if(spoilerWrapped) "||$pasteUrl||" else pasteUrl
+        return wrappedPasteUrl
     }
 
     fun wrappedTextForPaste(rawText: String): String {
@@ -167,6 +203,15 @@ private val SupportedTwitterHosts = setOf(
     "www.fixvx.com"
 )
 
+private val XLinkPasteHosts = setOf(
+    "x.com",
+    "www.x.com",
+    "mobile.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com"
+)
+
 private val SupportedPixivHosts = setOf(
     "pixiv.net",
     "www.pixiv.net",
@@ -224,15 +269,35 @@ object ClipboardLinkPreviewFetcher {
         return candidate.metadata.sourceUrl ?: rawText
     }
 
-    internal fun phixivArtworkPasteUrl(rawText: String): PhixivArtworkPasteUrl? {
+    internal fun phixivArtworkPasteUrl(
+        rawText: String,
+        targetDomain: String = "www.phixiv.net"
+    ): PhixivArtworkPasteUrl? {
         val trimmed = rawText.trim()
         if(!LinkPreviewUrlRegex.matches(trimmed)) return null
 
         val artworkUrl = parsePixivArtworkUrl(trimmed) ?: return null
+        if(targetDomain.isBlank()) return null
         return PhixivArtworkPasteUrl(
-            baseUrl = artworkUrl.canonicalUrl(),
+            baseUrl = artworkUrl.pasteUrl(targetDomain),
             pageIndex = artworkUrl.pageIndex
         )
+    }
+
+    internal fun xLinkPasteUrl(rawText: String, targetDomain: String): String? {
+        val trimmed = rawText.trim()
+        if(!LinkPreviewUrlRegex.matches(trimmed)) return null
+        if(targetDomain.isBlank()) return null
+
+        val uri = runCatching { URL(trimmed).toURI() }.getOrNull() ?: return null
+        if(!XLinkPasteHosts.contains(uri.host?.lowercase())) return null
+
+        return buildString {
+            append("https://").append(targetDomain)
+            append(uri.rawPath.orEmpty())
+            uri.rawQuery?.let { append('?').append(it) }
+            uri.rawFragment?.let { append('#').append(it) }
+        }
     }
 
     fun prefersImagePreview(rawText: String): Boolean =
@@ -1887,6 +1952,7 @@ private data class PixivArtworkUrl(
     val language: String
 ) : PreviewRequest {
     fun canonicalUrl(): String = "https://www.phixiv.net/$language/artworks/$id"
+    fun pasteUrl(targetDomain: String): String = "https://$targetDomain/$language/artworks/$id"
 }
 
 private data class PixivPreviewResponse(

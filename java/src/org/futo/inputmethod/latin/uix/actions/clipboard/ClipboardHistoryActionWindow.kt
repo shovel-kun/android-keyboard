@@ -106,7 +106,14 @@ internal fun ClipboardHistoryActionWindowContents(
     val context = LocalContext.current
     val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
     val uiState = rememberClipboardUiState(clipboardHistoryManager)
-    val phixivPasteSession = remember { PhixivArtworkPasteSession() }
+    val pixivPasteDomain = useDataStore(ClipboardPixivLinkPasteDomain)
+    val phixivPasteSession = remember(pixivPasteDomain.value) {
+        PhixivArtworkPasteSession(pixivPasteDomain.value)
+    }
+    val xLinkPasteDomain = useDataStore(ClipboardXLinkPasteDomain)
+    val xLinkPasteSession = remember(xLinkPasteDomain.value) {
+        XLinkPasteSession(xLinkPasteDomain.value)
+    }
 
     LaunchedEffect(unlocked, uiState) {
         if(unlocked && uiState.shouldRefreshPreviews) {
@@ -238,7 +245,9 @@ internal fun ClipboardHistoryActionWindowContents(
                         onPaste = {
                             when {
                                 it.text != null -> manager.typeText(
-                                    phixivPasteSession.textForPaste(it.text)
+                                    xLinkPasteSession.textForPaste(
+                                        phixivPasteSession.textForPaste(it.text)
+                                    )
                                 )
                                 it.backingFile != null && it.mimeTypes.isNotEmpty() -> {
                                     val uri = createClipboardContentUri(
@@ -292,7 +301,9 @@ internal fun ClipboardHistoryActionWindowContents(
                             when {
                                 clipEntry.uri != null -> manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
                                 clipEntry.text != null -> manager.typeText(
-                                    phixivPasteSession.wrappedTextForPaste(clipEntry.text)
+                                    xLinkPasteSession.wrappedTextForPaste(
+                                        phixivPasteSession.textForPaste(clipEntry.text)
+                                    )
                                 )
                             }
                             clipboardHistoryManager.onPaste(clipEntry)

@@ -474,6 +474,22 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun phixivArtworkPasteSession_supportsCustomDomainsAndCanBeDisabled() {
+        assertEquals(
+            "https://phixiv.example/en/artworks/39832455",
+            PhixivArtworkPasteSession("https://phixiv.example/").textForPaste(
+                "https://www.pixiv.net/en/artworks/39832455"
+            )
+        )
+        assertEquals(
+            "https://www.pixiv.net/en/artworks/39832455",
+            PhixivArtworkPasteSession("").textForPaste(
+                "https://www.pixiv.net/en/artworks/39832455"
+            )
+        )
+    }
+
+    @Test
     fun phixivArtworkPasteSession_keepsEmbeddedAndNonPixivTextUnchanged() {
         val session = PhixivArtworkPasteSession()
         val embedded = "saved https://www.phixiv.net/en/artworks/39832455"
@@ -481,6 +497,50 @@ class ClipboardLinkPreviewTest {
 
         assertEquals(embedded, session.textForPaste(embedded))
         assertEquals(twitter, session.textForPaste(twitter))
+    }
+
+    @Test
+    fun xLinkPasteSession_rewritesXAndTwitterUrls() {
+        val session = XLinkPasteSession("fixupx.com")
+
+        assertEquals(
+            "https://fixupx.com/futo/status/1234567890?foo=bar#reply",
+            session.textForPaste("https://x.com/futo/status/1234567890?foo=bar#reply")
+        )
+        assertEquals(
+            "https://fixupx.com/futo/status/1234567890",
+            session.textForPaste("https://www.twitter.com/futo/status/1234567890")
+        )
+    }
+
+    @Test
+    fun xLinkPasteSession_rewritesSpoilerWrappedUrlAndLeavesOtherTextUnchanged() {
+        val session = XLinkPasteSession("fixupx.com")
+        val embedded = "saved https://x.com/futo/status/1234567890"
+
+        assertEquals(
+            "||https://fixupx.com/futo/status/1234567890||",
+            session.textForPaste("||https://x.com/futo/status/1234567890||")
+        )
+        assertEquals(embedded, session.textForPaste(embedded))
+        assertEquals(
+            "https://fixupx.com/futo/status/1234567890",
+            session.textForPaste("https://fixupx.com/futo/status/1234567890")
+        )
+    }
+
+    @Test
+    fun xLinkPasteSession_supportsCustomDomainsAndCanBeDisabled() {
+        assertEquals(
+            "https://fxtwitter.com/futo/status/1234567890",
+            XLinkPasteSession("https://fxtwitter.com/").textForPaste(
+                "https://x.com/futo/status/1234567890"
+            )
+        )
+        assertEquals(
+            "https://x.com/futo/status/1234567890",
+            XLinkPasteSession("").textForPaste("https://x.com/futo/status/1234567890")
+        )
     }
 
     @Test
