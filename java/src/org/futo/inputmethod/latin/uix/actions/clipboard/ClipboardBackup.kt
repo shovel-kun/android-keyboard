@@ -270,15 +270,23 @@ fun clipboardArchivesFromLocalPreviewEntries(
 fun reconcileClipboardEntriesWithStorage(
     entries: List<ClipboardEntry>,
     clipboardDir: File
+): List<ClipboardEntry> = reconcileClipboardEntriesWithStorage(
+    entries = entries,
+    existingMediaNames = existingClipboardMediaFileNames(clipboardDir)
+)
+
+internal fun reconcileClipboardEntriesWithStorage(
+    entries: List<ClipboardEntry>,
+    existingMediaNames: Set<String>
 ): List<ClipboardEntry> {
     val deduplicated = LinkedHashSet<ClipboardEntry>()
 
     return entries.mapNotNull { entry ->
-        if(entry.backingFile != null && File(clipboardDir, entry.backingFile).isFile != true) {
+        if(entry.backingFile != null && entry.backingFile !in existingMediaNames) {
             null
-        } else if(entry.previewMedia().any { !previewMediaFileExists(clipboardDir, it.fileName) }) {
+        } else if(entry.previewMedia().any { it.fileName !in existingMediaNames }) {
             val retainedPreviewMedia = entry.previewMedia()
-                .filter { previewMediaFileExists(clipboardDir, it.fileName) }
+                .filter { it.fileName in existingMediaNames }
             entry.copy(
                 previewImageFile = null,
                 previewMediaFiles = retainedPreviewMedia,
@@ -298,8 +306,48 @@ fun reconcileClipboardEntriesWithStorage(
     }.filter { deduplicated.add(it) }
 }
 
-private fun previewMediaFileExists(clipboardDir: File, fileName: String): Boolean =
-    File(clipboardDir, fileName).isFile == true
+internal fun restoreClipboardEntriesFromArchives(
+    entries: List<ClipboardEntry>,
+    archives: Collection<ClipboardLinkArchive>
+): List<ClipboardEntry> {
+    val savedArchiveMediaByKey = archives.mapNotNull { archive ->
+        archive.savedPreviewMedia()
+            .takeIf { it.isNotEmpty() }
+            ?.let { archive.key to (archive to it) }
+    }.toMap()
+    return entries.map { entry ->
+        val archiveAndMedia = entry.previewMetadata
+            ?.archiveKey()
+            ?.let(savedArchiveMediaByKey::get)
+            ?: entry.archiveBackfillMetadata()
+                ?.archiveKey()
+                ?.let(savedArchiveMediaByKey::get)
+        archiveAndMedia?.let { (archive, savedMedia) ->
+            entry.withArchivePreviewMedia(
+                archive = archive,
+                savedMedia = savedMedia
+            )
+        } ?: entry
+    }
+}
+
+internal fun ClipboardEntry.withArchivePreviewMedia(
+    archive: ClipboardLinkArchive,
+    savedMedia: List<ClipboardPreviewMedia>,
+    attemptedAt: Long? = null
+): ClipboardEntry = copy(
+    previewImageFile = null,
+    previewMediaFiles = savedMedia,
+    previewMetadata = archive.metadata ?: previewMetadata,
+    previewFetchStatus = if(previewText != null || savedMedia.isNotEmpty()) {
+        ClipboardPreviewFetchStatus.Success
+    } else {
+        previewFetchStatus
+    },
+    previewFetchLastAttemptAt = attemptedAt ?: previewFetchLastAttemptAt,
+    previewFetchFailureDetail = null,
+    deletedArchiveKeys = emptySet()
+)
 
 fun mergeClipboardEntries(
     currentEntries: List<ClipboardEntry>,

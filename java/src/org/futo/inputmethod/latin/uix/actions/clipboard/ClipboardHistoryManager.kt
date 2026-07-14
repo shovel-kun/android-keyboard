@@ -595,47 +595,29 @@ class ClipboardHistoryManager private constructor(
         refreshMissingLinkPreviews(forceArchiveBackfill = true)
     }
 
-    suspend fun reconcileClipboardStorage() = withContext(ClipboardIOContext) {
+    suspend fun reconcileClipboardStorage(): Boolean = withContext(ClipboardIOContext) {
+        reconcileArchiveStorage()
+
         // Enumerate the clipboard media directory once on a background thread rather
         // than issuing a File.isFile stat per entry/preview-media on the UI thread.
         // Both checks below only ever target context.clipboardDir, so membership in
         // this set is equivalent to the previous per-file .isFile checks.
         val existingMediaNames = existingClipboardMediaFileNames(context.clipboardDir)
-
         withContext(Dispatchers.Main) {
-            val deduplicated = deduplicateClipboardEntries(clipboardHistory)
-            if(deduplicated.size < clipboardHistory.size || deduplicated != clipboardHistory.toList()) {
+            val currentEntries = clipboardHistory.toList()
+            val reconciledEntries = restoreClipboardEntriesFromArchives(
+                entries = reconcileClipboardEntriesWithStorage(
+                    entries = deduplicateClipboardEntries(currentEntries),
+                    existingMediaNames = existingMediaNames
+                ),
+                archives = linkArchives.values
+            )
+            if(reconciledEntries != currentEntries) {
                 clipboardHistory.clear()
-                clipboardHistory.addAll(deduplicated)
+                clipboardHistory.addAll(reconciledEntries)
             }
-
-            clipboardHistory.removeAll {
-                it.backingFile != null && it.backingFile !in existingMediaNames
-            }
-
-            for(i in clipboardHistory.indices) {
-                val entry = clipboardHistory[i]
-                val retainedPreviewMedia = entry.previewMedia()
-                    .filter { it.fileName in existingMediaNames }
-                if(retainedPreviewMedia.size != entry.previewMedia().size) {
-                    clipboardHistory[i] = entry.copy(
-                        previewImageFile = null,
-                        previewMediaFiles = retainedPreviewMedia,
-                        previewFetchStatus = if(
-                            entry.previewFetchStatus == ClipboardPreviewFetchStatus.Success &&
-                            entry.previewText == null &&
-                            retainedPreviewMedia.isEmpty()
-                        ) {
-                            ClipboardPreviewFetchStatus.NeverAttempted
-                        } else {
-                            entry.previewFetchStatus
-                        }
-                    )
-                }
-            }
+            reconciledEntries != currentEntries
         }
-
-        reconcileArchiveStorage()
     }
 
     internal fun saveClipboard(
@@ -1536,8 +1518,8 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             // Reconcile once, then persist the already-reconciled list. Previously this
             // saved with reconcileBeforeSave=true AND called reconcile again below, running
             // the (now off-main) reconcile twice on first-run/migration loads.
-            reconcileClipboardStorage()
-            if(activeEntries != loadedEntries) {
+            val clipboardStorageChanged = reconcileClipboardStorage()
+            if(activeEntries != loadedEntries || clipboardStorageChanged) {
                 saveClipboard(reconcileBeforeSave = false)
             }
         } catch (e: Exception) {
@@ -2188,25 +2170,6 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             }
         }
     }
-
-    private fun ClipboardEntry.withArchivePreviewMedia(
-        archive: ClipboardLinkArchive,
-        savedMedia: List<ClipboardPreviewMedia>,
-        attemptedAt: Long
-    ): ClipboardEntry =
-        copy(
-            previewImageFile = null,
-            previewMediaFiles = savedMedia,
-            previewMetadata = archive.metadata ?: previewMetadata,
-            previewFetchStatus = if(previewText != null || savedMedia.isNotEmpty()) {
-                ClipboardPreviewFetchStatus.Success
-            } else {
-                previewFetchStatus
-            },
-            previewFetchLastAttemptAt = attemptedAt,
-            previewFetchFailureDetail = null,
-            deletedArchiveKeys = emptySet()
-        )
 
     private fun archiveForEntry(entry: ClipboardEntry): ClipboardLinkArchive? =
         entry.previewMetadata?.archiveKey()?.let { linkArchives[it] }

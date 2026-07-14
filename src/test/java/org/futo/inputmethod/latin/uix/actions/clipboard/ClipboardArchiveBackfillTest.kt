@@ -393,6 +393,70 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
+    fun startupStorageReconcile_restoresSavedArchiveMediaToTextOnlyEntryAfterLegacyMigration() {
+        val clipboardDir = createTempDirectory().toFile()
+        val legacyArchiveDir = createTempDirectory().toFile()
+        try {
+            File(legacyArchiveDir, "saved.jpg").writeText("image")
+            val metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.PIXIV,
+                sourceUrl = "https://www.pixiv.net/artworks/123",
+                sourceId = "123"
+            )
+            val entry = samplePixivEntry(metadata = metadata).copy(
+                previewText = "post text",
+                previewMediaFiles = emptyList()
+            )
+            val archive = ClipboardLinkArchive(
+                key = "pixiv:123",
+                provider = ClipboardPreviewProvider.PIXIV,
+                sourceUrl = "https://www.pixiv.net/artworks/123",
+                sourceId = "123",
+                metadata = metadata,
+                media = listOf(
+                    ClipboardArchiveMedia(
+                        sourceUrl = "https://img.example/saved.jpg",
+                        sourceIndex = 0,
+                        mimeType = "image/jpeg",
+                        fileName = "saved.jpg",
+                        status = ClipboardArchiveMediaStatus.Saved
+                    )
+                ),
+                createdAtEpochMs = 1L,
+                updatedAtEpochMs = 2L
+            )
+
+            migrateLegacyArchiveMediaFiles(
+                legacyArchiveDir = legacyArchiveDir,
+                clipboardDir = clipboardDir,
+                referencedFileNames = referencedClipboardArchiveFileNames(listOf(archive))
+            )
+            val reconciledArchives = reconcileClipboardArchivesWithStorage(
+                archives = listOf(archive),
+                clipboardDir = clipboardDir,
+                legacyArchiveDir = legacyArchiveDir,
+                now = 3L
+            )
+            val reconciledEntries = restoreClipboardEntriesFromArchives(
+                entries = reconcileClipboardEntriesWithStorage(listOf(entry), clipboardDir),
+                archives = reconciledArchives
+            )
+
+            assertEquals(listOf("saved.jpg"), reconciledArchives.single().savedPreviewMedia().map { it.fileName })
+            assertEquals(listOf("saved.jpg"), reconciledEntries.single().previewMediaFileNames())
+            assertEquals(
+                listOf("saved.jpg"),
+                decodeClipboardEntries(encodeClipboardEntries(reconciledEntries))
+                    .single()
+                    .previewMediaFileNames()
+            )
+        } finally {
+            clipboardDir.deleteRecursively()
+            legacyArchiveDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun fallbackArchiveReload_marksMissingWhenSharedClipboardFileIsGone() {
         val clipboardDir = createTempDirectory().toFile()
         val archiveDir = createTempDirectory().toFile()
