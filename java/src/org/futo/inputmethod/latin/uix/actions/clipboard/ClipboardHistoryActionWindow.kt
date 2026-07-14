@@ -114,6 +114,10 @@ internal fun ClipboardHistoryActionWindowContents(
     val xLinkPasteSession = remember(xLinkPasteDomain.value) {
         XLinkPasteSession(xLinkPasteDomain.value)
     }
+    val mastodonLinkPasteDomain = useDataStore(ClipboardMastodonLinkPasteDomain)
+    val mastodonLinkPasteSession = remember(mastodonLinkPasteDomain.value) {
+        MastodonLinkPasteSession(mastodonLinkPasteDomain.value)
+    }
 
     LaunchedEffect(unlocked, uiState) {
         if(unlocked && uiState.shouldRefreshPreviews) {
@@ -246,7 +250,9 @@ internal fun ClipboardHistoryActionWindowContents(
                             when {
                                 it.text != null -> manager.typeText(
                                     xLinkPasteSession.textForPaste(
-                                        phixivPasteSession.textForPaste(it.text)
+                                        mastodonLinkPasteSession.textForPaste(
+                                            phixivPasteSession.textForPaste(it.text)
+                                        )
                                     )
                                 )
                                 it.backingFile != null && it.mimeTypes.isNotEmpty() -> {
@@ -302,7 +308,9 @@ internal fun ClipboardHistoryActionWindowContents(
                                 clipEntry.uri != null -> manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
                                 clipEntry.text != null -> manager.typeText(
                                     xLinkPasteSession.wrappedTextForPaste(
-                                        phixivPasteSession.textForPaste(clipEntry.text)
+                                        mastodonLinkPasteSession.textForPaste(
+                                            phixivPasteSession.textForPaste(clipEntry.text)
+                                        )
                                     )
                                 )
                             }

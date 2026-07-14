@@ -544,6 +544,62 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun mastodonLinkPasteSession_rewritesMastodonPostUrls() {
+        val session = MastodonLinkPasteSession("fxmas.to")
+
+        assertEquals(
+            "https://fxmas.to/mastodon.social/@futo/1234567890?foo=bar#reply",
+            session.textForPaste("https://mastodon.social/@futo/1234567890?foo=bar#reply")
+        )
+        assertEquals(
+            "https://fxmas.to/social.example/@futo/1234567890",
+            session.textForPaste("https://social.example/users/futo/statuses/1234567890")
+        )
+        assertEquals(
+            "https://fxmas.to/social.example/1234567890",
+            session.textForPaste("https://social.example/web/statuses/1234567890")
+        )
+    }
+
+    @Test
+    fun mastodonLinkPasteSession_preservesSpoilerWrapping() {
+        val session = MastodonLinkPasteSession("fxmas.to")
+
+        assertEquals(
+            "||https://fxmas.to/mastodon.social/@futo/1234567890||",
+            session.textForPaste("||https://mastodon.social/@futo/1234567890||")
+        )
+    }
+
+    @Test
+    fun mastodonLinkPasteSession_supportsCustomDomainsAndCanBeDisabled() {
+        assertEquals(
+            "https://fx.example/mastodon.social/@futo/1234567890",
+            MastodonLinkPasteSession("https://fx.example/").textForPaste(
+                "https://mastodon.social/@futo/1234567890"
+            )
+        )
+        assertEquals(
+            "https://mastodon.social/@futo/1234567890",
+            MastodonLinkPasteSession("").textForPaste(
+                "https://mastodon.social/@futo/1234567890"
+            )
+        )
+    }
+
+    @Test
+    fun mastodonLinkPasteSession_keepsNonPostUrlsAndEmbeddedTextUnchanged() {
+        val session = MastodonLinkPasteSession("fxmas.to")
+        val profile = "https://mastodon.social/@futo"
+        val embedded = "saved https://mastodon.social/@futo/1234567890"
+        val linked = "https://fxmas.to/mastodon.social/@futo/1234567890"
+
+        assertEquals(profile, session.textForPaste(profile))
+        assertEquals(embedded, session.textForPaste(embedded))
+        assertEquals(linked, session.textForPaste(linked))
+    }
+
+    @Test
     fun metadataForSupportedUrl_normalizesYouTubeVideoUrls() {
         val watch = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=playlist"

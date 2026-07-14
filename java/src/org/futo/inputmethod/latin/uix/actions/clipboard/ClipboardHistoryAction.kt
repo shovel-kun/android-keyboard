@@ -112,6 +112,11 @@ val ClipboardPixivLinkPasteDomain = SettingsKey(
     "www.phixiv.net"
 )
 
+val ClipboardMastodonLinkPasteDomain = SettingsKey(
+    stringPreferencesKey("clipboard_mastodon_link_paste_domain"),
+    "fxmas.to"
+)
+
 val ClipboardRedditAccessToken = SettingsKey(
     stringPreferencesKey("clipboard_reddit_access_token"),
     ""
@@ -299,6 +304,29 @@ val ClipboardHistoryAction = Action(
                             value = domain.value,
                             onValueChange = domain.setValue,
                             placeholder = { Text("www.phixiv.net") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }
+            ),
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_mastodon_link_paste_domain,
+                subtitle = R.string.action_clipboard_manager_settings_mastodon_link_paste_domain_subtitle,
+                component = {
+                    val domain = useDataStore(ClipboardMastodonLinkPasteDomain)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp, 8.dp)
+                    ) {
+                        Text(stringResource(R.string.action_clipboard_manager_settings_mastodon_link_paste_domain))
+                        TextField(
+                            value = domain.value,
+                            onValueChange = domain.setValue,
+                            placeholder = { Text("fxmas.to") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             modifier = Modifier.fillMaxWidth()

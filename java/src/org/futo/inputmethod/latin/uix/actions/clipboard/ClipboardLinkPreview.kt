@@ -159,6 +159,23 @@ internal class XLinkPasteSession(private val targetDomain: String) {
     }
 }
 
+internal class MastodonLinkPasteSession(private val targetDomain: String) {
+    private val normalizedTargetDomain = targetDomain
+        .trim()
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .trimEnd('/')
+
+    fun textForPaste(rawText: String): String {
+        val trimmed = rawText.trim()
+        val spoilerWrapped = trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4
+        val text = if(spoilerWrapped) trimmed.substring(2, trimmed.length - 2).trim() else rawText
+        val pasteUrl = ClipboardLinkPreviewFetcher.mastodonLinkPasteUrl(text, normalizedTargetDomain)
+            ?: return ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
+        return if(spoilerWrapped) "||$pasteUrl||" else pasteUrl
+    }
+}
+
 sealed interface ClipboardPreviewFetchFailure {
     data class RateLimited(
         val provider: ClipboardPreviewProvider,
@@ -295,6 +312,40 @@ object ClipboardLinkPreviewFetcher {
         return buildString {
             append("https://").append(targetDomain)
             append(uri.rawPath.orEmpty())
+            uri.rawQuery?.let { append('?').append(it) }
+            uri.rawFragment?.let { append('#').append(it) }
+        }
+    }
+
+    internal fun mastodonLinkPasteUrl(rawText: String, targetDomain: String): String? {
+        val trimmed = rawText.trim()
+        if(!LinkPreviewUrlRegex.matches(trimmed)) return null
+        if(targetDomain.isBlank()) return null
+
+        val uri = runCatching { URL(trimmed).toURI() }.getOrNull() ?: return null
+        val host = uri.host?.lowercase() ?: return null
+        val segments = uri.path.trim('/').split('/')
+        val postPath = when {
+            segments.size == 2 &&
+                segments[0].startsWith('@') &&
+                segments[0].length > 1 &&
+                segments[1].all(Char::isDigit) -> uri.rawPath
+            segments.size == 4 &&
+                segments[0] == "users" &&
+                segments[1].isNotBlank() &&
+                segments[2] == "statuses" &&
+                segments[3].all(Char::isDigit) -> "/@${segments[1]}/${segments[3]}"
+            segments.size == 3 &&
+                segments[0] == "web" &&
+                segments[1] == "statuses" &&
+                segments[2].all(Char::isDigit) -> "/${segments[2]}"
+            else -> return null
+        }
+        val sourceDomain = if(uri.port == -1) host else "$host:${uri.port}"
+
+        return buildString {
+            append("https://").append(targetDomain).append('/').append(sourceDomain)
+            append(postPath)
             uri.rawQuery?.let { append('?').append(it) }
             uri.rawFragment?.let { append('#').append(it) }
         }

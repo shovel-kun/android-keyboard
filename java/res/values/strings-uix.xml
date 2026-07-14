@@ -104,6 +104,8 @@
     <string name="action_clipboard_manager_settings_x_link_paste_domain_subtitle">Domain used when pasting X links from clipboard history; leave empty to keep the original domain</string>
     <string name="action_clipboard_manager_settings_pixiv_link_paste_domain">Pixiv link paste domain</string>
     <string name="action_clipboard_manager_settings_pixiv_link_paste_domain_subtitle">Domain used when pasting Pixiv links from clipboard history; leave empty to keep the original domain</string>
+    <string name="action_clipboard_manager_settings_mastodon_link_paste_domain">Mastodon link paste domain</string>
+    <string name="action_clipboard_manager_settings_mastodon_link_paste_domain_subtitle">Domain used when pasting Mastodon links from clipboard history; leave empty to keep the original link</string>
     <string name="action_clipboard_manager_settings_limit_mobile_data">Limit downloads on mobile data</string>
     <string name="action_clipboard_manager_settings_limit_mobile_data_subtitle">Wait for Wi-Fi or unmetered network before fetching link previews and archive media automatically</string>
     <string name="action_clipboard_manager_settings_pixiv_session_id">Pixiv session ID</string>
