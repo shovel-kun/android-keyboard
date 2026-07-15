@@ -29,7 +29,8 @@ enum class ClipboardPreviewProvider {
     TWITTER,
     PIXIV,
     REDDIT,
-    YOUTUBE
+    YOUTUBE,
+    MASTODON
 }
 
 @Serializable

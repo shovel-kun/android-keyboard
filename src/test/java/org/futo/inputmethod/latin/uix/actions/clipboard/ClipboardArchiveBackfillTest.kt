@@ -903,6 +903,21 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
+    fun startupPreviewFetchTexts_includesExistingMastodonLinks() {
+        val mastodonUrl = "https://mastodon.social/@futo/1234567890"
+        val entry = samplePixivEntry().copy(
+            text = mastodonUrl,
+            previewText = null,
+            previewMediaFiles = emptyList(),
+            previewMetadata = null,
+            previewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted
+        )
+
+        assertEquals(listOf(mastodonUrl), startupPreviewFetchTexts(listOf(entry), limit = 3))
+        assertTrue(entry.matchesDeletedArchiveKey("mastodon:mastodon.social:1234567890"))
+    }
+
+    @Test
     fun archiveBackfillRequests_stayUnboundedWhenStartupPreviewFetchIsBounded() {
         val ids = (101..110).toList()
         val entries = ids.mapIndexed { index, id ->

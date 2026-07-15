@@ -534,6 +534,17 @@ object ClipboardLinkPreviewFetcher {
             )
         }
 
+    internal fun parseMastodonApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+        parseMastodonApiPreview(
+            response = LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
+            statusUrl = MastodonStatusUrl(
+                authority = "mastodon.social",
+                username = "futo",
+                statusId = "1234567890",
+                path = "/@futo/1234567890"
+            )
+        )?.toManifest()
+
     internal fun previewRateLimitedExceptionForTest(retryAfterEpochMs: Long, message: String): Exception =
         ClipboardPreviewRateLimitedException(retryAfterEpochMs, message)
 
@@ -575,6 +586,7 @@ object ClipboardLinkPreviewFetcher {
         TwitterPreviewProvider,
         PixivPreviewProvider,
         RedditPreviewProvider,
+        MastodonPreviewProvider,
         YouTubePreviewProvider
     )
 
@@ -692,6 +704,31 @@ object ClipboardLinkPreviewFetcher {
                 host.endsWith(".youtube.com") ||
                 host.endsWith(".youtube-nocookie.com") ||
                 host.endsWith(".ytimg.com")
+    }
+
+    private object MastodonPreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.MASTODON
+
+        override fun parse(url: String): PreviewRequest? =
+            parseMastodonStatusUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val statusUrl = request as MastodonStatusUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = statusUrl.canonicalUrl(),
+                sourceId = statusUrl.sourceId(),
+                authorHandle = statusUrl.username
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchMastodonPreview(request as MastodonStatusUrl)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as MastodonStatusUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean = false
     }
 
     private fun fetchTwitterPreview(statusUrl: TwitterStatusUrl): RemotePreviewData? {
@@ -1061,6 +1098,74 @@ object ClipboardLinkPreviewFetcher {
         return parseYouTubeOEmbedPreview(response, videoUrl)
     }
 
+    private fun fetchMastodonPreview(statusUrl: MastodonStatusUrl): RemotePreviewData? {
+        val response = runPreviewRequestCatching {
+            requestJsonObject(statusUrl.apiUrl(), MaxPreviewJsonBytes)
+        } ?: return null
+
+        return parseMastodonApiPreview(response, statusUrl)
+    }
+
+    private fun parseMastodonApiPreview(
+        response: JsonObject,
+        statusUrl: MastodonStatusUrl
+    ): RemotePreviewData? {
+        val status = response.objectValue("reblog") ?: response
+        val content = status.stringValue("content")
+            ?.stripSimpleHtml()
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val spoilerText = status.stringValue("spoiler_text")
+            ?.stripSimpleHtml()
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val snippetText = listOfNotNull(spoilerText, content)
+            .joinToString("\n")
+            .takeIf { it.isNotBlank() }
+        val account = status.objectValue("account")
+        val mediaItems = status.mastodonMediaItems()
+
+        val metadata = ClipboardPreviewMetadata(
+            provider = ClipboardPreviewProvider.MASTODON,
+            sourceUrl = statusUrl.canonicalUrl(),
+            sourceId = statusUrl.sourceId(),
+            title = spoilerText,
+            bodyText = content,
+            authorName = account?.stringValue("display_name")
+                ?.stripSimpleHtml()
+                ?.takeIf { it.isNotBlank() },
+            authorHandle = account?.stringValue("acct")
+                ?.trim()
+                ?.takeIf { it.isNotBlank() },
+            authorId = account?.stringValue("id"),
+            createdAt = status.stringValue("created_at"),
+            imageCount = mediaItems.size.takeIf { it > 0 },
+            selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() },
+            tags = status.stringArrayValue("tags"),
+            stats = ClipboardPreviewStats(
+                likeCount = status.longValue("favourites_count"),
+                replyCount = status.longValue("replies_count"),
+                repostCount = status.longValue("reblogs_count"),
+                quoteCount = status.longValue("quotes_count")
+            ),
+            flags = ClipboardPreviewFlags(
+                animated = status.arrayValue("media_attachments")
+                    ?.any { (it as? JsonObject)?.stringValue("type") == "gifv" } == true,
+                restricted = status.booleanValue("sensitive") == true
+            )
+        ).nullIfEmpty()
+
+        if(snippetText == null && mediaItems.isEmpty() && metadata == null) return null
+
+        return RemotePreviewData(
+            snippet = snippetText?.let { sanitizeClipboardText(it, 160) },
+            mediaItems = mediaItems,
+            metadata = metadata
+        )
+    }
+
     private fun parseYouTubeOEmbedPreview(
         response: JsonObject,
         videoUrl: YouTubeVideoUrl
@@ -1297,6 +1402,7 @@ object ClipboardLinkPreviewFetcher {
         is TwitterStatusUrl -> TwitterPreviewProvider.provider
         is PixivArtworkUrl -> PixivPreviewProvider.provider
         is RedditPostUrl -> RedditPreviewProvider.provider
+        is MastodonStatusUrl -> MastodonPreviewProvider.provider
         is YouTubeVideoUrl -> YouTubePreviewProvider.provider
     }
 
@@ -1511,6 +1617,42 @@ object ClipboardLinkPreviewFetcher {
         if (!id.isValidYouTubeVideoId()) return null
         return YouTubeVideoUrl(id)
     }
+
+    private fun parseMastodonStatusUrl(url: String): MastodonStatusUrl? {
+        val uri = runCatching { URL(url).toURI() }.getOrNull() ?: return null
+        val host = uri.host?.lowercase() ?: return null
+        val authority = if(uri.port >= 0) "$host:${uri.port}" else host
+        val segments = uri.path.split('/').filter { it.isNotBlank() }
+
+        val parsed = when {
+            segments.size == 2 && segments[0].startsWith("@") ->
+                MastodonStatusUrl(
+                    authority = authority,
+                    username = segments[0].removePrefix("@"),
+                    statusId = segments[1],
+                    path = "/${segments.joinToString("/")}"
+                )
+            segments.size == 4 && segments[0] == "users" && segments[2] == "statuses" ->
+                MastodonStatusUrl(
+                    authority = authority,
+                    username = segments[1],
+                    statusId = segments[3],
+                    path = "/${segments.joinToString("/")}"
+                )
+            segments.size == 3 && segments[0] == "web" && segments[1] == "statuses" ->
+                MastodonStatusUrl(
+                    authority = authority,
+                    username = null,
+                    statusId = segments[2],
+                    path = "/${segments.joinToString("/")}"
+                )
+            else -> null
+        } ?: return null
+
+        val statusId = parsed.statusId.takeWhile { it.isLetterOrDigit() || it == '_' || it == '-' }
+        if(statusId.length < 2) return null
+        return parsed.copy(statusId = statusId)
+    }
 }
 
 internal fun isUnavailablePreviewText(text: String?): Boolean {
@@ -1583,6 +1725,9 @@ internal fun parseRedditApiPreviewForTest(responseText: String): ClipboardLinkPr
 
 internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
     ClipboardLinkPreviewFetcher.parseYouTubeOEmbedPreviewForTest(responseText)
+
+internal fun parseMastodonApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseMastodonApiPreviewForTest(responseText)
 
 internal fun unavailablePreviewFailureForTest(
     snippet: String?,
@@ -2032,6 +2177,17 @@ private data class YouTubeVideoUrl(
         "https://www.youtube.com/oembed?url=${URLEncoder.encode(canonicalUrl(), "UTF-8")}&format=json"
 }
 
+private data class MastodonStatusUrl(
+    val authority: String,
+    val username: String?,
+    val statusId: String,
+    val path: String
+) : PreviewRequest {
+    fun canonicalUrl(): String = "https://$authority$path"
+    fun apiUrl(): String = "https://$authority/api/v1/statuses/$statusId"
+    fun sourceId(): String = "$authority:$statusId"
+}
+
 private data class RemotePreviewData(
     val snippet: String?,
     val mediaItems: List<ClipboardLinkPreviewMedia>,
@@ -2088,6 +2244,27 @@ private fun JsonObject?.twitterMediaItems(): List<ClipboardLinkPreviewMedia> {
 
     return photos + videos
 }
+
+private fun JsonObject.mastodonMediaItems(): List<ClipboardLinkPreviewMedia> =
+    arrayValue("media_attachments")
+        ?.mapIndexedNotNull { index, element ->
+            val attachment = element as? JsonObject ?: return@mapIndexedNotNull null
+            if(attachment.stringValue("type") !in setOf("image", "video", "gifv")) {
+                return@mapIndexedNotNull null
+            }
+            val url = attachment.stringValue("url")
+                ?: attachment.stringValue("remote_url")
+                ?: return@mapIndexedNotNull null
+            val thumbnailUrl = attachment.stringValue("preview_url")
+                ?.takeIf { it != url }
+            ClipboardLinkPreviewMedia(
+                url = url,
+                sourceIndex = index,
+                mimeType = url.guessedClipboardMimeType(),
+                thumbnailUrl = thumbnailUrl
+            )
+        }
+        .orEmpty()
 
 private fun List<String>.prioritizeIndex(index: Int): List<Pair<Int, String>> {
     if (isEmpty()) return emptyList()

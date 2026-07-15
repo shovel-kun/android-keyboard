@@ -624,6 +624,29 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun metadataForSupportedUrl_recognizesMastodonPostUrlShapesWithInstanceScopedKeys() {
+        val public = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://mastodon.social/@futo/1234567890"
+        )
+        val activityPub = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://mastodon.social/users/futo/statuses/1234567890"
+        )
+        val web = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://mastodon.social/web/statuses/1234567890"
+        )
+
+        assertEquals(ClipboardPreviewProvider.MASTODON, public?.provider)
+        assertEquals("mastodon.social:1234567890", public?.sourceId)
+        assertEquals("mastodon:mastodon.social:1234567890", public?.archiveKey())
+        assertEquals(public?.sourceId, activityPub?.sourceId)
+        assertEquals(public?.sourceId, web?.sourceId)
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://mastodon.social/@futo")
+        )
+    }
+
+    @Test
     fun metadataForSupportedUrl_ignoresYouTubeUrlsWithoutVideoId() {
         assertEquals(
             null,
@@ -844,6 +867,78 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parseMastodonApiPreview_preservesPostMetadataAndRenderableAttachments() {
+        val manifest = parseMastodonApiPreviewForTest(
+            """
+            {
+              "id": "1234567890",
+              "created_at": "2026-07-14T08:30:00.000Z",
+              "content": "<p>Hello <strong>fediverse</strong></p>",
+              "spoiler_text": "Content note",
+              "sensitive": true,
+              "replies_count": 3,
+              "reblogs_count": 4,
+              "favourites_count": 5,
+              "quotes_count": 2,
+              "account": {
+                "id": "42",
+                "acct": "futo",
+                "display_name": "FUTO Keyboard"
+              },
+              "tags": [{"name": "android"}],
+              "media_attachments": [
+                {
+                  "type": "image",
+                  "url": "https://files.mastodon.social/media/one.jpg",
+                  "preview_url": "https://files.mastodon.social/media/one-small.jpg"
+                },
+                {
+                  "type": "gifv",
+                  "url": "https://files.mastodon.social/media/two.mp4",
+                  "preview_url": "https://files.mastodon.social/media/two.jpg"
+                },
+                {
+                  "type": "audio",
+                  "url": "https://files.mastodon.social/media/three.mp3",
+                  "preview_url": "https://files.mastodon.social/media/three.mp3"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("Content note Hello fediverse", manifest?.snippet)
+        assertEquals(
+            listOf(
+                "https://files.mastodon.social/media/one.jpg",
+                "https://files.mastodon.social/media/two.mp4"
+            ),
+            manifest?.mediaItems?.map { it.url }
+        )
+        assertEquals(
+            listOf(
+                "https://files.mastodon.social/media/one-small.jpg",
+                "https://files.mastodon.social/media/two.jpg"
+            ),
+            manifest?.mediaItems?.map { it.thumbnailUrl }
+        )
+        assertEquals(ClipboardPreviewProvider.MASTODON, manifest?.metadata?.provider)
+        assertEquals("mastodon.social:1234567890", manifest?.metadata?.sourceId)
+        assertEquals("Content note", manifest?.metadata?.title)
+        assertEquals("Hello fediverse", manifest?.metadata?.bodyText)
+        assertEquals("FUTO Keyboard", manifest?.metadata?.authorName)
+        assertEquals("futo", manifest?.metadata?.authorHandle)
+        assertEquals(2, manifest?.metadata?.imageCount)
+        assertEquals(listOf("android"), manifest?.metadata?.tags)
+        assertEquals(5L, manifest?.metadata?.stats?.likeCount)
+        assertEquals(3L, manifest?.metadata?.stats?.replyCount)
+        assertEquals(4L, manifest?.metadata?.stats?.repostCount)
+        assertEquals(2L, manifest?.metadata?.stats?.quoteCount)
+        assertTrue(manifest?.metadata?.flags?.animated == true)
+        assertTrue(manifest?.metadata?.flags?.restricted == true)
+    }
+
+    @Test
     fun previewRequestCatching_preservesRateLimitFailure() {
         assertEquals(
             null,
@@ -878,6 +973,7 @@ class ClipboardLinkPreviewTest {
         val twitter = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://x.com/futo/status/1234567890")
         val pixiv = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.pixiv.net/en/artworks/107946644")
         val reddit = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.reddit.com/r/futo/comments/abc123/title/")
+        val mastodon = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://mastodon.social/@futo/1234567890")
         val youtube = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.youtube.com/embed/dQw4w9WgXcQ")
 
         assertEquals(ClipboardPreviewProvider.TWITTER, twitter?.provider)
@@ -886,6 +982,8 @@ class ClipboardLinkPreviewTest {
         assertEquals("107946644", pixiv?.sourceId)
         assertEquals(ClipboardPreviewProvider.REDDIT, reddit?.provider)
         assertEquals("abc123", reddit?.sourceId)
+        assertEquals(ClipboardPreviewProvider.MASTODON, mastodon?.provider)
+        assertEquals("mastodon.social:1234567890", mastodon?.sourceId)
         assertEquals(ClipboardPreviewProvider.YOUTUBE, youtube?.provider)
         assertEquals("dQw4w9WgXcQ", youtube?.sourceId)
     }

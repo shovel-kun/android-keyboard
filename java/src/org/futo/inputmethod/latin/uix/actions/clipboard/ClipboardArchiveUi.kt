@@ -16,7 +16,8 @@ internal enum class ClipboardArchiveProviderFilter(val provider: ClipboardPrevie
     Pixiv(ClipboardPreviewProvider.PIXIV),
     Twitter(ClipboardPreviewProvider.TWITTER),
     Reddit(ClipboardPreviewProvider.REDDIT),
-    YouTube(ClipboardPreviewProvider.YOUTUBE)
+    YouTube(ClipboardPreviewProvider.YOUTUBE),
+    Mastodon(ClipboardPreviewProvider.MASTODON)
 }
 
 internal enum class ClipboardArchiveStatusFilter {
@@ -373,6 +374,7 @@ internal fun ClipboardPreviewProvider.providerLabel(): String = when (this) {
     ClipboardPreviewProvider.TWITTER -> "Twitter/X"
     ClipboardPreviewProvider.REDDIT -> "Reddit"
     ClipboardPreviewProvider.YOUTUBE -> "YouTube"
+    ClipboardPreviewProvider.MASTODON -> "Mastodon"
 }
 
 internal fun ClipboardPreviewProvider.providerIconRes(): Int = when (this) {
@@ -380,6 +382,7 @@ internal fun ClipboardPreviewProvider.providerIconRes(): Int = when (this) {
     ClipboardPreviewProvider.TWITTER -> R.drawable.provider_x
     ClipboardPreviewProvider.REDDIT -> R.drawable.link
     ClipboardPreviewProvider.YOUTUBE -> R.drawable.provider_youtube
+    ClipboardPreviewProvider.MASTODON -> R.drawable.link
 }
 
 internal fun ClipboardArchiveProviderFilter.labelRes(): Int =
@@ -393,6 +396,7 @@ private fun ClipboardPreviewProvider.providerFilterLabelRes(): Int = when (this)
     ClipboardPreviewProvider.TWITTER -> R.string.clipboard_history_archive_filter_twitter
     ClipboardPreviewProvider.REDDIT -> R.string.clipboard_history_archive_filter_reddit
     ClipboardPreviewProvider.YOUTUBE -> R.string.clipboard_history_archive_filter_youtube
+    ClipboardPreviewProvider.MASTODON -> R.string.clipboard_history_archive_filter_mastodon
 }
 
 internal fun ClipboardLinkArchive.providerLabel(): String = provider.providerLabel()
