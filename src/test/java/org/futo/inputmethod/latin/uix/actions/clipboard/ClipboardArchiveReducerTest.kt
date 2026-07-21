@@ -201,29 +201,76 @@ class ClipboardArchiveReducerTest {
     }
 
     @Test
-    fun manifestUrlChurn_preservesSavedMediaBySourceIndex() {
+    fun completeArchive_ignoresLaterManifestSnapshotChanges() {
         val archive = sampleArchive(
             media = listOf(savedMedia(sourceUrl = "https://img.example/old.jpg"))
+        ).copy(
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.PIXIV,
+                sourceUrl = "https://www.phixiv.net/en/artworks/123",
+                sourceId = "123",
+                title = "Archived title",
+                bodyText = "Archived body",
+                authorName = "Archived artist",
+                stats = ClipboardPreviewStats(likeCount = 10L)
+            ),
+            referencedArchiveKeys = listOf("twitter:456")
         )
 
         val updated = reduceArchive(
             archive = archive,
             event = ClipboardArchiveEvent.ManifestSeen(
-                manifest = sampleManifest(url = "https://img.example/new.jpg"),
+                manifest = sampleManifest(
+                    mediaItems = listOf(
+                        ClipboardLinkPreviewMedia("https://img.example/replaced.jpg", 0, "image/jpeg"),
+                        ClipboardLinkPreviewMedia("https://img.example/injected.jpg", 1, "image/jpeg")
+                    ),
+                    metadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.PIXIV,
+                        sourceUrl = "https://www.phixiv.net/en/artworks/123",
+                        sourceId = "123",
+                        title = "Account vanished",
+                        bodyText = "Unknown deletion response",
+                        authorName = "Unavailable user",
+                        stats = ClipboardPreviewStats(likeCount = 0L)
+                    ),
+                    referencedManifests = listOf(
+                        sampleManifest(
+                            metadata = ClipboardPreviewMetadata(
+                                provider = ClipboardPreviewProvider.TWITTER,
+                                sourceUrl = "https://x.com/injected/status/789",
+                                sourceId = "789"
+                            )
+                        )
+                    )
+                ),
                 now = 20L
             )
         )!!
 
-        assertEquals(1, updated.media.size)
-        assertEquals("https://img.example/new.jpg", updated.media.single().sourceUrl)
-        assertEquals(ClipboardArchiveMediaStatus.Saved, updated.media.single().status)
-        assertEquals("one.jpg", updated.media.single().fileName)
+        assertEquals(archive, updated)
     }
 
     @Test
-    fun manifestWithNewSourceIndex_addsOnlyNewPendingMedia() {
+    fun incompleteArchive_addsNewPendingMediaWithoutRewritingSnapshot() {
         val archive = sampleArchive(
-            media = listOf(savedMedia())
+            media = listOf(
+                savedMedia(),
+                ClipboardArchiveMedia(
+                    sourceUrl = "https://img.example/failed.jpg",
+                    sourceIndex = 2,
+                    status = ClipboardArchiveMediaStatus.Failed,
+                    failureDetail = "timeout"
+                )
+            )
+        ).copy(
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.PIXIV,
+                sourceUrl = "https://www.phixiv.net/en/artworks/123",
+                sourceId = "123",
+                title = "Archived title",
+                authorName = "Archived artist"
+            )
         )
 
         val updated = reduceArchive(
@@ -233,17 +280,31 @@ class ClipboardArchiveReducerTest {
                     mediaItems = listOf(
                         ClipboardLinkPreviewMedia("https://img.example/one-refreshed.jpg", 0, "image/jpeg"),
                         ClipboardLinkPreviewMedia("https://img.example/two.jpg", 1, "image/jpeg")
+                    ),
+                    metadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.PIXIV,
+                        sourceUrl = "https://www.phixiv.net/en/artworks/123",
+                        sourceId = "123",
+                        title = "Account vanished",
+                        authorName = "Unavailable user"
                     )
                 ),
                 now = 20L
             )
         )!!
 
-        assertEquals(listOf(0, 1), updated.media.map { it.sourceIndex })
+        assertEquals("Archived title", updated.metadata?.title)
+        assertEquals("Archived artist", updated.metadata?.authorName)
+        assertEquals(listOf(0, 1, 2), updated.media.map { it.sourceIndex })
         assertEquals(
-            listOf(ClipboardArchiveMediaStatus.Saved, ClipboardArchiveMediaStatus.Pending),
+            listOf(
+                ClipboardArchiveMediaStatus.Saved,
+                ClipboardArchiveMediaStatus.Pending,
+                ClipboardArchiveMediaStatus.Failed
+            ),
             updated.media.map { it.status }
         )
+        assertEquals("https://img.example/one.jpg", updated.media.first().sourceUrl)
         assertEquals(listOf("one.jpg"), updated.savedPreviewMedia().map { it.fileName })
     }
 
@@ -576,7 +637,10 @@ class ClipboardArchiveReducerTest {
                     metadata = ClipboardPreviewMetadata(
                         provider = ClipboardPreviewProvider.TWITTER,
                         sourceUrl = "https://x.com/maybeurwifie/status/2048952037258215905",
-                        sourceId = "2048952037258215905"
+                        sourceId = "2048952037258215905",
+                        title = "Fetched title",
+                        bodyText = "Fetched body",
+                        authorName = "Fetched author"
                     )
                 ),
                 now = 10L
@@ -586,6 +650,9 @@ class ClipboardArchiveReducerTest {
         assertEquals(true, updated.providerManifestAvailable)
         assertEquals(ClipboardLinkArchiveStatus.Complete, updated.status)
         assertEquals(emptyList<ClipboardArchiveMedia>(), updated.media)
+        assertEquals("Fetched title", updated.metadata?.title)
+        assertEquals("Fetched body", updated.metadata?.bodyText)
+        assertEquals("Fetched author", updated.metadata?.authorName)
         assertEquals(false, updated.hasRetryableMedia())
         assertEquals(true, updated.canRefetchManifest())
     }
@@ -646,6 +713,40 @@ class ClipboardArchiveReducerTest {
 
         assertEquals(false, archive.hasRetryableMedia())
         assertEquals(false, archive.canRefetchManifest())
+    }
+
+    @Test
+    fun emptyCompleteArchive_refetchAddsMediaWithoutRewritingSnapshot() {
+        val archive = sampleArchive(media = emptyList()).copy(
+            metadata = ClipboardPreviewMetadata(
+                provider = ClipboardPreviewProvider.PIXIV,
+                sourceUrl = "https://www.phixiv.net/en/artworks/123",
+                sourceId = "123",
+                title = "Archived title",
+                authorName = "Archived artist"
+            )
+        )
+
+        val updated = reduceArchive(
+            archive = archive,
+            event = ClipboardArchiveEvent.ManifestSeen(
+                manifest = sampleManifest(
+                    metadata = ClipboardPreviewMetadata(
+                        provider = ClipboardPreviewProvider.PIXIV,
+                        sourceUrl = "https://www.phixiv.net/en/artworks/123",
+                        sourceId = "123",
+                        title = "Account vanished",
+                        authorName = "Unavailable user"
+                    )
+                ),
+                now = 20L
+            )
+        )!!
+
+        assertEquals("Archived title", updated.metadata?.title)
+        assertEquals("Archived artist", updated.metadata?.authorName)
+        assertEquals(listOf("https://img.example/one.jpg"), updated.media.map { it.sourceUrl })
+        assertEquals(listOf(ClipboardArchiveMediaStatus.Pending), updated.media.map { it.status })
     }
 
     @Test

@@ -604,56 +604,6 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
-    fun providerArchiveMergeWithChangedMediaUrl_preservesSavedMediaBySourceIndex() {
-        val existing = ClipboardLinkArchive(
-            key = "pixiv:123",
-            provider = ClipboardPreviewProvider.PIXIV,
-            sourceUrl = "https://www.phixiv.net/en/artworks/123",
-            sourceId = "123",
-            metadata = ClipboardPreviewMetadata(
-                provider = ClipboardPreviewProvider.PIXIV,
-                sourceUrl = "https://www.phixiv.net/en/artworks/123",
-                sourceId = "123"
-            ),
-            media = listOf(
-                ClipboardArchiveMedia(
-                    sourceUrl = "https://img.example/old-token.jpg",
-                    sourceIndex = 0,
-                    mimeType = "image/jpeg",
-                    fileName = "preview_old.jpg",
-                    status = ClipboardArchiveMediaStatus.Saved
-                )
-            ),
-            providerManifestAvailable = true,
-            createdAtEpochMs = 10L,
-            updatedAtEpochMs = 10L
-        )
-
-        val merged = mergeArchiveWithManifest(
-            archive = existing,
-            manifest = ClipboardLinkPreviewManifest(
-                snippet = "remote",
-                mediaItems = listOf(
-                    ClipboardLinkPreviewMedia(
-                        url = "https://img.example/new-token.jpg",
-                        sourceIndex = 0,
-                        mimeType = "image/jpeg"
-                    )
-                ),
-                metadata = existing.metadata
-            ),
-            now = 20L
-        )
-
-        assertEquals(ClipboardLinkArchiveStatus.Complete, merged.status)
-        assertEquals(1, merged.media.size)
-        assertEquals("https://img.example/new-token.jpg", merged.media.single().sourceUrl)
-        assertEquals(ClipboardArchiveMediaStatus.Saved, merged.media.single().status)
-        assertEquals("preview_old.jpg", merged.media.single().fileName)
-        assertEquals(listOf("preview_old.jpg"), merged.savedPreviewMedia().map { it.fileName })
-    }
-
-    @Test
     fun remoteManifestArchive_isProviderBackedAndPendingForRetention() {
         val archive = newArchiveFromManifest(
             ClipboardLinkPreviewManifest(

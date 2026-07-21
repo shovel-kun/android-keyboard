@@ -550,8 +550,15 @@ private fun reduceManifestSeen(
     val sourceUrl = metadata.sourceUrl ?: archive?.sourceUrl ?: return archive
     val unavailableManifest = manifest.isUnavailableManifest()
     if(unavailableManifest && archive == null) return null
-    val existingByUrl = archive?.media.orEmpty().associateBy { it.sourceUrl }
-    val existingByIndex = normalizeArchiveMedia(archive?.media.orEmpty()).associateBy { it.sourceIndex }
+    // Provider-backed archives are captured snapshots. A later remote manifest may repair
+    // unfinished media, but it must not rewrite completed snapshots or already-saved content.
+    val establishedArchive = archive?.takeIf { it.providerManifestAvailable }
+    if(establishedArchive?.status == ClipboardLinkArchiveStatus.Complete && establishedArchive.media.isNotEmpty()) {
+        return establishedArchive
+    }
+    val existingMedia = archive?.media.orEmpty()
+    val existingByUrl = existingMedia.associateBy { it.sourceUrl }
+    val existingByIndex = normalizeArchiveMedia(existingMedia).associateBy { it.sourceIndex }
     val incomingSourceIndexes = manifest.mediaItems.map { it.sourceIndex }.toSet()
     val deletedMediaKeys = archive?.deletedMediaKeys.orEmpty()
     val referencedArchiveKeys = manifest.referencedManifests
@@ -569,32 +576,38 @@ private fun reduceManifestSeen(
         if(incomingMediaKey in deletedMediaKeys || incomingLegacyMediaKey in deletedMediaKeys) return@mapNotNull null
 
         val existing = existingByUrl[incoming.url] ?: existingByIndex[incoming.sourceIndex]
-        existing?.copy(
-            sourceUrl = incoming.url,
-            sourceIndex = incoming.sourceIndex,
-            mimeType = incoming.mimeType ?: existing.mimeType,
-            thumbnailUrl = incoming.thumbnailUrl ?: existing.thumbnailUrl
-        ) ?: ClipboardArchiveMedia(
-            sourceUrl = incoming.url,
-            sourceIndex = incoming.sourceIndex,
-            mimeType = incoming.mimeType,
-            thumbnailUrl = incoming.thumbnailUrl
-        )
+        if(establishedArchive != null && existing?.status == ClipboardArchiveMediaStatus.Saved) {
+            existing
+        } else {
+            existing?.copy(
+                sourceUrl = incoming.url,
+                sourceIndex = incoming.sourceIndex,
+                mimeType = incoming.mimeType ?: existing.mimeType,
+                thumbnailUrl = incoming.thumbnailUrl ?: existing.thumbnailUrl
+            ) ?: ClipboardArchiveMedia(
+                sourceUrl = incoming.url,
+                sourceIndex = incoming.sourceIndex,
+                mimeType = incoming.mimeType,
+                thumbnailUrl = incoming.thumbnailUrl
+            )
+        }
     }
     val retainedMedia = if(manifest.mediaItems.isEmpty()) {
-        archive?.media.orEmpty().filter { it.status == ClipboardArchiveMediaStatus.Saved }
+        existingMedia.filter { it.status == ClipboardArchiveMediaStatus.Saved }
     } else {
-        archive?.media.orEmpty().filter { it.sourceIndex !in incomingSourceIndexes }
+        existingMedia.filter { it.sourceIndex !in incomingSourceIndexes }
     }
 
     return ClipboardLinkArchive(
         key = archive?.key ?: key,
         provider = archive?.provider ?: metadata.provider,
-        sourceUrl = metadata.sourceUrl ?: archive?.sourceUrl ?: sourceUrl,
-        sourceId = metadata.sourceId ?: archive?.sourceId,
-        metadata = mergePreviewMetadataForArchive(archive?.metadata, manifest.metadata),
+        sourceUrl = establishedArchive?.sourceUrl ?: metadata.sourceUrl ?: archive?.sourceUrl ?: sourceUrl,
+        sourceId = establishedArchive?.sourceId ?: metadata.sourceId ?: archive?.sourceId,
+        metadata = establishedArchive?.metadata
+            ?: mergePreviewMetadataForArchive(archive?.metadata, manifest.metadata),
         media = normalizeArchiveMedia(manifestMedia + retainedMedia),
-        referencedArchiveKeys = referencedArchiveKeys.ifEmpty { archive?.referencedArchiveKeys.orEmpty() },
+        referencedArchiveKeys = establishedArchive?.referencedArchiveKeys
+            ?: referencedArchiveKeys.ifEmpty { archive?.referencedArchiveKeys.orEmpty() },
         providerManifestAvailable = if(unavailableManifest) {
             archive?.providerManifestAvailable ?: false
         } else {
