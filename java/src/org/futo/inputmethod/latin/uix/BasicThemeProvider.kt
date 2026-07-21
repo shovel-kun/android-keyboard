@@ -10,7 +10,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
-import android.graphics.drawable.NinePatchDrawable
 import android.graphics.drawable.StateListDrawable
 import android.util.Log
 import android.util.LruCache
@@ -18,8 +17,6 @@ import android.util.TypedValue
 import androidx.annotation.ColorInt
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
@@ -36,8 +33,6 @@ import org.futo.inputmethod.latin.uix.actions.AllActions
 import org.futo.inputmethod.latin.uix.actions.AllActionsMap
 import org.futo.inputmethod.latin.uix.theme.AdvancedThemeMatcher
 import org.futo.inputmethod.latin.uix.theme.KeyBackground
-import org.futo.inputmethod.latin.uix.theme.KeyDrawingConfiguration
-import org.futo.inputmethod.latin.uix.utils.toNinePatchDrawable
 import org.futo.inputmethod.v2keyboard.Direction
 import org.futo.inputmethod.v2keyboard.KeyVisualStyle
 
@@ -151,6 +146,7 @@ class FlickClipDrawable(
 
 class BasicThemeProvider(val context: Context, val colorScheme: KeyboardColorScheme) :
     DynamicThemeProvider {
+    override val layers: List<Int> get() = kdcMatcher.layers
     override val keyBorders: Boolean
 
     override val keyboardColor: Int
@@ -168,7 +164,6 @@ class BasicThemeProvider(val context: Context, val colorScheme: KeyboardColorSch
     override val displayDpi: Int
 
     override val hintColor: Int?
-    override val hintHiVis: Boolean
 
     override var typefaceOverride: Typeface? = null
     override val themeTypeface: Typeface?
@@ -177,8 +172,9 @@ class BasicThemeProvider(val context: Context, val colorScheme: KeyboardColorSch
     override fun selectKeyDrawingConfiguration(
         keyboard: Keyboard?,
         params: KeyDrawParams,
-        key: Key
-    ): KeyDrawingConfiguration = kdcMatcher.matchKeyDrawingConfiguration(keyboard, params, key)
+        key: Key,
+        layer: Int,
+    ) = kdcMatcher.matchKeyDrawingConfiguration(keyboard, params, key, layer)
 
     override fun getPreviewBackground(
         keyboard: Keyboard?,
@@ -323,7 +319,6 @@ class BasicThemeProvider(val context: Context, val colorScheme: KeyboardColorSch
         showKeyHints = context.getSettingBlocking(KeyHintsSetting)
 
         hintColor = colorScheme.hintColor?.toArgb() ?: colorScheme.onSurfaceVariant.toArgb()
-        hintHiVis = colorScheme.hintHiVis
 
         val primary = colorScheme.primary.toArgb()
         val secondary = colorScheme.secondary.toArgb()
@@ -560,7 +555,6 @@ class BasicThemeProvider(val context: Context, val colorScheme: KeyboardColorSch
 
         keyFeedback = KeyBackground(
             foregroundColor = colorScheme.onKeyboardContainer.toArgb(),
-            padding = Rect(0,0,0,0),
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(colorScheme.keyboardPress.toArgb(), colorScheme.keyboardPress.toArgb()),
