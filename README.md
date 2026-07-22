@@ -8,7 +8,7 @@ The goal is to make a good modern keyboard that stays offline and doesn't spy on
 - Clipboard link previews for supported X/Twitter and Pixiv links, including inline preview media/text handling instead of just storing the raw URL.
 - A `Wrap selection` clipboard shortcut for faster text editing from the keyboard action surface.
 
-Check out the [FUTO Keyboard website](https://keyboard.futo.org/) for downloads and more information.
+Check out the [FUTO Keyboard website](https://keyboard.futo.tech/) for downloads and more information.
 
 The code is licensed under the [FUTO Source First License 1.1](LICENSE.md).
 
