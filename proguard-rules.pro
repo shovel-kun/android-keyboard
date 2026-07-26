@@ -44,6 +44,9 @@
     native <methods>;
 }
 
+# ONNX Runtime resolves Java classes and constructors from JNI.
+-keep class ai.onnxruntime.** { *; }
+
 # Keep classes that are used as a parameter type of methods that are also marked as keep
 # to preserve changing those methods' signature.
 -keep class org.futo.inputmethod.latin.AssetFileAddress
