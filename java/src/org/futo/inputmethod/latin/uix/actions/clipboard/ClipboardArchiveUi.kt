@@ -55,6 +55,16 @@ internal enum class ClipboardArchiveSortMode(val storedValue: Int) {
     }
 }
 
+internal enum class ClipboardArchiveSortDirection(val storedValue: Int) {
+    Descending(0),
+    Ascending(1);
+
+    companion object {
+        fun fromStoredValue(value: Int): ClipboardArchiveSortDirection =
+            entries.firstOrNull { it.storedValue == value } ?: Descending
+    }
+}
+
 internal enum class ClipboardArchiveDisplayStatus {
     Complete,
     Saving,
@@ -181,7 +191,8 @@ internal fun sortedClipboardArchives(archives: Collection<ClipboardLinkArchive>)
 internal fun sortedClipboardArchives(
     archives: Collection<ClipboardLinkArchive>,
     entries: Collection<ClipboardEntry>,
-    sortMode: ClipboardArchiveSortMode
+    sortMode: ClipboardArchiveSortMode,
+    sortDirection: ClipboardArchiveSortDirection = ClipboardArchiveSortDirection.Descending
 ): List<ClipboardLinkArchive> {
     val clipDateByArchiveKey = entries.mapNotNull { entry ->
         val key = entry.archiveBackfillKey() ?: return@mapNotNull null
@@ -199,25 +210,26 @@ internal fun sortedClipboardArchives(
             .thenByDescending { it.updatedAtEpochMs }
             .thenBy { it.key }
 
-    return when (sortMode) {
-        ClipboardArchiveSortMode.ClipDate -> archives.sortedWith(stableDateComparator(::clipDate))
-        ClipboardArchiveSortMode.ArchiveAdded -> archives.sortedWith(stableDateComparator { it.createdAtEpochMs })
-        ClipboardArchiveSortMode.LastUpdated -> archives.sortedWith(stableDateComparator { it.updatedAtEpochMs })
-        ClipboardArchiveSortMode.PostDate -> archives.sortedWith(
+    val comparator = when (sortMode) {
+        ClipboardArchiveSortMode.ClipDate -> stableDateComparator(::clipDate)
+        ClipboardArchiveSortMode.ArchiveAdded -> stableDateComparator { it.createdAtEpochMs }
+        ClipboardArchiveSortMode.LastUpdated -> stableDateComparator { it.updatedAtEpochMs }
+        ClipboardArchiveSortMode.PostDate ->
             compareByDescending<ClipboardLinkArchive> { it.metadata?.createdAt?.parseArchivePostDateEpochMs() ?: clipDate(it) }
                 .thenByDescending { clipDate(it) }
                 .thenByDescending { it.createdAtEpochMs }
                 .thenByDescending { it.updatedAtEpochMs }
                 .thenBy { it.key }
-        )
-        ClipboardArchiveSortMode.Status -> archives.sortedWith(
+        ClipboardArchiveSortMode.Status ->
             compareBy<ClipboardLinkArchive> { it.archiveSortStatusRank() }
                 .thenByDescending { clipDate(it) }
                 .thenByDescending { it.createdAtEpochMs }
                 .thenByDescending { it.updatedAtEpochMs }
                 .thenBy { it.key }
-        )
     }
+    return archives.sortedWith(
+        if(sortDirection == ClipboardArchiveSortDirection.Descending) comparator else comparator.reversed()
+    )
 }
 
 private fun String.parseArchivePostDateEpochMs(): Long? =

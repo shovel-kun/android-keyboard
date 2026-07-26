@@ -190,6 +190,7 @@
     <string name="clipboard_history_archive_filter_status">Status</string>
     <string name="clipboard_history_archive_filter_color">Color</string>
     <string name="clipboard_history_archive_filter_sort">Sort</string>
+    <string name="clipboard_history_archive_filter_order">Order</string>
     <string name="clipboard_history_archive_color_red">Red</string>
     <string name="clipboard_history_archive_color_orange">Orange</string>
     <string name="clipboard_history_archive_color_yellow">Yellow</string>
@@ -208,6 +209,8 @@
     <string name="clipboard_history_archive_sort_last_updated">Last updated</string>
     <string name="clipboard_history_archive_sort_post_date">Post date</string>
     <string name="clipboard_history_archive_sort_status">Status</string>
+    <string name="clipboard_history_archive_sort_descending">Descending</string>
+    <string name="clipboard_history_archive_sort_ascending">Ascending</string>
     <string name="clipboard_history_archive_filter_done">Done</string>
     <string name="clipboard_history_archive_reset_filters">Reset archive filters</string>
     <string name="clipboard_history_archive_status_complete">Complete</string>

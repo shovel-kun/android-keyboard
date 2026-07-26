@@ -137,6 +137,11 @@ val ClipboardArchiveSortModeSetting = SettingsKey(
     ClipboardArchiveSortMode.ClipDate.storedValue
 )
 
+val ClipboardArchiveSortDirectionSetting = SettingsKey(
+    intPreferencesKey("clipboard_archive_sort_direction"),
+    ClipboardArchiveSortDirection.Descending.storedValue
+)
+
 internal const val ClipboardArchiveBackfillVersion = 1
 
 val ClipboardArchiveBackfillCompletedVersion = SettingsKey(

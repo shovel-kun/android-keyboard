@@ -80,6 +80,8 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val imageTaggingEnabled = useDataStoreValue(ClipboardImageTaggingEnabled)
     val archiveSortModeSetting = useDataStore(ClipboardArchiveSortModeSetting)
     val archiveSortMode = ClipboardArchiveSortMode.fromStoredValue(archiveSortModeSetting.value)
+    val archiveSortDirectionSetting = useDataStore(ClipboardArchiveSortDirectionSetting)
+    val archiveSortDirection = ClipboardArchiveSortDirection.fromStoredValue(archiveSortDirectionSetting.value)
 
     val query = remember { mutableStateOf("") }
     var activeFilter by remember { mutableStateOf(ClipboardHistoryFilter.All) }
@@ -137,12 +139,13 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val archiveUiSnapshot by remember {
         derivedStateOf { manager.archiveUiSnapshot() }
     }
-    val allArchives by remember(archiveSortMode) {
+    val allArchives by remember(archiveSortMode, archiveSortDirection) {
         derivedStateOf {
             sortedClipboardArchives(
                 archives = archiveUiSnapshot.archives,
                 entries = manager.clipboardHistory.toList(),
-                sortMode = archiveSortMode
+                sortMode = archiveSortMode,
+                sortDirection = archiveSortDirection
             )
         }
     }
@@ -236,12 +239,13 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             }
         }
     }
-    val archiveFiltersActive by remember(archiveSortMode) {
+    val archiveFiltersActive by remember(archiveSortMode, archiveSortDirection) {
         derivedStateOf {
             archiveProviderFilter != ClipboardArchiveProviderFilter.All ||
                 archiveStatusFilter != ClipboardArchiveStatusFilter.All ||
                 archiveColorFilter != ClipboardArchiveColorFilter.All ||
-                archiveSortMode != ClipboardArchiveSortMode.ClipDate
+                archiveSortMode != ClipboardArchiveSortMode.ClipDate ||
+                archiveSortDirection != ClipboardArchiveSortDirection.Descending
         }
     }
     val visibleKeySet by remember {
@@ -283,7 +287,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         }
     }
 
-    LaunchedEffect(activeMode, activeFilter, archiveProviderFilter, archiveStatusFilter, archiveSortMode, selectionMode, query.value, downloadsVisible) {
+    LaunchedEffect(activeMode, activeFilter, archiveProviderFilter, archiveStatusFilter, archiveSortMode, archiveSortDirection, selectionMode, query.value, downloadsVisible) {
         clipboardControlsVisible = true
     }
 
@@ -591,6 +595,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                             archiveStatusFilter = ClipboardArchiveStatusFilter.All
                             archiveColorFilter = ClipboardArchiveColorFilter.All
                             archiveSortModeSetting.setValue(ClipboardArchiveSortMode.ClipDate.storedValue)
+                            archiveSortDirectionSetting.setValue(ClipboardArchiveSortDirection.Descending.storedValue)
                         },
                         onOpen = { previewArchiveKey = it.key },
                         onRetry = { manager.retryArchive(it) },
@@ -694,15 +699,18 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             statusFilter = archiveStatusFilter,
             colorFilter = archiveColorFilter,
             sortMode = archiveSortMode,
+            sortDirection = archiveSortDirection,
             onProviderFilterSelected = { archiveProviderFilter = it },
             onStatusFilterSelected = { archiveStatusFilter = it },
             onColorFilterSelected = { archiveColorFilter = it },
             onSortModeSelected = { archiveSortModeSetting.setValue(it.storedValue) },
+            onSortDirectionSelected = { archiveSortDirectionSetting.setValue(it.storedValue) },
             onResetFilters = {
                 archiveProviderFilter = ClipboardArchiveProviderFilter.All
                 archiveStatusFilter = ClipboardArchiveStatusFilter.All
                 archiveColorFilter = ClipboardArchiveColorFilter.All
                 archiveSortModeSetting.setValue(ClipboardArchiveSortMode.ClipDate.storedValue)
+                archiveSortDirectionSetting.setValue(ClipboardArchiveSortDirection.Descending.storedValue)
             },
             onDismiss = { archiveFiltersVisible = false }
         )

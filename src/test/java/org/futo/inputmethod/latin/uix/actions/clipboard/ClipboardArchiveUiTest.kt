@@ -116,6 +116,22 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun sortedClipboardArchives_ascendingReversesDescendingOrder() {
+        val oldest = sampleTwitterArchive("1").copy(createdAtEpochMs = 10L)
+        val newest = sampleTwitterArchive("2").copy(createdAtEpochMs = 20L)
+
+        assertEquals(
+            listOf("twitter:1", "twitter:2"),
+            sortedClipboardArchives(
+                archives = listOf(oldest, newest),
+                entries = emptyList(),
+                sortMode = ClipboardArchiveSortMode.ArchiveAdded,
+                sortDirection = ClipboardArchiveSortDirection.Ascending
+            ).map { it.key }
+        )
+    }
+
+    @Test
     fun sortedClipboardArchives_statusPutsNeedsAttentionBeforePartialAndComplete() {
         val complete = sampleTwitterArchive("complete").copy(
             media = listOf(savedArchiveMedia()),

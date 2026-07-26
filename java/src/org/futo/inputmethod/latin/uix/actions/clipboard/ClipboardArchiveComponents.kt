@@ -760,17 +760,20 @@ internal fun ClipboardArchiveFilterSheet(
     statusFilter: ClipboardArchiveStatusFilter,
     colorFilter: ClipboardArchiveColorFilter,
     sortMode: ClipboardArchiveSortMode,
+    sortDirection: ClipboardArchiveSortDirection,
     onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit,
     onStatusFilterSelected: (ClipboardArchiveStatusFilter) -> Unit,
     onColorFilterSelected: (ClipboardArchiveColorFilter) -> Unit,
     onSortModeSelected: (ClipboardArchiveSortMode) -> Unit,
+    onSortDirectionSelected: (ClipboardArchiveSortDirection) -> Unit,
     onResetFilters: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val filtersActive = providerFilter != ClipboardArchiveProviderFilter.All ||
         statusFilter != ClipboardArchiveStatusFilter.All ||
         colorFilter != ClipboardArchiveColorFilter.All ||
-        sortMode != ClipboardArchiveSortMode.ClipDate
+        sortMode != ClipboardArchiveSortMode.ClipDate ||
+        sortDirection != ClipboardArchiveSortDirection.Descending
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -815,6 +818,12 @@ internal fun ClipboardArchiveFilterSheet(
                 labels = ClipboardArchiveSortMode.entries.map { it to it.labelText() },
                 selected = sortMode,
                 onSelected = onSortModeSelected
+            )
+            ClipboardArchiveFilterGroup(
+                title = stringResource(R.string.clipboard_history_archive_filter_order),
+                labels = ClipboardArchiveSortDirection.entries.map { it to it.labelText() },
+                selected = sortDirection,
+                onSelected = onSortDirectionSelected
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -900,6 +909,12 @@ private fun ClipboardArchiveSortMode.labelText(): String = when (this) {
     ClipboardArchiveSortMode.LastUpdated -> stringResource(R.string.clipboard_history_archive_sort_last_updated)
     ClipboardArchiveSortMode.PostDate -> stringResource(R.string.clipboard_history_archive_sort_post_date)
     ClipboardArchiveSortMode.Status -> stringResource(R.string.clipboard_history_archive_sort_status)
+}
+
+@Composable
+private fun ClipboardArchiveSortDirection.labelText(): String = when (this) {
+    ClipboardArchiveSortDirection.Descending -> stringResource(R.string.clipboard_history_archive_sort_descending)
+    ClipboardArchiveSortDirection.Ascending -> stringResource(R.string.clipboard_history_archive_sort_ascending)
 }
 
 @Composable
