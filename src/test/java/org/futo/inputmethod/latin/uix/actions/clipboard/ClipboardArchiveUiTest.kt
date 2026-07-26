@@ -176,6 +176,52 @@ class ClipboardArchiveUiTest {
         assertTrue(partialTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
         assertTrue(pendingTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
         assertFalse(completePixiv.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
+        assertTrue(
+            completePixiv.matchesColorFilter(
+                ClipboardArchiveColorFilter.Blue,
+                setOf(ClipboardArchiveColorFilter.Blue, ClipboardArchiveColorFilter.White)
+            )
+        )
+        assertFalse(
+            completePixiv.matchesColorFilter(
+                ClipboardArchiveColorFilter.Red,
+                setOf(ClipboardArchiveColorFilter.Blue, ClipboardArchiveColorFilter.White)
+            )
+        )
+        assertTrue(completePixiv.matchesColorFilter(ClipboardArchiveColorFilter.All, emptySet()))
+    }
+
+    @Test
+    fun prominentArchiveColors_classifiesCommonColorFamilies() {
+        val colors = prominentClipboardArchiveColors(
+            intArrayOf(
+                colorPixel(0xe53935),
+                colorPixel(0xfb8c00),
+                colorPixel(0xfdd835),
+                colorPixel(0x43a047),
+                colorPixel(0x1e88e5),
+                colorPixel(0x8e24aa),
+                colorPixel(0xd81b60),
+                colorPixel(0x795548),
+                colorPixel(0x111111),
+                colorPixel(0xffffff),
+                colorPixel(0x808080)
+            ),
+            minimumFraction = 0f
+        )
+
+        assertEquals(ClipboardArchiveColorFilter.entries.toSet() - ClipboardArchiveColorFilter.All, colors)
+    }
+
+    @Test
+    fun prominentArchiveColors_ignoresTransparentAndInsignificantColors() {
+        val colors = prominentClipboardArchiveColors(
+            IntArray(96) { colorPixel(0x1e88e5) } +
+                IntArray(4) { colorPixel(0xe53935) } +
+                intArrayOf(0x00fdd835)
+        )
+
+        assertEquals(setOf(ClipboardArchiveColorFilter.Blue), colors)
     }
 
     @Test
@@ -1440,6 +1486,8 @@ class ClipboardArchiveUiTest {
         sourceIndex = 1,
         status = ClipboardArchiveMediaStatus.Failed
     )
+
+    private fun colorPixel(rgb: Int): Int = 0xff000000.toInt() or rgb
 
     private fun sampleDownloadItem(provider: ClipboardPreviewProvider) = ClipboardArchiveDownloadListItem(
         archiveKey = "archive:${provider.name}",

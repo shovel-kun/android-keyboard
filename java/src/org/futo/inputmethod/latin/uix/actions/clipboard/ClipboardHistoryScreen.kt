@@ -51,7 +51,9 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.uix.SettingsTextEdit
 import org.futo.inputmethod.latin.uix.settings.ScrollableList
@@ -60,6 +62,11 @@ import org.futo.inputmethod.latin.uix.settings.pages.PaymentSurface
 import org.futo.inputmethod.latin.uix.settings.pages.PaymentSurfaceHeading
 import org.futo.inputmethod.latin.uix.settings.useDataStore
 import org.futo.inputmethod.latin.uix.settings.useDataStoreValue
+
+private data class ClipboardArchiveColorAnalysis(
+    val fileKeys: List<String> = emptyList(),
+    val colorsByArchiveKey: Map<String, Set<ClipboardArchiveColorFilter>> = emptyMap()
+)
 
 @Composable
 fun ClipboardHistoryScreen(navController: NavHostController = rememberNavController()) {
@@ -78,6 +85,8 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     var activeMode by remember { mutableStateOf(ClipboardHistoryContentMode.Clips) }
     var archiveProviderFilter by remember { mutableStateOf(ClipboardArchiveProviderFilter.All) }
     var archiveStatusFilter by remember { mutableStateOf(ClipboardArchiveStatusFilter.All) }
+    var archiveColorFilter by remember { mutableStateOf(ClipboardArchiveColorFilter.All) }
+    var archiveColorAnalysis by remember { mutableStateOf(ClipboardArchiveColorAnalysis()) }
     var archiveDownloadProviderFilter by remember { mutableStateOf(ClipboardArchiveProviderFilter.All) }
     var archiveFiltersVisible by remember { mutableStateOf(false) }
     var archiveStorageVisible by remember { mutableStateOf(false) }
@@ -136,6 +145,38 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             )
         }
     }
+    val archiveColorFileKeys by remember {
+        derivedStateOf {
+            archiveUiSnapshot.previewFilesByArchiveKey
+                .toSortedMap()
+                .flatMap { (archiveKey, files) ->
+                    files.map { file ->
+                        "$archiveKey|${file.absolutePath}"
+                    }
+                }
+        }
+    }
+    val archiveColorAnalysisInProgress by remember {
+        derivedStateOf {
+            archiveColorFilter != ClipboardArchiveColorFilter.All &&
+                archiveColorAnalysis.fileKeys != archiveColorFileKeys
+        }
+    }
+
+    LaunchedEffect(archiveColorFilter, archiveColorFileKeys) {
+        if(archiveColorFilter != ClipboardArchiveColorFilter.All &&
+            archiveColorAnalysis.fileKeys != archiveColorFileKeys
+        ) {
+            val filesByArchiveKey = archiveUiSnapshot.previewFilesByArchiveKey
+            val colorsByArchiveKey = withContext(Dispatchers.IO) {
+                filesByArchiveKey.mapValues { (_, files) -> detectClipboardArchiveColors(files) }
+            }
+            archiveColorAnalysis = ClipboardArchiveColorAnalysis(
+                fileKeys = archiveColorFileKeys,
+                colorsByArchiveKey = colorsByArchiveKey
+            )
+        }
+    }
     val hasHistoryEntries by remember {
         derivedStateOf { allEntries.isNotEmpty() }
     }
@@ -161,7 +202,11 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             allArchives.filter {
                 it.matchesArchiveQuery(query.value) &&
                     it.matchesProviderFilter(archiveProviderFilter) &&
-                    it.matchesStatusFilter(archiveStatusFilter)
+                    it.matchesStatusFilter(archiveStatusFilter) &&
+                    it.matchesColorFilter(
+                        archiveColorFilter,
+                        archiveColorAnalysis.colorsByArchiveKey[it.key].orEmpty()
+                    )
             }
         }
     }
@@ -194,6 +239,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         derivedStateOf {
             archiveProviderFilter != ClipboardArchiveProviderFilter.All ||
                 archiveStatusFilter != ClipboardArchiveStatusFilter.All ||
+                archiveColorFilter != ClipboardArchiveColorFilter.All ||
                 archiveSortMode != ClipboardArchiveSortMode.ClipDate
         }
     }
@@ -526,6 +572,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         gridState = archivesGridState,
                         visibleArchives = visibleArchives,
                         previewFilesByKey = archivePreviewFilesByKey,
+                        colorAnalysisInProgress = archiveColorAnalysisInProgress,
                         archiveBackfillInProgress = archiveBackfillInProgress,
                         archiveBackfillRemainingCount = archiveBackfillRemainingCount,
                         useSingleColumn = useSingleColumn,
@@ -534,6 +581,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         onResetFilters = {
                             archiveProviderFilter = ClipboardArchiveProviderFilter.All
                             archiveStatusFilter = ClipboardArchiveStatusFilter.All
+                            archiveColorFilter = ClipboardArchiveColorFilter.All
                             archiveSortModeSetting.setValue(ClipboardArchiveSortMode.ClipDate.storedValue)
                         },
                         onOpen = { previewArchiveKey = it.key },
@@ -635,13 +683,16 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         ClipboardArchiveFilterSheet(
             providerFilter = archiveProviderFilter,
             statusFilter = archiveStatusFilter,
+            colorFilter = archiveColorFilter,
             sortMode = archiveSortMode,
             onProviderFilterSelected = { archiveProviderFilter = it },
             onStatusFilterSelected = { archiveStatusFilter = it },
+            onColorFilterSelected = { archiveColorFilter = it },
             onSortModeSelected = { archiveSortModeSetting.setValue(it.storedValue) },
             onResetFilters = {
                 archiveProviderFilter = ClipboardArchiveProviderFilter.All
                 archiveStatusFilter = ClipboardArchiveStatusFilter.All
+                archiveColorFilter = ClipboardArchiveColorFilter.All
                 archiveSortModeSetting.setValue(ClipboardArchiveSortMode.ClipDate.storedValue)
             },
             onDismiss = { archiveFiltersVisible = false }
@@ -815,6 +866,7 @@ private fun ClipboardArchivesContent(
     gridState: LazyStaggeredGridState,
     visibleArchives: List<ClipboardLinkArchive>,
     previewFilesByKey: Map<String, List<java.io.File>>,
+    colorAnalysisInProgress: Boolean,
     archiveBackfillInProgress: Boolean,
     archiveBackfillRemainingCount: Int,
     useSingleColumn: Boolean,
@@ -825,6 +877,18 @@ private fun ClipboardArchivesContent(
     onRetry: (ClipboardLinkArchive) -> Unit,
     onDelete: (ClipboardLinkArchive) -> Unit
 ) {
+    if(colorAnalysisInProgress) {
+        ScrollableList(modifier = modifier) {
+            PaymentSurface(isPrimary = true) {
+                PaymentSurfaceHeading(
+                    title = stringResource(R.string.clipboard_history_archive_analyzing_colors)
+                )
+                ParagraphText(stringResource(R.string.clipboard_history_archive_analyzing_colors_description))
+            }
+        }
+        return
+    }
+
     if(visibleArchives.isEmpty()) {
         ScrollableList(modifier = modifier) {
             PaymentSurface(isPrimary = true) {

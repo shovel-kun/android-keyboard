@@ -13,6 +13,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -702,15 +703,18 @@ internal fun ClipboardArchiveFilterButton(
 internal fun ClipboardArchiveFilterSheet(
     providerFilter: ClipboardArchiveProviderFilter,
     statusFilter: ClipboardArchiveStatusFilter,
+    colorFilter: ClipboardArchiveColorFilter,
     sortMode: ClipboardArchiveSortMode,
     onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit,
     onStatusFilterSelected: (ClipboardArchiveStatusFilter) -> Unit,
+    onColorFilterSelected: (ClipboardArchiveColorFilter) -> Unit,
     onSortModeSelected: (ClipboardArchiveSortMode) -> Unit,
     onResetFilters: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val filtersActive = providerFilter != ClipboardArchiveProviderFilter.All ||
         statusFilter != ClipboardArchiveStatusFilter.All ||
+        colorFilter != ClipboardArchiveColorFilter.All ||
         sortMode != ClipboardArchiveSortMode.ClipDate
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -722,6 +726,7 @@ internal fun ClipboardArchiveFilterSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -742,6 +747,13 @@ internal fun ClipboardArchiveFilterSheet(
                 labels = ClipboardArchiveStatusFilter.entries.map { it to it.labelText() },
                 selected = statusFilter,
                 onSelected = onStatusFilterSelected
+            )
+            ClipboardArchiveFilterGroup(
+                title = stringResource(R.string.clipboard_history_archive_filter_color),
+                labels = ClipboardArchiveColorFilter.entries.map { it to stringResource(it.labelRes) },
+                selected = colorFilter,
+                onSelected = onColorFilterSelected,
+                swatchColor = { it.swatchArgb?.let(::Color) }
             )
             ClipboardArchiveFilterGroup(
                 title = stringResource(R.string.clipboard_history_archive_filter_sort),
@@ -776,7 +788,8 @@ private fun <T> ClipboardArchiveFilterGroup(
     title: String,
     labels: List<Pair<T, String>>,
     selected: T,
-    onSelected: (T) -> Unit
+    onSelected: (T) -> Unit,
+    swatchColor: (T) -> Color? = { null }
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -787,7 +800,8 @@ private fun <T> ClipboardArchiveFilterGroup(
         ClipboardArchiveChipRow(
             labels = labels,
             selected = selected,
-            onSelected = onSelected
+            onSelected = onSelected,
+            swatchColor = swatchColor
         )
     }
 }
@@ -847,7 +861,8 @@ private fun ClipboardArchiveDisplayStatus.labelText(): String = when (this) {
 private fun <T> ClipboardArchiveChipRow(
     labels: List<Pair<T, String>>,
     selected: T,
-    onSelected: (T) -> Unit
+    onSelected: (T) -> Unit,
+    swatchColor: (T) -> Color? = { null }
 ) {
     Row(
         modifier = Modifier
@@ -867,12 +882,26 @@ private fun <T> ClipboardArchiveChipRow(
                     .clip(shape)
                     .clickable { onSelected(value) }
             ) {
-                Text(
-                    text = label,
+                Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    color = if(isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.labelLarge
-                )
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    swatchColor(value)?.let { color ->
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                        )
+                    }
+                    Text(
+                        text = label,
+                        color = if(isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
         }
     }

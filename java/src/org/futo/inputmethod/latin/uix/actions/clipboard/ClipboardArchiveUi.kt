@@ -27,6 +27,21 @@ internal enum class ClipboardArchiveStatusFilter {
     FailedInProgress
 }
 
+internal enum class ClipboardArchiveColorFilter(val labelRes: Int, val swatchArgb: Long?) {
+    All(R.string.clipboard_history_archive_filter_all, null),
+    Red(R.string.clipboard_history_archive_color_red, 0xffe53935),
+    Orange(R.string.clipboard_history_archive_color_orange, 0xfffb8c00),
+    Yellow(R.string.clipboard_history_archive_color_yellow, 0xfffdd835),
+    Green(R.string.clipboard_history_archive_color_green, 0xff43a047),
+    Blue(R.string.clipboard_history_archive_color_blue, 0xff1e88e5),
+    Purple(R.string.clipboard_history_archive_color_purple, 0xff8e24aa),
+    Pink(R.string.clipboard_history_archive_color_pink, 0xffd81b60),
+    Brown(R.string.clipboard_history_archive_color_brown, 0xff795548),
+    Black(R.string.clipboard_history_archive_color_black, 0xff111111),
+    White(R.string.clipboard_history_archive_color_white, 0xffffffff),
+    Gray(R.string.clipboard_history_archive_color_gray, 0xff808080)
+}
+
 internal enum class ClipboardArchiveSortMode(val storedValue: Int) {
     ClipDate(0),
     ArchiveAdded(1),
@@ -633,6 +648,11 @@ internal fun ClipboardLinkArchive.matchesStatusFilter(filter: ClipboardArchiveSt
                 ClipboardLinkArchiveStatus.Failed
             )
     }
+
+internal fun ClipboardLinkArchive.matchesColorFilter(
+    filter: ClipboardArchiveColorFilter,
+    detectedColors: Set<ClipboardArchiveColorFilter>
+): Boolean = filter == ClipboardArchiveColorFilter.All || filter in detectedColors
 
 internal fun ClipboardLinkArchive.galleryItems(clipboardDir: File): List<ClipboardArchiveGalleryItem> {
     val archive = withMissingArchiveFilesMarked(clipboardDir, now = updatedAtEpochMs)
