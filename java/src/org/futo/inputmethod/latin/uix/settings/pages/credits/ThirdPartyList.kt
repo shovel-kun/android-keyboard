@@ -189,5 +189,26 @@ SKK Development Team <skk@ring.gr.jp>""",
         "https://clearflowkeyboard.github.io/",
         "Copyright (c) 2024-2026 ClearFlow Authors (Xiaojun Bi et al.)",
         License.PublicDomainClearflow
+    ),
+    TP(
+        "WD ConvNext Tagger v3",
+        "On-device image tagging model",
+        "https://huggingface.co/Smashinfries/wd-convnext-tagger-v3-mobile",
+        "Copyright (c) SmilingWolf and model contributors",
+        License.Apache2
+    ),
+    TP(
+        "ONNX Runtime",
+        "On-device model inference",
+        "https://onnxruntime.ai/",
+        "Copyright (c) Microsoft Corporation",
+        License.MIT
+    ),
+    TP(
+        "ONNX Runtime Extensions",
+        "Image preprocessing operators for ONNX Runtime",
+        "https://github.com/microsoft/onnxruntime-extensions",
+        "Copyright (c) Microsoft Corporation",
+        License.MIT
     )
 )

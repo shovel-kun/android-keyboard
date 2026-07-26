@@ -538,7 +538,18 @@ private fun ClipboardLinkArchive.mediaDetailsRows(): List<ClipboardArchiveDetail
             media.lastAttemptAtEpochMs?.let {
                 ClipboardArchiveDetailRow("Last attempted", it.archiveReadableDateTime())
             },
-            media.failureSummaryText()?.let { ClipboardArchiveDetailRow("Failure", it) }
+            media.failureSummaryText()?.let { ClipboardArchiveDetailRow("Failure", it) },
+            media.imageTagging?.tags?.takeIf { it.isNotEmpty() }?.let { tags ->
+                ClipboardArchiveDetailRow(
+                    "AI tags",
+                    tags.joinToString(", ") {
+                        "${it.name.replace('_', ' ')} (${(it.probability * 100).roundToInt()}%)"
+                    }
+                )
+            },
+            media.imageTagging?.failure?.let {
+                ClipboardArchiveDetailRow("AI tagging", "Failed - tap Tag image to retry")
+            }
         )
     }
 }
@@ -611,7 +622,7 @@ private fun ClipboardPreviewFlags.detailsText(): String? = listOfNotNull(
 internal fun ClipboardLinkArchive.matchesArchiveQuery(query: String): Boolean {
     if(query.isBlank()) return true
 
-    val normalized = query.trim().lowercase()
+    val normalized = query.normalizeArchiveTagSearchText()
     val metadata = metadata
     val haystacks = buildList {
         add(providerLabel())
@@ -625,10 +636,16 @@ internal fun ClipboardLinkArchive.matchesArchiveQuery(query: String): Boolean {
         metadata?.authorHandle?.let(::add)
         metadata?.authorId?.let(::add)
         metadata?.tags?.forEach(::add)
+        media.forEach { archiveMedia ->
+            archiveMedia.imageTagging?.tags?.forEach { add(it.name) }
+        }
     }
 
-    return haystacks.any { it.lowercase().contains(normalized) }
+    return haystacks.any { it.normalizeArchiveTagSearchText().contains(normalized) }
 }
+
+private fun String.normalizeArchiveTagSearchText(): String =
+    trim().lowercase().replace('_', ' ')
 
 internal fun ClipboardLinkArchive.matchesProviderFilter(filter: ClipboardArchiveProviderFilter): Boolean =
     filter.provider?.let { provider == it } ?: true

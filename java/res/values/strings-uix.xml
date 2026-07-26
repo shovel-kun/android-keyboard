@@ -100,6 +100,8 @@
     <string name="action_clipboard_manager_settings_save_screenshots_subtitle">You\'ll need to grant permission to access your screenshots</string>
     <string name="action_clipboard_manager_settings_link_previews">Fetch link previews</string>
     <string name="action_clipboard_manager_settings_link_previews_subtitle">When enabled, supported X, Reddit, Pixiv, and YouTube links may contact preview services</string>
+    <string name="action_clipboard_manager_settings_image_tagging">AI image tagging</string>
+    <string name="action_clipboard_manager_settings_image_tagging_subtitle">Automatically add searchable tags to archived images on this device</string>
     <string name="action_clipboard_manager_settings_x_link_paste_domain">X link paste domain</string>
     <string name="action_clipboard_manager_settings_x_link_paste_domain_subtitle">Domain used when pasting X links from clipboard history; leave empty to keep the original domain</string>
     <string name="action_clipboard_manager_settings_pixiv_link_paste_domain">Pixiv link paste domain</string>
@@ -216,6 +218,11 @@
     <string name="clipboard_history_archive_status_retry">Retry</string>
     <string name="clipboard_history_archive_backfill_saving">Saving archives</string>
     <string name="clipboard_history_archive_backfill_remaining">%1$d remaining</string>
+    <string name="clipboard_history_image_tagging">Tagging images</string>
+    <string name="clipboard_history_image_tagging_remaining">%1$d remaining</string>
+    <string name="clipboard_history_tag_existing_images">Tag existing images (%1$d)</string>
+    <string name="clipboard_history_tag_image">Tag image</string>
+    <string name="clipboard_history_retag_image">Retag image</string>
     <string name="clipboard_history_archive_saved_count">%1$d/%2$d saved</string>
     <string name="clipboard_history_archive_waiting">Waiting</string>
     <string name="clipboard_history_archive_missing">Missing</string>

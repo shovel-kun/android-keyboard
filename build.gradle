@@ -179,7 +179,53 @@ tasks.register('updateContributors') {
     }
 }
 
-preBuild.dependsOn updateLocales
+final def imageTaggerModelFile = file('java/assets/image-tagger/model.quant.preproc.onnx')
+final def imageTaggerModelUrl = 'https://huggingface.co/Smashinfries/wd-convnext-tagger-v3-mobile/resolve/b835f21a156d9879ed38fa5d0b5e822bb0c58739/model.quant.preproc.onnx'
+final def imageTaggerModelSha256 = 'e504d4ed9499f58249ba6bafb5d862565e3725cb08f0133874b8a8c5a68c02a0'
+
+final def fileSha256 = { final File source ->
+    final def digest = java.security.MessageDigest.getInstance('SHA-256')
+    source.withInputStream { input ->
+        final byte[] buffer = new byte[1024 * 1024]
+        int read
+        while ((read = input.read(buffer)) != -1) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    digest.digest().encodeHex().toString()
+}
+
+final def prepareImageTaggerModel = tasks.register('prepareImageTaggerModel') {
+    inputs.property 'modelUrl', imageTaggerModelUrl
+    inputs.property 'modelSha256', imageTaggerModelSha256
+    outputs.file imageTaggerModelFile
+    outputs.upToDateWhen {
+        imageTaggerModelFile.isFile() && fileSha256(imageTaggerModelFile) == imageTaggerModelSha256
+    }
+
+    doLast {
+        imageTaggerModelFile.parentFile.mkdirs()
+        final def temporaryFile = file("${imageTaggerModelFile}.download")
+        temporaryFile.delete()
+        logger.lifecycle('Downloading the pinned image tagging model')
+        new java.net.URI(imageTaggerModelUrl).toURL().withInputStream { input ->
+            temporaryFile.withOutputStream { output -> output << input }
+        }
+
+        final def actualSha256 = fileSha256(temporaryFile)
+        if (actualSha256 != imageTaggerModelSha256) {
+            temporaryFile.delete()
+            throw new GradleException("Image tagging model SHA-256 mismatch: $actualSha256")
+        }
+        java.nio.file.Files.move(
+                temporaryFile.toPath(),
+                imageTaggerModelFile.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+        )
+    }
+}
+
+preBuild.dependsOn updateLocales, prepareImageTaggerModel
 
 android {
     namespace 'org.futo.inputmethod.latin'
@@ -368,7 +414,7 @@ android {
     }
 
     aaptOptions {
-        noCompress 'dict'
+        noCompress 'dict', 'onnx'
     }
 
     packagingOptions {
@@ -436,6 +482,9 @@ dependencies {
     //implementation 'com.squareup.okhttp3:okhttp:4.11.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.7.1'
+
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.23.2'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0'
 
     implementation 'com.akuleshov7:ktoml-core:0.7.1'
 

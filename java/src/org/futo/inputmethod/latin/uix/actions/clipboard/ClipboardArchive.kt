@@ -41,6 +41,33 @@ enum class ClipboardLinkArchiveStatus {
 }
 
 @Serializable
+enum class ClipboardImageTagCategory {
+    General,
+    Character
+}
+
+@Serializable
+data class ClipboardImageTag(
+    val name: String,
+    val probability: Float,
+    val category: ClipboardImageTagCategory
+)
+
+@Serializable
+enum class ClipboardImageTaggingFailure {
+    UnsupportedInput,
+    InferenceFailed
+}
+
+@Serializable
+data class ClipboardImageTaggingResult(
+    val modelRevision: String,
+    val attemptedAtEpochMs: Long,
+    val tags: List<ClipboardImageTag> = emptyList(),
+    val failure: ClipboardImageTaggingFailure? = null
+)
+
+@Serializable
 data class ClipboardArchiveMedia(
     val sourceUrl: String,
     val sourceIndex: Int,
@@ -49,7 +76,8 @@ data class ClipboardArchiveMedia(
     val status: ClipboardArchiveMediaStatus = ClipboardArchiveMediaStatus.Pending,
     val lastAttemptAtEpochMs: Long? = null,
     val failureDetail: String? = null,
-    val thumbnailUrl: String? = null
+    val thumbnailUrl: String? = null,
+    val imageTagging: ClipboardImageTaggingResult? = null
 )
 
 @Serializable
@@ -100,6 +128,11 @@ sealed interface ClipboardArchiveEvent {
         val sourceUrl: String,
         val now: Long,
         val failureDetail: String?
+    ) : ClipboardArchiveEvent
+
+    data class MediaTagged(
+        val sourceIndex: Int,
+        val result: ClipboardImageTaggingResult
     ) : ClipboardArchiveEvent
 
     data class DiskReconciled(
@@ -495,7 +528,8 @@ fun reduceArchive(
             mimeType = event.mimeType ?: it.mimeType,
             status = ClipboardArchiveMediaStatus.Saved,
             lastAttemptAtEpochMs = event.now,
-            failureDetail = null
+            failureDetail = null,
+            imageTagging = null
         )
     }
     is ClipboardArchiveEvent.MediaDownloadFailed -> archive?.withUpdatedMedia(event.sourceUrl, event.now) {
@@ -512,6 +546,15 @@ fun reduceArchive(
             failureDetail = event.failureDetail
         )
     }
+    is ClipboardArchiveEvent.MediaTagged -> archive?.copy(
+        media = archive.media.map { media ->
+            if(media.sourceIndex == event.sourceIndex) {
+                media.copy(imageTagging = event.result)
+            } else {
+                media
+            }
+        }
+    )
     is ClipboardArchiveEvent.DiskReconciled -> archive?.let {
         val reconciledMedia = it.media.map { media ->
             when {
@@ -691,6 +734,7 @@ private fun richerArchiveMedia(
         fileName = winner.fileName ?: loser.fileName,
         failureDetail = winner.failureDetail ?: loser.failureDetail,
         thumbnailUrl = winner.thumbnailUrl ?: loser.thumbnailUrl,
+        imageTagging = winner.imageTagging ?: loser.imageTagging,
         lastAttemptAtEpochMs = maxOfNullableForArchive(
             winner.lastAttemptAtEpochMs,
             loser.lastAttemptAtEpochMs

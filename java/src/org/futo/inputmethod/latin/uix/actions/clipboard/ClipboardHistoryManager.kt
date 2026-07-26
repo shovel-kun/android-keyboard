@@ -306,6 +306,11 @@ class ClipboardHistoryManager private constructor(
     // service being destroyed and recreated on an input-method switch.
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val archiveDownloadCoordinator = ClipboardArchiveDownloadCoordinator(coroutineScope)
+    private val imageTagCoordinator = ClipboardImageTagCoordinator(
+        scope = coroutineScope,
+        taggerFactory = { OnnxClipboardImageTagger(context) },
+        onResult = ::applyImageTaggingResult
+    )
 
     // Serializes clipboard loads so the initial load and an unlock-triggered load
     // cannot interleave their clear/repopulate of the in-memory lists.
@@ -898,8 +903,78 @@ class ClipboardHistoryManager private constructor(
         clipboardDir = context.clipboardDir,
         storageFileNames = currentArchiveFileNames(),
         downloadState = archiveDownloadCoordinator.snapshot(),
-        loadingArchiveKeys = previewLoadingByText.filterValues { it }.keys
+        loadingArchiveKeys = previewLoadingByText.filterValues { it }.keys,
+        imageTaggingState = imageTagCoordinator.state.value,
+        imageTagEligibleCount = imageTagEligibleCount()
     )
+
+    internal fun tagExistingArchiveImages() {
+        if(!context.getSetting(ClipboardImageTaggingEnabled)) return
+        imageTagCoordinator.enqueue(imageTagEligibleRequests())
+    }
+
+    internal fun tagArchiveMedia(archiveKey: String, sourceIndex: Int) {
+        val archive = linkArchives[archiveKey] ?: return
+        val media = archive.media.firstOrNull { it.sourceIndex == sourceIndex } ?: return
+        imageTagRequest(archive, media)?.let(imageTagCoordinator::enqueue)
+    }
+
+    private fun imageTagEligibleRequests(): List<ClipboardImageTagRequest> =
+        linkArchives.values.flatMap { archive ->
+            archive.media.mapNotNull { media ->
+                if(media.needsImageTagging()) {
+                    imageTagRequest(archive, media)
+                } else {
+                    null
+                }
+            }
+        }
+
+    private fun imageTagEligibleCount(): Int =
+        linkArchives.values.sumOf { archive ->
+            archive.media.count { it.needsImageTagging() }
+        }
+
+    private fun ClipboardArchiveMedia.needsImageTagging(): Boolean =
+        status == ClipboardArchiveMediaStatus.Saved &&
+            fileName != null &&
+            imageTagging?.modelRevision != ClipboardImageTagModelRevision
+
+    private fun imageTagRequest(
+        archive: ClipboardLinkArchive,
+        media: ClipboardArchiveMedia
+    ): ClipboardImageTagRequest? {
+        val fileName = media.fileName ?: return null
+        val mediaFile = File(context.clipboardDir, fileName).takeIf { it.isFile } ?: return null
+        val mimeType = media.mimeType ?: mediaFile.guessedClipboardMimeType()
+        val inputFile = if(
+            mimeType == "image/jpeg" ||
+            mimeType == "image/png" ||
+            mediaFile.extension.lowercase() in setOf("jpg", "jpeg", "png")
+        ) {
+            mediaFile
+        } else {
+            ClipboardUtil.thumbnailFor(mediaFile).takeIf { it.isFile }
+        }
+        return ClipboardImageTagRequest(
+            archiveKey = archive.key,
+            sourceIndex = media.sourceIndex,
+            inputFile = inputFile
+        )
+    }
+
+    private fun applyImageTaggingResult(
+        request: ClipboardImageTagRequest,
+        result: ClipboardImageTaggingResult
+    ) {
+        val archive = linkArchives[request.archiveKey] ?: return
+        val updated = reduceArchive(
+            archive,
+            ClipboardArchiveEvent.MediaTagged(request.sourceIndex, result)
+        ) ?: return
+        linkArchives[updated.key] = updated
+        queueArchiveSave(updated)
+    }
 
     internal fun hasActiveArchiveDownloads(): Boolean =
         archiveDownloadCoordinator.snapshot().activeArchiveKeys.isNotEmpty() ||
@@ -2063,6 +2138,14 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
                 )
                 updateEntriesPreviewFromArchive(text, archive, attemptedAt)
                 queueArchiveSave(archive)
+                if(event is ClipboardArchiveEvent.MediaDownloadSaved &&
+                    context.getSetting(ClipboardImageTaggingEnabled)
+                ) {
+                    archive.media
+                        .firstOrNull { it.sourceUrl == event.sourceUrl }
+                        ?.let { imageTagRequest(archive, it) }
+                        ?.let(imageTagCoordinator::enqueue)
+                }
                 queuePreviewSave(delayMillis = 350L, reconcileBeforeSave = false)
                 if(result is ClipboardPreviewMediaCacheResult.RateLimited) break
             }

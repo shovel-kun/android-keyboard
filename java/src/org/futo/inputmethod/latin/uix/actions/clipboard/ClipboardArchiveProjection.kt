@@ -9,7 +9,9 @@ internal data class ClipboardArchiveUiSnapshot(
     val downloadItems: List<ClipboardArchiveDownloadListItem>,
     val downloadActionCount: Int,
     val loadingArchiveKeys: Set<String>,
-    val progressByArchiveKey: Map<String, ClipboardArchiveDownloadProgress>
+    val progressByArchiveKey: Map<String, ClipboardArchiveDownloadProgress>,
+    val imageTaggingState: ClipboardImageTaggingState,
+    val imageTagEligibleCount: Int
 )
 
 internal fun clipboardArchiveUiSnapshot(
@@ -17,7 +19,9 @@ internal fun clipboardArchiveUiSnapshot(
     clipboardDir: File,
     storageFileNames: Set<String>,
     downloadState: ClipboardArchiveDownloadStateSnapshot,
-    loadingArchiveKeys: Set<String>
+    loadingArchiveKeys: Set<String>,
+    imageTaggingState: ClipboardImageTaggingState = ClipboardImageTaggingState(),
+    imageTagEligibleCount: Int = 0
 ): ClipboardArchiveUiSnapshot {
     val immutableFileNames = storageFileNames.toSet()
     val currentArchives = archives.map {
@@ -48,6 +52,8 @@ internal fun clipboardArchiveUiSnapshot(
         downloadItems = downloadItems,
         downloadActionCount = archiveDownloadActionCount(currentArchives, immutableFileNames),
         loadingArchiveKeys = immutableLoadingKeys,
-        progressByArchiveKey = downloadState.progressByArchiveKey.toMap()
+        progressByArchiveKey = downloadState.progressByArchiveKey.toMap(),
+        imageTaggingState = imageTaggingState,
+        imageTagEligibleCount = imageTagEligibleCount
     )
 }

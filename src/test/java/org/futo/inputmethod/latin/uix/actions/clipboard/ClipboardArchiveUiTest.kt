@@ -12,6 +12,53 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardArchiveUiTest {
     @Test
+    fun archiveSearchMatchesAiTagsWithSpacesOrUnderscores() {
+        val archive = sampleArchive(
+            media = listOf(
+                savedArchiveMedia().copy(
+                    imageTagging = ClipboardImageTaggingResult(
+                        modelRevision = ClipboardImageTagModelRevision,
+                        attemptedAtEpochMs = 10L,
+                        tags = listOf(
+                            ClipboardImageTag(
+                                "blue_hair",
+                                0.91f,
+                                ClipboardImageTagCategory.General
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        assertTrue(archive.matchesArchiveQuery("blue hair"))
+        assertTrue(archive.matchesArchiveQuery("blue_hair"))
+        assertFalse(archive.matchesArchiveQuery("green hair"))
+    }
+
+    @Test
+    fun archiveDetailsKeepAiTagsSeparateFromProviderTags() {
+        val archive = sampleArchive(
+            media = listOf(
+                savedArchiveMedia().copy(
+                    imageTagging = ClipboardImageTaggingResult(
+                        modelRevision = ClipboardImageTagModelRevision,
+                        attemptedAtEpochMs = 10L,
+                        tags = listOf(
+                            ClipboardImageTag("solo", 0.88f, ClipboardImageTagCategory.General)
+                        )
+                    )
+                )
+            )
+        ).copy(metadata = sampleMetadata().copy(tags = listOf("provider-tag")))
+
+        val details = archive.archiveMetadataDetailsText()
+
+        assertTrue(details.contains("Tags: provider-tag"))
+        assertTrue(details.contains("AI tags: solo (88%)"))
+    }
+
+    @Test
     fun sortedClipboardArchives_clipDateUsesMatchingCurrentClipTimestamp() {
         val oldClipArchive = sampleTwitterArchive("1").copy(createdAtEpochMs = 100L, updatedAtEpochMs = 900L)
         val newClipArchive = sampleTwitterArchive("2").copy(createdAtEpochMs = 200L, updatedAtEpochMs = 100L)

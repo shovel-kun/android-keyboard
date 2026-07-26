@@ -79,6 +79,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import org.futo.inputmethod.latin.R
 import java.io.File
@@ -678,6 +679,60 @@ internal fun ClipboardArchiveBackfillStatus(
 }
 
 @Composable
+internal fun ClipboardImageTaggingStatus(
+    state: ClipboardImageTaggingState,
+    eligibleCount: Int,
+    onTagExisting: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if(state.remainingCount > 0) {
+        Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            shape = RoundedCornerShape(8.dp),
+            modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = stringResource(R.string.clipboard_history_image_tagging),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.clipboard_history_image_tagging_remaining,
+                            state.remainingCount
+                        ),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    } else if(eligibleCount > 0) {
+        OutlinedButton(
+            onClick = onTagExisting,
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text(
+                stringResource(
+                    R.string.clipboard_history_tag_existing_images,
+                    eligibleCount
+                )
+            )
+        }
+    }
+}
+
+@Composable
 internal fun ClipboardArchiveFilterButton(
     filtersActive: Boolean,
     onClick: () -> Unit
@@ -1205,6 +1260,7 @@ internal fun ClipboardArchiveGalleryDialog(
     progress: ClipboardArchiveDownloadProgress?,
     onDismiss: () -> Unit,
     onRetry: () -> Unit,
+    onTagImage: (ClipboardArchiveGalleryItem) -> Unit,
     onDelete: () -> Unit,
     onShare: (ClipboardArchiveGalleryItem) -> Unit
 ) {
@@ -1224,6 +1280,7 @@ internal fun ClipboardArchiveGalleryDialog(
     }
     val showRetry = archive.hasRetryableMedia() || archive.canRefetchManifest()
     val showShare = currentItem?.isShareable == true
+    val showTagImage = currentItem?.media?.status == ClipboardArchiveMediaStatus.Saved
     val showDetails = {
         detailsTarget = currentItem
             ?.takeIf { it.hasFailureDetails }
@@ -1238,6 +1295,22 @@ internal fun ClipboardArchiveGalleryDialog(
                     iconRes = R.drawable.refresh_cw,
                     enabled = !loading,
                     onClick = onRetry
+                )
+            )
+        }
+        currentItem?.takeIf { showTagImage }?.let { item ->
+            add(
+                ClipboardPreviewFabAction(
+                    label = stringResource(
+                        if(item.media.imageTagging?.failure == null && item.media.imageTagging != null) {
+                            R.string.clipboard_history_retag_image
+                        } else {
+                            R.string.clipboard_history_tag_image
+                        }
+                    ),
+                    iconRes = R.drawable.image,
+                    enabled = !loading,
+                    onClick = { onTagImage(item) }
                 )
             )
         }
@@ -1347,6 +1420,25 @@ internal fun ClipboardArchiveGalleryDialog(
         null -> {}
     }
 
+}
+
+@Preview(widthDp = 390)
+@Composable
+private fun ClipboardImageTaggingStatusPreview() {
+    MaterialTheme {
+        Column {
+            ClipboardImageTaggingStatus(
+                state = ClipboardImageTaggingState(),
+                eligibleCount = 24,
+                onTagExisting = {}
+            )
+            ClipboardImageTaggingStatus(
+                state = ClipboardImageTaggingState(remainingCount = 12),
+                eligibleCount = 24,
+                onTagExisting = {}
+            )
+        }
+    }
 }
 
 @Composable

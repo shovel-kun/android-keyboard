@@ -9,6 +9,7 @@ crashreporting.properties
 keystore.properties
 key.jks
 java/res/raw/mozc.data
+java/assets/image-tagger/model.quant.preproc.onnx
 .cxx
 java/src/org/futo/inputmethod/keyboard/internal/KeyboardTextsTable.java
 /CLAUDE.md

@@ -77,6 +77,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val showPinnedOnTop = useDataStoreValue(ClipboardShowPinnedOnTop)
     val useSingleColumn = useDataStoreValue(ClipboardSingleColumn)
     val skipDeleteConfirmation = useDataStoreValue(ClipboardSkipDeleteConfirmation)
+    val imageTaggingEnabled = useDataStoreValue(ClipboardImageTaggingEnabled)
     val archiveSortModeSetting = useDataStore(ClipboardArchiveSortModeSetting)
     val archiveSortMode = ClipboardArchiveSortMode.fromStoredValue(archiveSortModeSetting.value)
 
@@ -538,6 +539,13 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                             ClipboardArchiveBackfillStatus(remainingCount = archiveBackfillRemainingCount)
                             Spacer(modifier = Modifier.height(8.dp))
                         }
+                        if(activeMode == ClipboardHistoryContentMode.Archives && imageTaggingEnabled) {
+                            ClipboardImageTaggingStatus(
+                                state = archiveUiSnapshot.imageTaggingState,
+                                eligibleCount = archiveUiSnapshot.imageTagEligibleCount,
+                                onTagExisting = manager::tagExistingArchiveImages
+                            )
+                        }
                         if(activeMode == ClipboardHistoryContentMode.Clips) {
                             ClipboardHistoryFilterRow(
                                 activeFilter = activeFilter,
@@ -639,6 +647,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             progress = archiveUiSnapshot.progressByArchiveKey[archive.key],
             onDismiss = { previewArchiveKey = null },
             onRetry = { manager.retryArchive(archive) },
+            onTagImage = { manager.tagArchiveMedia(archive.key, it.media.sourceIndex) },
             onDelete = { archiveDeleteRequest = ArchiveDeleteRequest(archive) },
             onShare = { shareArchiveMedia(context, it) }
         )

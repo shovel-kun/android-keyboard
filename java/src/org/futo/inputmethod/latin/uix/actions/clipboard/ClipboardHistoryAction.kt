@@ -97,6 +97,11 @@ val ClipboardLimitDownloadsOnMobileData = SettingsKey(
     true
 )
 
+val ClipboardImageTaggingEnabled = SettingsKey(
+    booleanPreferencesKey("clipboard_image_tagging_enabled"),
+    true
+)
+
 val ClipboardPixivSessionId = SettingsKey(
     stringPreferencesKey("clipboard_pixiv_session_id"),
     ""
@@ -265,6 +270,11 @@ val ClipboardHistoryAction = Action(
                 title = R.string.action_clipboard_manager_settings_link_previews,
                 subtitle = R.string.action_clipboard_manager_settings_link_previews_subtitle,
                 setting = ClipboardLinkPreviewsEnabled
+            ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
+            userSettingToggleDataStore(
+                title = R.string.action_clipboard_manager_settings_image_tagging,
+                subtitle = R.string.action_clipboard_manager_settings_image_tagging_subtitle,
+                setting = ClipboardImageTaggingEnabled
             ).copy(visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }),
             UserSetting(
                 name = R.string.action_clipboard_manager_settings_x_link_paste_domain,

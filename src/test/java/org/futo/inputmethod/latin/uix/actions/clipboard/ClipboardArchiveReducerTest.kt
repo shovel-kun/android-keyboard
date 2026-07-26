@@ -6,6 +6,54 @@ import org.junit.Test
 
 class ClipboardArchiveReducerTest {
     @Test
+    fun mediaTaggedStoresTagsWithoutChangingArchiveStatusOrTimestamps() {
+        val archive = sampleArchive(media = listOf(savedMedia())).copy(
+            createdAtEpochMs = 10L,
+            updatedAtEpochMs = 20L
+        )
+        val result = ClipboardImageTaggingResult(
+            modelRevision = ClipboardImageTagModelRevision,
+            attemptedAtEpochMs = 30L,
+            tags = listOf(
+                ClipboardImageTag("blue_hair", 0.9f, ClipboardImageTagCategory.General)
+            )
+        )
+
+        val updated = reduceArchive(
+            archive,
+            ClipboardArchiveEvent.MediaTagged(sourceIndex = 0, result = result)
+        )!!
+
+        assertEquals(ClipboardLinkArchiveStatus.Complete, updated.status)
+        assertEquals(10L, updated.createdAtEpochMs)
+        assertEquals(20L, updated.updatedAtEpochMs)
+        assertEquals(result, updated.media.single().imageTagging)
+        assertEquals(updated, decodeClipboardArchive(encodeClipboardArchive(updated)))
+    }
+
+    @Test
+    fun mediaDownloadSavedClearsTagsForReplacedFile() {
+        val priorTags = ClipboardImageTaggingResult(
+            modelRevision = ClipboardImageTagModelRevision,
+            attemptedAtEpochMs = 10L,
+            tags = listOf(ClipboardImageTag("cat", 0.8f, ClipboardImageTagCategory.General))
+        )
+        val archive = sampleArchive(media = listOf(savedMedia().copy(imageTagging = priorTags)))
+
+        val updated = reduceArchive(
+            archive,
+            ClipboardArchiveEvent.MediaDownloadSaved(
+                sourceUrl = archive.media.single().sourceUrl,
+                fileName = "replacement.jpg",
+                mimeType = "image/jpeg",
+                now = 30L
+            )
+        )!!
+
+        assertEquals(null, updated.media.single().imageTagging)
+    }
+
+    @Test
     fun manifestSeen_createsPendingArchiveForNewMedia() {
         val archive = reduceArchive(
             archive = null,
