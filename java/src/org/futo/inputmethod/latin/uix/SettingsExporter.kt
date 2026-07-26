@@ -76,6 +76,7 @@ import org.futo.inputmethod.latin.uix.actions.clipboard.referencedClipboardFileN
 import org.futo.inputmethod.latin.uix.actions.clipboard.tombstonesRetainedAfterArchiveImport
 import org.futo.inputmethod.latin.uix.settings.ScreenTitle
 import org.futo.inputmethod.latin.uix.settings.ScrollableList
+import org.futo.inputmethod.latin.uix.settings.SettingsActivity
 import org.futo.inputmethod.latin.uix.theme.ZipThemes
 import org.futo.inputmethod.latin.xlm.ModelPaths
 import org.json.JSONArray
@@ -709,7 +710,7 @@ object SettingsExporter {
             putExtra(Intent.EXTRA_TITLE, defaultFileName)
         }
 
-        val activity: SettingsActivity = findSettingsActivity(context)
+        val activity: SettingsActivity = findSettingsActivity(context)!!
         activity.startActivityForResult(intent, EXPORT_CLIPBOARD_BACKUP_REQUEST)
     }
 
@@ -824,7 +825,7 @@ object SettingsExporter {
     @Composable
     fun ClipboardExportingMenu(navController: NavHostController = rememberNavController()) {
         val context = LocalContext.current
-        val activity = remember { findSettingsActivity(context) }
+        val activity = remember { findSettingsActivity(context)!! }
         val triggered = remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
