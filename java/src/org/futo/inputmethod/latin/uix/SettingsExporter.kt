@@ -81,6 +81,7 @@ import org.futo.inputmethod.latin.uix.theme.ZipThemes
 import org.futo.inputmethod.latin.xlm.ModelPaths
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
@@ -89,6 +90,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -97,6 +99,42 @@ const val IMPORT_SETTINGS_REQUEST = 1801146881
 const val EXPORT_SETTINGS_REQUEST = 69835032
 const val IMPORT_CLIPBOARD_BACKUP_REQUEST = 1901146881
 const val EXPORT_CLIPBOARD_BACKUP_REQUEST = 79835032
+
+private const val BackupBufferSize = 64 * 1024
+private val UncompressedBackupExtensions = setOf(
+    "avif",
+    "gif",
+    "gguf",
+    "heic",
+    "heif",
+    "jpeg",
+    "jpg",
+    "m4v",
+    "mp4",
+    "png",
+    "webm",
+    "webp",
+    "zip"
+)
+
+internal fun backupCompressionLevel(file: File): Int =
+    if(file.extension.lowercase() in UncompressedBackupExtensions) {
+        Deflater.NO_COMPRESSION
+    } else {
+        Deflater.BEST_SPEED
+    }
+
+private fun backupZipOutputStream(outputStream: OutputStream) =
+    ZipOutputStream(BufferedOutputStream(outputStream, BackupBufferSize)).apply {
+        setLevel(Deflater.BEST_SPEED)
+    }
+
+private fun ZipOutputStream.writeBackupFile(entryName: String, file: File) {
+    setLevel(backupCompressionLevel(file))
+    putNextEntry(ZipEntry(entryName))
+    file.inputStream().use { it.copyTo(this, BackupBufferSize) }
+    closeEntry()
+}
 
 internal fun clipboardBackupMediaFiles(
     referencedFiles: Set<String>,
@@ -258,9 +296,7 @@ object SettingsExporter {
         context: Context,
         outputStream: OutputStream,
         includeHeavyResources: Boolean
-    ) = ZipOutputStream(outputStream).use { zipOut ->
-        zipOut.setLevel(1)
-
+    ) = backupZipOutputStream(outputStream).use { zipOut ->
         // Write version and date
         zipOut.putNextEntry(ZipEntry(versionFileName))
         zipOut.write(ByteBuffer.allocate(9).also {
@@ -298,9 +334,7 @@ object SettingsExporter {
         // Collect clipboard
         val clipboardFile = context.clipboardFile
         if (clipboardFile.exists()) {
-            zipOut.putNextEntry(ZipEntry(clipboardFileName))
-            clipboardFile.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
+            zipOut.writeBackupFile(clipboardFileName, clipboardFile)
         }
         val clipboardArchives = ClipboardArchiveStore(context.filesDir).load().archives
         if (clipboardArchives.isNotEmpty()) {
@@ -313,9 +347,7 @@ object SettingsExporter {
         context.getExternalFilesDir(null)?.listFiles()?.filter { it.isFile }?.forEach { resourceFile ->
             // if includeHeavyResources, then only include this if its not a .dict
             if (resourceFile.extension == "dict" || includeHeavyResources) {
-                zipOut.putNextEntry(ZipEntry("ext/${resourceFile.name}"))
-                resourceFile.inputStream().use { it.copyTo(zipOut) }
-                zipOut.closeEntry()
+                zipOut.writeBackupFile("ext/${resourceFile.name}", resourceFile)
             }
         }
 
@@ -323,9 +355,7 @@ object SettingsExporter {
         val modelDirectory = ModelPaths.getModelDirectory(context)
         modelDirectory.listFiles()?.forEach { resourceFile ->
             if (includeHeavyResources && ModelPaths.shouldFileBeIncludedInExport(resourceFile)) {
-                zipOut.putNextEntry(ZipEntry("transformers/${resourceFile.name}"))
-                resourceFile.inputStream().use { it.copyTo(zipOut) }
-                zipOut.closeEntry()
+                zipOut.writeBackupFile("transformers/${resourceFile.name}", resourceFile)
             }
         }
 
@@ -335,10 +365,7 @@ object SettingsExporter {
                 && resourceFile.isDirectory
             ) {
                 resourceFile.listFiles()!!.forEach { subfile ->
-                    val entry = ZipEntry("userdict/${resourceFile.name}/${subfile.name}")
-                    zipOut.putNextEntry(entry)
-                    subfile.inputStream().use { it.copyTo(zipOut) }
-                    zipOut.closeEntry()
+                    zipOut.writeBackupFile("userdict/${resourceFile.name}/${subfile.name}", subfile)
                 }
             }
         }
@@ -348,27 +375,19 @@ object SettingsExporter {
         context.clipboardDir.listFiles()?.forEach { clipboardFile ->
             assert(!clipboardFile.isDirectory)
             exportedClipboardFiles.add(clipboardFile.name)
-            val entry = ZipEntry("clipboard/${clipboardFile.name}")
-            zipOut.putNextEntry(entry)
-            clipboardFile.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
+            zipOut.writeBackupFile("clipboard/${clipboardFile.name}", clipboardFile)
         }
         referencedClipboardArchiveFileNames(clipboardArchives).forEach { fileName ->
             if(!exportedClipboardFiles.add(fileName)) return@forEach
             val archiveFile = File(context.clipboardArchiveDir, fileName)
             if(!archiveFile.isFile) return@forEach
 
-            zipOut.putNextEntry(ZipEntry("clipboard/$fileName"))
-            archiveFile.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
+            zipOut.writeBackupFile("clipboard/$fileName", archiveFile)
         }
         // Collect mozc (Japanese user typing history, etc)
         mozcUserProfileDir(context).listFiles()?.forEach { subfile ->
             assert(!subfile.isDirectory)
-            val entry = ZipEntry("mozc/${subfile.name}")
-            zipOut.putNextEntry(entry)
-            subfile.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
+            zipOut.writeBackupFile("mozc/${subfile.name}", subfile)
         }
 
         // Collect RIME (Chinese user typing history, etc)
@@ -376,26 +395,19 @@ object SettingsExporter {
         rimeDir.walk().filter { it.isFile }.forEach { subfile ->
             val rel = subfile.toRelativeString(rimeDir)
 
-            val entry = ZipEntry("rime/$rel")
-            zipOut.putNextEntry(entry)
-            subfile.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
+            zipOut.writeBackupFile("rime/$rel", subfile)
         }
 
         // Collect themes
         ZipThemes.customThemesDir(context).listFiles()?.forEach { themeFile ->
-            zipOut.putNextEntry(ZipEntry("themes/${themeFile.name}"))
-            themeFile.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
+            zipOut.writeBackupFile("themes/${themeFile.name}", themeFile)
         }
     }
 
     suspend fun exportClipboardBackup(
         context: Context,
         outputStream: OutputStream
-    ) = ZipOutputStream(outputStream).use { zipOut ->
-        zipOut.setLevel(1)
-
+    ) = backupZipOutputStream(outputStream).use { zipOut ->
         val manifest = clipboardBackupManifest()
         val clipboardEntries = if(context.clipboardFile.exists()) {
             runCatching { context.clipboardFile.decodeClipboardEntries() }.getOrElse { emptyList() }
@@ -424,9 +436,7 @@ object SettingsExporter {
             clipboardDir = context.clipboardDir,
             archiveDir = context.clipboardArchiveDir
         ).forEach { (entryName, file) ->
-            zipOut.putNextEntry(ZipEntry(entryName))
-            file.inputStream().use { it.copyTo(zipOut) }
-            zipOut.closeEntry()
+            zipOut.writeBackupFile(entryName, file)
         }
     }
 

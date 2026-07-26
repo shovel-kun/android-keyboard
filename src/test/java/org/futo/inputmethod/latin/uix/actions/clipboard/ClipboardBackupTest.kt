@@ -1,5 +1,6 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
+import org.futo.inputmethod.latin.uix.backupCompressionLevel
 import org.futo.inputmethod.latin.uix.clipboardBackupMediaFiles
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,11 +10,36 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
+    @Test
+    fun backupCompressionLevel_skipsCompressionForCompressedFileTypes() {
+        listOf(
+            "archive.JPG",
+            "archive.avif",
+            "archive.gif",
+            "archive.gguf",
+            "archive.heic",
+            "archive.heif",
+            "archive.jpeg",
+            "archive.m4v",
+            "archive.mp4",
+            "archive.png",
+            "archive.webm",
+            "archive.webp",
+            "archive.zip"
+        ).forEach { fileName ->
+            assertEquals(Deflater.NO_COMPRESSION, backupCompressionLevel(File(fileName)))
+        }
+        listOf("clipboard.json", "main_en.dict", "model.onnx", "user-history.bin").forEach { fileName ->
+            assertEquals(Deflater.BEST_SPEED, backupCompressionLevel(File(fileName)))
+        }
+    }
+
     @Test
     fun archiveStore_interruptedPromotionRestoresPreviousState() {
         val root = createTempDirectory().toFile()
