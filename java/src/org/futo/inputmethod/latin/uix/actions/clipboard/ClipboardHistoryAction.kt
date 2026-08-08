@@ -107,6 +107,11 @@ val ClipboardPixivSessionId = SettingsKey(
     ""
 )
 
+val ClipboardFanboxSessionId = SettingsKey(
+    stringPreferencesKey("clipboard_fanbox_session_id"),
+    ""
+)
+
 val ClipboardXLinkPasteDomain = SettingsKey(
     stringPreferencesKey("clipboard_x_link_paste_domain"),
     "fixupx.com"
@@ -370,6 +375,33 @@ val ClipboardHistoryAction = Action(
                             value = sessionId.value,
                             onValueChange = sessionId.setValue,
                             placeholder = { Text("PHPSESSID") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                visibilityCheck = {
+                    useDataStoreValue(ClipboardHistoryEnabled) &&
+                        useDataStoreValue(ClipboardLinkPreviewsEnabled)
+                }
+            ),
+            UserSetting(
+                name = R.string.action_clipboard_manager_settings_fanbox_session_id,
+                subtitle = R.string.action_clipboard_manager_settings_fanbox_session_id_subtitle,
+                component = {
+                    val sessionId = useDataStore(ClipboardFanboxSessionId)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp, 8.dp)
+                    ) {
+                        Text(stringResource(R.string.action_clipboard_manager_settings_fanbox_session_id))
+                        TextField(
+                            value = sessionId.value,
+                            onValueChange = sessionId.setValue,
+                            placeholder = { Text("FANBOXSESSID") },
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

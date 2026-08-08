@@ -360,44 +360,49 @@ object ClipboardLinkPreviewFetcher {
     fun fetchManifest(
         rawText: String,
         pixivSessionId: String? = null,
-        redditAccessToken: String? = null
+        redditAccessToken: String? = null,
+        fanboxSessionId: String? = null
     ): ClipboardLinkPreviewManifest? {
-        return fetchManifestResult(rawText, pixivSessionId, redditAccessToken).manifest
+        return fetchManifestResult(rawText, pixivSessionId, redditAccessToken, fanboxSessionId).manifest
     }
 
     fun fetchManifestResult(
         rawText: String,
         pixivSessionId: String? = null,
-        redditAccessToken: String? = null
+        redditAccessToken: String? = null,
+        fanboxSessionId: String? = null
     ): ClipboardLinkPreviewManifestResult {
         val candidate = previewCandidateFor(rawText) ?: return ClipboardLinkPreviewManifestResult(
             manifest = null,
             failureDetail = "Unsupported preview URL: $rawText"
         )
-        return fetchManifestResult(candidate, rawText, pixivSessionId, redditAccessToken)
+        return fetchManifestResult(candidate, rawText, pixivSessionId, redditAccessToken, fanboxSessionId)
     }
 
     internal fun fetchManifestResult(
         candidate: ClipboardPreviewCandidate,
         pixivSessionId: String? = null,
-        redditAccessToken: String? = null
+        redditAccessToken: String? = null,
+        fanboxSessionId: String? = null
     ): ClipboardLinkPreviewManifestResult =
         fetchManifestResult(
             candidate,
             candidate.metadata.sourceUrl ?: candidate.archiveKey.orEmpty(),
             pixivSessionId,
-            redditAccessToken
+            redditAccessToken,
+            fanboxSessionId
         )
 
     private fun fetchManifestResult(
         candidate: ClipboardPreviewCandidate,
         rawText: String,
         pixivSessionId: String?,
-        redditAccessToken: String?
+        redditAccessToken: String?,
+        fanboxSessionId: String?
     ): ClipboardLinkPreviewManifestResult {
         val request = candidate.request
         return try {
-            request.fetchPreview(pixivSessionId, redditAccessToken)
+            request.fetchPreview(pixivSessionId, redditAccessToken, fanboxSessionId)
         } catch (e: ClipboardPreviewRateLimitedException) {
             val provider = candidate.provider
             val detail = "Rate limited by ${provider.name} while fetching preview manifest for $rawText. Retry after ${e.retryAfterEpochMs}. ${e.message}"
@@ -436,7 +441,8 @@ object ClipboardLinkPreviewFetcher {
         val preview = fetchManifest(
             rawText = rawText,
             pixivSessionId = context.getSetting(ClipboardPixivSessionId).takeIf { it.isNotBlank() },
-            redditAccessToken = context.getSetting(ClipboardRedditAccessToken).takeIf { it.isNotBlank() }
+            redditAccessToken = context.getSetting(ClipboardRedditAccessToken).takeIf { it.isNotBlank() },
+            fanboxSessionId = context.getSetting(ClipboardFanboxSessionId).takeIf { it.isNotBlank() }
         ) ?: return null
         val provider = preview.metadata?.provider
 
@@ -485,6 +491,15 @@ object ClipboardLinkPreviewFetcher {
 
     internal fun pixivSessionCookieHeaderForTest(value: String): String? =
         value.pixivSessionCookieHeader()
+
+    internal fun fanboxApiHeadersForTest(value: String?): Map<String, String> =
+        fanboxApiHeaders(value)
+
+    internal fun parseFanboxPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+        parseFanboxPreview(
+            LinkPreviewJson.parseToJsonElement(responseText).jsonObject,
+            FanboxPostUrl(creatorId = "creator", id = "123")
+        )?.toManifest()
 
     internal fun parseTwitterHtmlPreviewMediaUrlsForTest(html: String): List<String> =
         parseTwitterHtmlPreview(
@@ -585,6 +600,7 @@ object ClipboardLinkPreviewFetcher {
     private val PreviewProviders = listOf(
         TwitterPreviewProvider,
         PixivPreviewProvider,
+        FanboxPreviewProvider,
         RedditPreviewProvider,
         MastodonPreviewProvider,
         YouTubePreviewProvider
@@ -646,6 +662,34 @@ object ClipboardLinkPreviewFetcher {
                 host.endsWith(".pximg.net") ||
                 host.endsWith(".pixiv.net") ||
                 host.endsWith(".phixiv.net")
+
+        override fun prefersImagePreview(request: PreviewRequest): Boolean = true
+    }
+
+    private object FanboxPreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.FANBOX
+
+        override fun parse(url: String): PreviewRequest? =
+            parseFanboxPostUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val postUrl = request as FanboxPostUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = postUrl.canonicalUrl(),
+                sourceId = postUrl.id,
+                authorHandle = postUrl.creatorId
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchFanboxPreview(request as FanboxPostUrl, fanboxSessionId = null)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as FanboxPostUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean =
+            host == "downloads.fanbox.cc"
 
         override fun prefersImagePreview(request: PreviewRequest): Boolean = true
     }
@@ -971,6 +1015,77 @@ object ClipboardLinkPreviewFetcher {
             requestJsonObject(pagesUrl, MaxPreviewJsonBytes, headers).arrayValue("body")
         }
         return PixivPreviewResponse(infoResponse, pagesResponse)
+    }
+
+    private fun fetchFanboxPreview(
+        postUrl: FanboxPostUrl,
+        fanboxSessionId: String?
+    ): RemotePreviewData? =
+        parseFanboxPreview(
+            requestJsonObject(postUrl.apiUrl(), MaxPreviewJsonBytes, fanboxApiHeaders(fanboxSessionId)),
+            postUrl
+        )
+
+    private fun parseFanboxPreview(
+        response: JsonObject,
+        postUrl: FanboxPostUrl
+    ): RemotePreviewData? {
+        val post = response.objectValue("body")?.objectValue("post") ?: return null
+        val body = post.objectValue("body")
+        val restricted = post.booleanValue("isRestricted") == true && body == null
+        val mediaItems = if(restricted) {
+            emptyList()
+        } else {
+            when (post.stringValue("type")) {
+                "article" -> body?.fanboxArticleImages().orEmpty()
+                "image" -> body?.arrayValue("images").fanboxImages()
+                else -> emptyList()
+            }.ifEmpty {
+                listOfNotNull(post.stringValue("coverImageUrl")).mapIndexed { index, url ->
+                    ClipboardLinkPreviewMedia(
+                        url = url,
+                        sourceIndex = index,
+                        mimeType = url.guessedClipboardMimeType()
+                    )
+                }
+            }
+        }
+        val bodyText = (post.stringValue("excerpt") ?: body?.stringValue("text"))
+            ?.stripSimpleHtml()
+            ?.takeIf { it.isNotBlank() }
+        val snippet = if(restricted) {
+            "Login to view this FANBOX post."
+        } else {
+            bodyText?.let { sanitizeClipboardText(it, 160) }
+        }
+        val user = post.objectValue("user")
+        val metadata = ClipboardPreviewMetadata(
+            provider = ClipboardPreviewProvider.FANBOX,
+            sourceUrl = postUrl.canonicalUrl(),
+            sourceId = post.stringValue("id") ?: postUrl.id,
+            title = post.stringValue("title")?.trim()?.takeIf { it.isNotBlank() },
+            bodyText = bodyText,
+            authorName = user?.stringValue("name"),
+            authorHandle = post.stringValue("creatorId") ?: postUrl.creatorId,
+            authorId = user?.stringValue("userId"),
+            createdAt = post.stringValue("publishedDatetime"),
+            imageCount = mediaItems.size.takeIf { it > 0 },
+            selectedImageIndex = 0.takeIf { mediaItems.isNotEmpty() },
+            tags = post.stringArrayValue("tags"),
+            stats = ClipboardPreviewStats(
+                likeCount = post.longValue("likeCount"),
+                commentCount = post.longValue("commentCount")
+            ),
+            flags = ClipboardPreviewFlags(
+                restricted = post.booleanValue("hasAdultContent") == true
+            )
+        ).nullIfEmpty()
+
+        return RemotePreviewData(
+            snippet = snippet,
+            mediaItems = mediaItems,
+            metadata = metadata
+        )
     }
 
     private fun fetchRedditPreview(
@@ -1401,6 +1516,7 @@ object ClipboardLinkPreviewFetcher {
     private fun PreviewRequest.provider(): ClipboardPreviewProvider = when (this) {
         is TwitterStatusUrl -> TwitterPreviewProvider.provider
         is PixivArtworkUrl -> PixivPreviewProvider.provider
+        is FanboxPostUrl -> FanboxPreviewProvider.provider
         is RedditPostUrl -> RedditPreviewProvider.provider
         is MastodonStatusUrl -> MastodonPreviewProvider.provider
         is YouTubeVideoUrl -> YouTubePreviewProvider.provider
@@ -1414,10 +1530,12 @@ object ClipboardLinkPreviewFetcher {
 
     private fun PreviewRequest.fetchPreview(
         pixivSessionId: String?,
-        redditAccessToken: String?
+        redditAccessToken: String?,
+        fanboxSessionId: String?
     ): RemotePreviewData? =
         when (this) {
             is PixivArtworkUrl -> fetchPixivPreview(this, pixivSessionId)
+            is FanboxPostUrl -> fetchFanboxPreview(this, fanboxSessionId)
             is RedditPostUrl -> fetchRedditPreview(this, redditAccessToken)
             else -> fetchPreview()
         }
@@ -1550,6 +1668,36 @@ object ClipboardLinkPreviewFetcher {
             id = id,
             language = parsed.language.ifBlank { "en" }
         )
+    }
+
+    private fun parseFanboxPostUrl(url: String): FanboxPostUrl? {
+        val uri = runCatching { URL(url).toURI() }.getOrNull() ?: return null
+        val host = uri.host?.lowercase() ?: return null
+        val segments = uri.path.split('/').filter { it.isNotBlank() }
+        val subdomainCreatorId = host
+            .takeIf { it.endsWith(".fanbox.cc") }
+            ?.removeSuffix(".fanbox.cc")
+            ?.takeIf { '.' !in it && it !in setOf("www", "api", "downloads") }
+        val parsed = when {
+            (host == "fanbox.cc" || host == "www.fanbox.cc") &&
+                segments.size >= 3 &&
+                segments[0].startsWith('@') &&
+                segments[1] == "posts" -> FanboxPostUrl(
+                    creatorId = segments[0].removePrefix("@"),
+                    id = segments[2]
+                )
+            subdomainCreatorId != null &&
+                segments.size >= 2 &&
+                segments[0] == "posts" -> FanboxPostUrl(
+                    creatorId = subdomainCreatorId,
+                    id = segments[1]
+                )
+            else -> null
+        } ?: return null
+
+        val id = parsed.id.takeWhile(Char::isDigit)
+        if(id.length < 2 || !parsed.creatorId.isValidFanboxCreatorId()) return null
+        return parsed.copy(id = id)
     }
 
     private fun parseRedditPostUrl(url: String): RedditPostUrl? {
@@ -1729,6 +1877,9 @@ internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLi
 internal fun parseMastodonApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
     ClipboardLinkPreviewFetcher.parseMastodonApiPreviewForTest(responseText)
 
+internal fun parseFanboxPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseFanboxPreviewForTest(responseText)
+
 internal fun unavailablePreviewFailureForTest(
     snippet: String?,
     title: String? = null,
@@ -1838,6 +1989,39 @@ private fun JsonArray.pixivOriginalImageUrls(): List<String> =
             ?.takeIf { it.isNotBlank() }
     }
 
+private fun JsonArray?.fanboxImages(): List<ClipboardLinkPreviewMedia> =
+    this.orEmpty()
+        .mapNotNull { it as? JsonObject }
+        .fanboxMediaItems()
+
+private fun List<JsonObject>.fanboxMediaItems(): List<ClipboardLinkPreviewMedia> =
+    mapNotNull { image ->
+        val originalUrl = image.stringValue("originalUrl") ?: return@mapNotNull null
+        originalUrl to image.stringValue("thumbnailUrl")
+    }
+        .distinctBy { it.first }
+        .mapIndexed { index, (url, thumbnailUrl) ->
+            ClipboardLinkPreviewMedia(
+                url = url,
+                sourceIndex = index,
+                mimeType = url.guessedClipboardMimeType(),
+                thumbnailUrl = thumbnailUrl
+            )
+        }
+
+private fun JsonObject.fanboxArticleImages(): List<ClipboardLinkPreviewMedia> {
+    val imageMap = objectValue("imageMap") ?: return emptyList()
+    val images = arrayValue("blocks")
+        .orEmpty()
+        .mapNotNull { block ->
+            (block as? JsonObject)
+                ?.takeIf { it.stringValue("type") == "image" }
+                ?.stringValue("imageId")
+                ?.let(imageMap::objectValue)
+        }
+    return images.fanboxMediaItems()
+}
+
 private fun JsonObject.redditApiMediaItems(): List<ClipboardLinkPreviewMedia> {
     val galleryUrls = objectValue("gallery_data")
         ?.arrayValue("items")
@@ -1901,6 +2085,12 @@ private fun pixivAjaxHeaders(pixivSessionId: String?): Map<String, String> {
     return mapOf("Cookie" to cookie)
 }
 
+private fun fanboxApiHeaders(fanboxSessionId: String?): Map<String, String> =
+    buildMap {
+        put("Origin", "https://www.fanbox.cc")
+        fanboxSessionId?.fanboxSessionCookieHeader()?.let { put("Cookie", it) }
+    }
+
 private fun String.redditOAuthHeaders(): Map<String, String> {
     val credential = trim()
     val token = if(credential.startsWith("Bearer ", ignoreCase = true)) {
@@ -1948,14 +2138,20 @@ private fun requestRedditInstalledClientAccessToken(clientId: String): String {
 private fun String.redditPermalinkUrl(): String =
     if(startsWith("http://") || startsWith("https://")) this else "https://www.reddit.com${this}"
 
-private fun String.pixivSessionCookieHeader(): String? {
-    val sessionId = trim()
+private fun String.pixivSessionCookieHeader(): String? =
+    sessionCookieHeader("PHPSESSID")
+
+private fun String.fanboxSessionCookieHeader(): String? =
+    sessionCookieHeader("FANBOXSESSID")
+
+private fun String.sessionCookieHeader(cookieName: String): String? {
+    val value = trim()
         .split(';')
-        .firstOrNull { it.trim().startsWith("PHPSESSID=") }
+        .firstOrNull { it.trim().startsWith("$cookieName=") }
         ?.substringAfter('=')
         ?.trim()
         ?: trim()
-    return sessionId.takeIf { it.isNotBlank() }?.let { "PHPSESSID=$it" }
+    return value.takeIf { it.isNotBlank() }?.let { "$cookieName=$it" }
 }
 
 private fun JsonArray.firstObject(): JsonObject? =
@@ -2124,6 +2320,9 @@ private fun String.fileExtensionForMimeType(): String? = when (normalizedMimeTyp
 private fun String.isValidYouTubeVideoId(): Boolean =
     length >= 6 && all { it.isLetterOrDigit() || it == '_' || it == '-' }
 
+private fun String.isValidFanboxCreatorId(): Boolean =
+    isNotBlank() && all { it.isLetterOrDigit() || it == '_' || it == '-' }
+
 private fun findCachedPreviewFile(directory: File, fileBaseName: String): File? =
     directory.listFiles()
         ?.firstOrNull { file ->
@@ -2155,6 +2354,14 @@ private data class PixivPreviewResponse(
     val infoResponse: JsonObject,
     val pagesResponse: JsonArray?
 )
+
+private data class FanboxPostUrl(
+    val creatorId: String,
+    val id: String
+) : PreviewRequest {
+    fun canonicalUrl(): String = "https://$creatorId.fanbox.cc/posts/$id"
+    fun apiUrl(): String = "https://api.fanbox.cc/post.info?postId=$id"
+}
 
 private data class RedditPostUrl(
     val pathSegments: List<String>,

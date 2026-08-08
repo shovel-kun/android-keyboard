@@ -226,6 +226,10 @@ class ClipboardArchiveUiTest {
             key = "mastodon:mastodon.social:1234567890",
             provider = ClipboardPreviewProvider.MASTODON
         )
+        val fanboxArchive = partialTwitter.copy(
+            key = "fanbox:12057950",
+            provider = ClipboardPreviewProvider.FANBOX
+        )
 
         assertTrue(completePixiv.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertFalse(completePixiv.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter))
@@ -235,6 +239,8 @@ class ClipboardArchiveUiTest {
         assertFalse(youTubeArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Reddit))
         assertTrue(mastodonArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Mastodon))
         assertFalse(mastodonArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.YouTube))
+        assertTrue(fanboxArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Fanbox))
+        assertFalse(fanboxArchive.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertTrue(partialTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.Partial))
         assertTrue(partialTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
         assertTrue(pendingTwitter.matchesStatusFilter(ClipboardArchiveStatusFilter.FailedInProgress))
@@ -288,7 +294,7 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
-    fun providerPresentation_includesYouTubeAndMastodon() {
+    fun providerPresentation_includesYouTubeMastodonAndFanbox() {
         assertEquals("YouTube", ClipboardPreviewProvider.YOUTUBE.providerLabel())
         assertEquals(R.drawable.provider_youtube, ClipboardPreviewProvider.YOUTUBE.providerIconRes())
         assertEquals(
@@ -300,6 +306,12 @@ class ClipboardArchiveUiTest {
         assertEquals(
             R.string.clipboard_history_archive_filter_mastodon,
             ClipboardArchiveProviderFilter.Mastodon.labelRes()
+        )
+        assertEquals("FANBOX", ClipboardPreviewProvider.FANBOX.providerLabel())
+        assertEquals(R.drawable.provider_fanbox, ClipboardPreviewProvider.FANBOX.providerIconRes())
+        assertEquals(
+            R.string.clipboard_history_archive_filter_fanbox,
+            ClipboardArchiveProviderFilter.Fanbox.labelRes()
         )
     }
 
@@ -801,6 +813,7 @@ class ClipboardArchiveUiTest {
         val redditItem = sampleDownloadItem(ClipboardPreviewProvider.REDDIT)
         val youTubeItem = sampleDownloadItem(ClipboardPreviewProvider.YOUTUBE)
         val mastodonItem = sampleDownloadItem(ClipboardPreviewProvider.MASTODON)
+        val fanboxItem = sampleDownloadItem(ClipboardPreviewProvider.FANBOX)
 
         assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.All))
         assertTrue(pixivItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
@@ -813,6 +826,8 @@ class ClipboardArchiveUiTest {
         assertFalse(youTubeItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
         assertTrue(mastodonItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Mastodon))
         assertFalse(mastodonItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Reddit))
+        assertTrue(fanboxItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Fanbox))
+        assertFalse(fanboxItem.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv))
     }
 
     @Test

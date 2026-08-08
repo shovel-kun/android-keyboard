@@ -206,6 +206,9 @@ internal fun ClipboardEntry.matchesDeletedArchiveKey(archiveKey: String): Boolea
 private fun Context.pixivSessionIdForClipboardPreviews(): String? =
     getSetting(ClipboardPixivSessionId).trim().takeIf { it.isNotBlank() }
 
+private fun Context.fanboxSessionIdForClipboardPreviews(): String? =
+    getSetting(ClipboardFanboxSessionId).trim().takeIf { it.isNotBlank() }
+
 private fun Context.redditAccessTokenForClipboardPreviews(): String? =
     getSetting(ClipboardRedditAccessToken).trim().takeIf { it.isNotBlank() }
 
@@ -823,9 +826,10 @@ class ClipboardHistoryManager private constructor(
             try {
                 val manifestResult = withContext(ClipboardPreviewFetchContext) {
                     ClipboardLinkPreviewFetcher.fetchManifestResult(
-                        candidate,
-                        context.pixivSessionIdForClipboardPreviews(),
-                        context.redditAccessTokenForClipboardPreviews()
+                        candidate = candidate,
+                        pixivSessionId = context.pixivSessionIdForClipboardPreviews(),
+                        redditAccessToken = context.redditAccessTokenForClipboardPreviews(),
+                        fanboxSessionId = context.fanboxSessionIdForClipboardPreviews()
                     )
                 }
                 setProviderCooldown(manifestResult.failure)
@@ -1621,9 +1625,10 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
                 while (attempt < request.maxAttempts) {
                     val manifestResult = withContext(ClipboardPreviewFetchContext) {
                         ClipboardLinkPreviewFetcher.fetchManifestResult(
-                            request.candidate,
-                            context.pixivSessionIdForClipboardPreviews(),
-                            context.redditAccessTokenForClipboardPreviews()
+                            candidate = request.candidate,
+                            pixivSessionId = context.pixivSessionIdForClipboardPreviews(),
+                            redditAccessToken = context.redditAccessTokenForClipboardPreviews(),
+                            fanboxSessionId = context.fanboxSessionIdForClipboardPreviews()
                         )
                     }
                     setProviderCooldown(manifestResult.failure)
@@ -1877,9 +1882,10 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         providerCooldown(archive.provider)?.let { return }
         val manifestResult = withContext(ClipboardPreviewFetchContext) {
             ClipboardLinkPreviewFetcher.fetchManifestResult(
-                archive.sourceUrl,
-                context.pixivSessionIdForClipboardPreviews(),
-                context.redditAccessTokenForClipboardPreviews()
+                rawText = archive.sourceUrl,
+                pixivSessionId = context.pixivSessionIdForClipboardPreviews(),
+                redditAccessToken = context.redditAccessTokenForClipboardPreviews(),
+                fanboxSessionId = context.fanboxSessionIdForClipboardPreviews()
             )
         }
         setProviderCooldown(manifestResult.failure)

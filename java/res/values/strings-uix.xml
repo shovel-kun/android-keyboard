@@ -99,7 +99,7 @@
     <string name="action_clipboard_manager_settings_save_screenshots">Save recent screenshots</string>
     <string name="action_clipboard_manager_settings_save_screenshots_subtitle">You\'ll need to grant permission to access your screenshots</string>
     <string name="action_clipboard_manager_settings_link_previews">Fetch link previews</string>
-    <string name="action_clipboard_manager_settings_link_previews_subtitle">When enabled, supported X, Reddit, Pixiv, and YouTube links may contact preview services</string>
+    <string name="action_clipboard_manager_settings_link_previews_subtitle">When enabled, supported X, Reddit, Pixiv, FANBOX, Mastodon, and YouTube links may contact preview services</string>
     <string name="action_clipboard_manager_settings_image_tagging">AI image tagging</string>
     <string name="action_clipboard_manager_settings_image_tagging_subtitle">Automatically add searchable tags to archived images on this device</string>
     <string name="action_clipboard_manager_settings_x_link_paste_domain">X link paste domain</string>
@@ -112,6 +112,8 @@
     <string name="action_clipboard_manager_settings_limit_mobile_data_subtitle">Wait for Wi-Fi or unmetered network before fetching link previews and archive media automatically</string>
     <string name="action_clipboard_manager_settings_pixiv_session_id">Pixiv session ID</string>
     <string name="action_clipboard_manager_settings_pixiv_session_id_subtitle">Optional PHPSESSID used only for Pixiv preview requests</string>
+    <string name="action_clipboard_manager_settings_fanbox_session_id">FANBOX session ID</string>
+    <string name="action_clipboard_manager_settings_fanbox_session_id_subtitle">Optional FANBOXSESSID used only for FANBOX preview requests</string>
     <string name="action_clipboard_manager_settings_reddit_access_token">Reddit client ID</string>
     <string name="action_clipboard_manager_settings_reddit_access_token_subtitle">Optional Reddit installed app client ID or bearer token used only for Reddit preview requests</string>
     <string name="action_clipboard_manager_settings_save_sensitive_clips">Save sensitive clips</string>
@@ -177,6 +179,7 @@
     <string name="clipboard_history_mode_archives">Archives %1$d</string>
     <string name="clipboard_history_archive_filter_all">All</string>
     <string name="clipboard_history_archive_filter_pixiv">Pixiv</string>
+    <string name="clipboard_history_archive_filter_fanbox">FANBOX</string>
     <string name="clipboard_history_archive_filter_twitter">Twitter/X</string>
     <string name="clipboard_history_archive_filter_reddit">Reddit</string>
     <string name="clipboard_history_archive_filter_youtube">YouTube</string>

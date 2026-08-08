@@ -134,6 +134,136 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun fanboxApiHeaders_includeOriginAndNormalizeSessionCookie() {
+        assertEquals(
+            mapOf("Origin" to "https://www.fanbox.cc"),
+            ClipboardLinkPreviewFetcher.fanboxApiHeadersForTest(null)
+        )
+        assertEquals(
+            mapOf(
+                "Origin" to "https://www.fanbox.cc",
+                "Cookie" to "FANBOXSESSID=abc123"
+            ),
+            ClipboardLinkPreviewFetcher.fanboxApiHeadersForTest("abc123")
+        )
+        assertEquals(
+            mapOf(
+                "Origin" to "https://www.fanbox.cc",
+                "Cookie" to "FANBOXSESSID=abc123"
+            ),
+            ClipboardLinkPreviewFetcher.fanboxApiHeadersForTest("foo=bar; FANBOXSESSID=abc123; baz=qux")
+        )
+    }
+
+    @Test
+    fun parseFanboxArticlePreview_preservesBlockImageOrderAndMetadata() {
+        val manifest = parseFanboxPreviewForTest(
+            """
+            {
+              "body": {"post": {
+                "id": "123",
+                "title": "FANBOX post",
+                "excerpt": "A public post excerpt",
+                "publishedDatetime": "2026-07-01T12:00:00+09:00",
+                "tags": ["art", "update"],
+                "likeCount": 94,
+                "commentCount": 3,
+                "hasAdultContent": true,
+                "creatorId": "creator",
+                "user": {"userId": "42", "name": "Creator"},
+                "type": "article",
+                "body": {
+                  "blocks": [
+                    {"type": "image", "imageId": "second"},
+                    {"type": "p", "text": "between"},
+                    {"type": "image", "imageId": "first"}
+                  ],
+                  "imageMap": {
+                    "first": {
+                      "originalUrl": "https://downloads.fanbox.cc/images/first.png",
+                      "thumbnailUrl": "https://downloads.fanbox.cc/images/w/1200/first.jpeg"
+                    },
+                    "second": {
+                      "originalUrl": "https://downloads.fanbox.cc/images/second.jpg",
+                      "thumbnailUrl": "https://downloads.fanbox.cc/images/w/1200/second.jpeg"
+                    }
+                  }
+                }
+              }}
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("A public post excerpt", manifest?.snippet)
+        assertEquals(
+            listOf(
+                "https://downloads.fanbox.cc/images/second.jpg",
+                "https://downloads.fanbox.cc/images/first.png"
+            ),
+            manifest?.mediaItems?.map { it.url }
+        )
+        assertEquals(listOf(0, 1), manifest?.mediaItems?.map { it.sourceIndex })
+        assertEquals(
+            "https://downloads.fanbox.cc/images/w/1200/second.jpeg",
+            manifest?.mediaItems?.first()?.thumbnailUrl
+        )
+        assertEquals(ClipboardPreviewProvider.FANBOX, manifest?.metadata?.provider)
+        assertEquals("https://creator.fanbox.cc/posts/123", manifest?.metadata?.sourceUrl)
+        assertEquals("FANBOX post", manifest?.metadata?.title)
+        assertEquals("Creator", manifest?.metadata?.authorName)
+        assertEquals("creator", manifest?.metadata?.authorHandle)
+        assertEquals("42", manifest?.metadata?.authorId)
+        assertEquals(listOf("art", "update"), manifest?.metadata?.tags)
+        assertEquals(94L, manifest?.metadata?.stats?.likeCount)
+        assertTrue(manifest?.metadata?.flags?.restricted == true)
+    }
+
+    @Test
+    fun parseFanboxImagePreview_readsOriginalImagesInOrder() {
+        val manifest = parseFanboxPreviewForTest(
+            """
+            {"body":{"post":{
+              "id":"123",
+              "creatorId":"creator",
+              "type":"image",
+              "body":{
+                "text":"Image post body",
+                "images":[
+                  {"originalUrl":"https://downloads.fanbox.cc/a.png","thumbnailUrl":"https://downloads.fanbox.cc/a-thumb.jpeg"},
+                  {"originalUrl":"https://downloads.fanbox.cc/b.jpg","thumbnailUrl":"https://downloads.fanbox.cc/b-thumb.jpeg"}
+                ]
+              }
+            }}}
+            """.trimIndent()
+        )
+
+        assertEquals("Image post body", manifest?.snippet)
+        assertEquals(
+            listOf("https://downloads.fanbox.cc/a.png", "https://downloads.fanbox.cc/b.jpg"),
+            manifest?.mediaItems?.map { it.url }
+        )
+    }
+
+    @Test
+    fun parseFanboxRestrictedPreview_doesNotArchiveCoverAsPostMedia() {
+        val manifest = parseFanboxPreviewForTest(
+            """
+            {"body":{"post":{
+              "id":"123",
+              "creatorId":"creator",
+              "title":"Supporter post",
+              "isRestricted":true,
+              "coverImageUrl":"https://pixiv.pximg.net/fanbox/cover.jpg",
+              "body":null
+            }}}
+            """.trimIndent()
+        )
+
+        assertEquals("Login to view this FANBOX post.", manifest?.snippet)
+        assertTrue(manifest?.mediaItems?.isEmpty() == true)
+    }
+
+    @Test
     fun parseTwitterApiPreviewMediaUrls_returnsAllPhotos() {
         val urls = parseTwitterApiPreviewMediaUrlsForTest(
             """
@@ -972,6 +1102,15 @@ class ClipboardLinkPreviewTest {
     fun metadataForSupportedUrl_routesToProviderAdapters() {
         val twitter = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://x.com/futo/status/1234567890")
         val pixiv = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.pixiv.net/en/artworks/107946644")
+        val fanbox = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://www.fanbox.cc/@creator/posts/12057950"
+        )
+        val fanboxSubdomain = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://creator.fanbox.cc/posts/12057950"
+        )
+        val nestedFanboxSubdomain = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://nested.creator.fanbox.cc/posts/12057950"
+        )
         val reddit = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.reddit.com/r/futo/comments/abc123/title/")
         val mastodon = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://mastodon.social/@futo/1234567890")
         val youtube = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.youtube.com/embed/dQw4w9WgXcQ")
@@ -980,6 +1119,12 @@ class ClipboardLinkPreviewTest {
         assertEquals("1234567890", twitter?.sourceId)
         assertEquals(ClipboardPreviewProvider.PIXIV, pixiv?.provider)
         assertEquals("107946644", pixiv?.sourceId)
+        assertEquals(ClipboardPreviewProvider.FANBOX, fanbox?.provider)
+        assertEquals("12057950", fanbox?.sourceId)
+        assertEquals("https://creator.fanbox.cc/posts/12057950", fanbox?.sourceUrl)
+        assertEquals(fanbox, fanboxSubdomain)
+        assertEquals("fanbox:12057950", fanbox?.archiveKey())
+        assertEquals(null, nestedFanboxSubdomain)
         assertEquals(ClipboardPreviewProvider.REDDIT, reddit?.provider)
         assertEquals("abc123", reddit?.sourceId)
         assertEquals(ClipboardPreviewProvider.MASTODON, mastodon?.provider)

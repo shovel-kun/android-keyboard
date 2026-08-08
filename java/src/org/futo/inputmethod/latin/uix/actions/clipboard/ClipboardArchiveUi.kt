@@ -14,6 +14,7 @@ import org.futo.inputmethod.latin.R
 internal enum class ClipboardArchiveProviderFilter(val provider: ClipboardPreviewProvider?) {
     All(null),
     Pixiv(ClipboardPreviewProvider.PIXIV),
+    Fanbox(ClipboardPreviewProvider.FANBOX),
     Twitter(ClipboardPreviewProvider.TWITTER),
     Reddit(ClipboardPreviewProvider.REDDIT),
     YouTube(ClipboardPreviewProvider.YOUTUBE),
@@ -398,6 +399,7 @@ private fun String?.isRateLimitFailureDetail(): Boolean =
 
 internal fun ClipboardPreviewProvider.providerLabel(): String = when (this) {
     ClipboardPreviewProvider.PIXIV -> "Pixiv"
+    ClipboardPreviewProvider.FANBOX -> "FANBOX"
     ClipboardPreviewProvider.TWITTER -> "Twitter/X"
     ClipboardPreviewProvider.REDDIT -> "Reddit"
     ClipboardPreviewProvider.YOUTUBE -> "YouTube"
@@ -406,6 +408,7 @@ internal fun ClipboardPreviewProvider.providerLabel(): String = when (this) {
 
 internal fun ClipboardPreviewProvider.providerIconRes(): Int = when (this) {
     ClipboardPreviewProvider.PIXIV -> R.drawable.provider_pixiv
+    ClipboardPreviewProvider.FANBOX -> R.drawable.provider_fanbox
     ClipboardPreviewProvider.TWITTER -> R.drawable.provider_x
     ClipboardPreviewProvider.REDDIT -> R.drawable.link
     ClipboardPreviewProvider.YOUTUBE -> R.drawable.provider_youtube
@@ -420,6 +423,7 @@ internal fun ClipboardArchiveProviderFilter.labelRes(): Int =
 
 private fun ClipboardPreviewProvider.providerFilterLabelRes(): Int = when (this) {
     ClipboardPreviewProvider.PIXIV -> R.string.clipboard_history_archive_filter_pixiv
+    ClipboardPreviewProvider.FANBOX -> R.string.clipboard_history_archive_filter_fanbox
     ClipboardPreviewProvider.TWITTER -> R.string.clipboard_history_archive_filter_twitter
     ClipboardPreviewProvider.REDDIT -> R.string.clipboard_history_archive_filter_reddit
     ClipboardPreviewProvider.YOUTUBE -> R.string.clipboard_history_archive_filter_youtube
