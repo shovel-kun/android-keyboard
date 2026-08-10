@@ -17,6 +17,22 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
     @Test
+    fun archiveSaveQueue_continuousUpdatesKeepFirstFlushAndLatestState() {
+        val queue = ClipboardArchiveSaveQueue()
+        val initial = sampleArchive(media = emptyList())
+
+        assertTrue(queue.enqueue(initial))
+        var latest = initial
+        repeat(100) { index ->
+            latest = initial.copy(updatedAtEpochMs = index.toLong() + 1L)
+            assertFalse(queue.enqueue(latest))
+        }
+
+        assertEquals(listOf(latest), queue.drain())
+        assertTrue(queue.enqueue(initial))
+    }
+
+    @Test
     fun backupCompressionLevel_skipsCompressionForCompressedFileTypes() {
         listOf(
             "archive.JPG",

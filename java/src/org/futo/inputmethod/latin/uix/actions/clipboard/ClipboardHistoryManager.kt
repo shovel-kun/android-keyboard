@@ -103,6 +103,28 @@ private data class ClipboardStorageSnapshot(
     val inventory: ClipboardStorageInventory
 )
 
+internal class ClipboardArchiveSaveQueue {
+    private val pendingByKey = linkedMapOf<String, ClipboardLinkArchive>()
+    private var flushScheduled = false
+
+    @Synchronized
+    fun enqueue(archive: ClipboardLinkArchive): Boolean {
+        pendingByKey[archive.key] = archive
+        if(flushScheduled) return false
+        flushScheduled = true
+        return true
+    }
+
+    @Synchronized
+    fun remove(archiveKey: String): ClipboardLinkArchive? = pendingByKey.remove(archiveKey)
+
+    @Synchronized
+    fun drain(): List<ClipboardLinkArchive> {
+        flushScheduled = false
+        return pendingByKey.values.toList().also { pendingByKey.clear() }
+    }
+}
+
 internal fun describeClipboardStorageFile(role: String, file: File): String {
     val exists = file.exists()
     val decodeSuccess = exists && runCatching {
@@ -369,8 +391,7 @@ class ClipboardHistoryManager private constructor(
     private var archiveBackfillCompletionPending = false
     private var archiveBackfillBlockedByCooldown = false
     private var storageCleanupInProgress = false
-    private val pendingArchiveSavesByKey = mutableMapOf<String, ClipboardLinkArchive>()
-    private var scheduledArchiveSaveJob: Job? = null
+    private val pendingArchiveSaves = ClipboardArchiveSaveQueue()
 
     private val screenshotHelper = ScreenshotHelper(
         context = context,
@@ -1821,7 +1842,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         }
     }
 
-    private fun createOrUpdateArchive(
+    private suspend fun createOrUpdateArchive(
         manifest: ClipboardLinkPreviewManifest,
         now: Long
     ): ClipboardLinkArchive? {
@@ -1836,6 +1857,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         ) ?: return null
         linkArchives[updated.key] = updated
         queueArchiveSave(updated)
+        flushArchiveSave(updated.key)
         manifest.referencedManifests.forEach { referencedManifest ->
             val referencedArchive = createOrUpdateArchive(referencedManifest, now)
             if(referencedArchive?.hasAutoDownloadableMedia() == true) {
@@ -1875,6 +1897,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         }
         linkArchives[archive.key] = archive
         queueArchiveSave(archive)
+        flushArchiveSave(archive.key)
         return archive
     }
 
@@ -2144,6 +2167,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
                 )
                 updateEntriesPreviewFromArchive(text, archive, attemptedAt)
                 queueArchiveSave(archive)
+                flushArchiveSave(archive.key)
                 if(event is ClipboardArchiveEvent.MediaDownloadSaved &&
                     context.getSetting(ClipboardImageTaggingEnabled)
                 ) {
@@ -2280,20 +2304,10 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         archive: ClipboardLinkArchive,
         delayMillis: Long = 350L
     ) {
-        val job = coroutineScope.launch {
+        if(!pendingArchiveSaves.enqueue(archive)) return
+        coroutineScope.launch {
             delay(delayMillis)
             flushPendingArchiveSavesOnIo()
-            synchronized(archiveSaveLock) {
-                if(scheduledArchiveSaveJob == coroutineContext[Job]) {
-                    scheduledArchiveSaveJob = null
-                }
-            }
-        }
-
-        synchronized(archiveSaveLock) {
-            pendingArchiveSavesByKey[archive.key] = archive
-            scheduledArchiveSaveJob?.cancel()
-            scheduledArchiveSaveJob = job
         }
     }
 
@@ -2309,16 +2323,10 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     }
 
     private fun drainPendingArchiveSave(archiveKey: String): ClipboardLinkArchive? =
-        synchronized(archiveSaveLock) {
-            pendingArchiveSavesByKey.remove(archiveKey)
-        }
+        pendingArchiveSaves.remove(archiveKey)
 
     private suspend fun flushPendingArchiveSavesOnIo() {
-        val archives = synchronized(archiveSaveLock) {
-            pendingArchiveSavesByKey.values.toList().also {
-                pendingArchiveSavesByKey.clear()
-            }
-        }
+        val archives = pendingArchiveSaves.drain()
         if(archives.isEmpty()) return
         withContext(NonCancellable + ClipboardIOContext) {
             archives.forEach(::saveArchive)
