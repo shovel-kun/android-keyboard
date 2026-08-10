@@ -195,15 +195,20 @@ internal fun sortedClipboardArchives(
     sortMode: ClipboardArchiveSortMode,
     sortDirection: ClipboardArchiveSortDirection = ClipboardArchiveSortDirection.Descending
 ): List<ClipboardLinkArchive> {
-    val clipDateByArchiveKey = entries.mapNotNull { entry ->
-        val key = entry.archiveBackfillKey() ?: return@mapNotNull null
-        key to entry.timestamp
-    }.groupingBy { it.first }.fold(0L) { newest, item ->
-        maxOf(newest, item.second)
-    }
+    val clipDateByArchiveKey = entries
+        .mapNotNull { entry -> entry.previewMetadata?.archiveKey()?.let { it to entry.timestamp } }
+        .groupingBy { it.first }
+        .fold(0L) { newest, item -> maxOf(newest, item.second) }
+    val clipDateByText = entries
+        .mapNotNull { entry -> entry.text?.let { it to entry.timestamp } }
+        .groupingBy { it.first }
+        .fold(0L) { newest, item -> maxOf(newest, item.second) }
 
     fun clipDate(archive: ClipboardLinkArchive): Long =
-        clipDateByArchiveKey[archive.key] ?: archive.createdAtEpochMs
+        clipDateByArchiveKey[archive.key]
+            ?: clipDateByText[archive.sourceUrl]
+            ?: archive.metadata?.sourceUrl?.let(clipDateByText::get)
+            ?: archive.createdAtEpochMs
 
     fun stableDateComparator(primaryDate: (ClipboardLinkArchive) -> Long): Comparator<ClipboardLinkArchive> =
         compareByDescending<ClipboardLinkArchive>(primaryDate)

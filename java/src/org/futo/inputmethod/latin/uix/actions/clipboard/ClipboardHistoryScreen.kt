@@ -52,6 +52,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.futo.inputmethod.latin.R
@@ -84,6 +85,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val archiveSortDirection = ClipboardArchiveSortDirection.fromStoredValue(archiveSortDirectionSetting.value)
 
     val query = remember { mutableStateOf("") }
+    var debouncedQuery by remember { mutableStateOf("") }
     var activeFilter by remember { mutableStateOf(ClipboardHistoryFilter.All) }
     var activeMode by remember { mutableStateOf(ClipboardHistoryContentMode.Clips) }
     var archiveProviderFilter by remember { mutableStateOf(ClipboardArchiveProviderFilter.All) }
@@ -110,6 +112,11 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val archiveBackfillRemainingCount by manager.archiveBackfillRemainingCount
     val storageInventory by manager.clipboardStorageInventory
     val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(query.value) {
+        delay(150L)
+        debouncedQuery = query.value
+    }
 
     LaunchedEffect(uiState.shouldRefreshPreviews) {
         if(uiState.shouldRefreshPreviews) {
@@ -138,6 +145,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     }
     val archiveUiSnapshot by remember {
         derivedStateOf { manager.archiveUiSnapshot() }
+    }
+    val archiveActivitySnapshot by remember {
+        derivedStateOf { manager.archiveActivitySnapshot() }
     }
     val allArchives by remember(archiveSortMode, archiveSortDirection) {
         derivedStateOf {
@@ -197,14 +207,14 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val visibleEntries by remember {
         derivedStateOf {
             allEntries.filter {
-                activeFilter.matches(it) && it.matchesQuery(query.value)
+                activeFilter.matches(it) && it.matchesQuery(debouncedQuery)
             }
         }
     }
     val visibleArchives by remember {
         derivedStateOf {
             allArchives.filter {
-                it.matchesArchiveQuery(query.value) &&
+                it.matchesArchiveQuery(debouncedQuery) &&
                     it.matchesProviderFilter(archiveProviderFilter) &&
                     it.matchesStatusFilter(archiveStatusFilter) &&
                     it.matchesColorFilter(
@@ -216,15 +226,16 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     }
     val archivePreviewFilesByKey by remember {
         derivedStateOf {
+            val visibleArchiveKeys = visibleArchives.mapTo(mutableSetOf()) { it.key }
             archiveUiSnapshot.previewFilesByArchiveKey.filterKeys { key ->
-                visibleArchives.any { it.key == key }
+                key in visibleArchiveKeys
             }
         }
     }
     val archiveDownloadItems by remember {
         derivedStateOf {
             if(downloadsVisible) {
-                archiveUiSnapshot.downloadItems
+                manager.archiveDownloadItemsForUi()
             } else {
                 emptyList()
             }
@@ -251,8 +262,11 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val visibleKeySet by remember {
         derivedStateOf { visibleEntries.map { it.selectionKey() }.toSet() }
     }
+    val selectedKeySet by remember {
+        derivedStateOf { selectedKeys.toSet() }
+    }
     val selectedEntries by remember {
-        derivedStateOf { visibleEntries.filter { it.selectionKey() in selectedKeys } }
+        derivedStateOf { visibleEntries.filter { it.selectionKey() in selectedKeySet } }
     }
     val allVisibleSelected by remember {
         derivedStateOf { visibleEntries.isNotEmpty() && selectedEntries.size == visibleEntries.size }
@@ -287,7 +301,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         }
     }
 
-    LaunchedEffect(activeMode, activeFilter, archiveProviderFilter, archiveStatusFilter, archiveSortMode, archiveSortDirection, selectionMode, query.value, downloadsVisible) {
+    LaunchedEffect(activeMode, activeFilter, archiveProviderFilter, archiveStatusFilter, archiveSortMode, archiveSortDirection, selectionMode, debouncedQuery, downloadsVisible) {
         clipboardControlsVisible = true
     }
 
@@ -302,6 +316,14 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     }
     val previewArchive = previewArchiveKey?.let { key ->
         allArchives.firstOrNull { it.key == key }
+    }
+    val previewArchiveGalleryItems by remember {
+        derivedStateOf {
+            previewArchiveKey
+                ?.let { key -> allArchives.firstOrNull { it.key == key } }
+                ?.let(manager::archiveGalleryItems)
+                .orEmpty()
+        }
     }
 
     fun clearSelection() {
@@ -545,7 +567,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         }
                         if(activeMode == ClipboardHistoryContentMode.Archives && imageTaggingEnabled) {
                             ClipboardImageTaggingStatus(
-                                state = archiveUiSnapshot.imageTaggingState,
+                                state = archiveActivitySnapshot.imageTaggingState,
                                 eligibleCount = archiveUiSnapshot.imageTagEligibleCount,
                                 onTagExisting = manager::tagExistingArchiveImages
                             )
@@ -569,7 +591,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         activeFilter = activeFilter,
                         useSingleColumn = useSingleColumn,
                         selectionMode = selectionMode,
-                        selectedKeys = selectedKeys,
+                        selectedKeys = selectedKeySet,
                         manager = manager,
                         previewState = uiState.previewState,
                         onResetFilter = { activeFilter = ClipboardHistoryFilter.All },
@@ -588,8 +610,8 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         archiveBackfillInProgress = archiveBackfillInProgress,
                         archiveBackfillRemainingCount = archiveBackfillRemainingCount,
                         useSingleColumn = useSingleColumn,
-                        loadingArchiveKeys = archiveUiSnapshot.loadingArchiveKeys,
-                        progressByArchiveKey = archiveUiSnapshot.progressByArchiveKey,
+                        loadingArchiveKeys = archiveActivitySnapshot.loadingArchiveKeys,
+                        progressByArchiveKey = archiveActivitySnapshot.progressByArchiveKey,
                         onResetFilters = {
                             archiveProviderFilter = ClipboardArchiveProviderFilter.All
                             archiveStatusFilter = ClipboardArchiveStatusFilter.All
@@ -647,9 +669,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     previewArchive?.let { archive ->
         ClipboardArchiveGalleryDialog(
             archive = archive,
-            items = archiveUiSnapshot.galleryItemsByArchiveKey[archive.key].orEmpty(),
-            loading = archive.key in archiveUiSnapshot.loadingArchiveKeys,
-            progress = archiveUiSnapshot.progressByArchiveKey[archive.key],
+            items = previewArchiveGalleryItems,
+            loading = archive.key in archiveActivitySnapshot.loadingArchiveKeys,
+            progress = archiveActivitySnapshot.progressByArchiveKey[archive.key],
             onDismiss = { previewArchiveKey = null },
             onRetry = { manager.retryArchive(archive) },
             onTagImage = { manager.tagArchiveMedia(archive.key, it.media.sourceIndex) },

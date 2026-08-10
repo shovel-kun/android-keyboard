@@ -52,8 +52,18 @@ import org.futo.inputmethod.latin.uix.theme.Typography
 import java.io.File
 
 private object ClipboardThumbCache {
-    val cache = LruCache<String, ImageBitmap>(128)
-    val latestByRequest = LruCache<String, ImageBitmap>(128)
+    private const val MaxCacheBytes = 16 * 1024 * 1024
+
+    private fun bitmapCache(): LruCache<String, ImageBitmap> =
+        object : LruCache<String, ImageBitmap>(MaxCacheBytes) {
+            override fun sizeOf(key: String, value: ImageBitmap): Int =
+                (value.width.toLong() * value.height * 4L)
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
+        }
+
+    val cache: LruCache<String, ImageBitmap> = bitmapCache()
+    val latestByRequest: LruCache<String, ImageBitmap> = bitmapCache()
 }
 
 private data class ClipboardBitmapSource(
@@ -275,6 +285,7 @@ fun ClipboardEntryView(
     val previewBitmaps = rememberClipboardBitmaps(
         imageFiles = imageFiles,
         bitmapOverrides = bitmapOverrides ?: bitmapOverride?.let { listOf(it) },
+        maxCount = 4,
         requestVersion = clipboardEntry
     )
 

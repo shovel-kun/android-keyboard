@@ -14,13 +14,17 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.common.Constants
 import org.futo.inputmethod.latin.uix.ActionHeaderSearch
@@ -106,6 +110,11 @@ internal fun ClipboardHistoryActionWindowContents(
     val context = LocalContext.current
     val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
     val uiState = rememberClipboardUiState(clipboardHistoryManager)
+    var debouncedSearchText by remember { mutableStateOf(searchText) }
+    LaunchedEffect(searchText) {
+        delay(150L)
+        debouncedSearchText = searchText
+    }
     val pixivPasteDomain = useDataStore(ClipboardPixivLinkPasteDomain)
     val phixivPasteSession = remember(pixivPasteDomain.value) {
         PhixivArtworkPasteSession(pixivPasteDomain.value)
@@ -209,8 +218,8 @@ internal fun ClipboardHistoryActionWindowContents(
                 useDataStoreValue(ClipboardShowPinnedOnTop) -> clipboardHistoryManager.clipboardHistory.sortedBy { it.pinned }
                 else -> clipboardHistoryManager.clipboardHistory
             }
-            val displayedList = sortedList.filter { it.matchesQuery(searchText) }
-            if(displayedList.isEmpty() && searchText.isNotBlank() && sortedList.isNotEmpty()) {
+            val displayedList = sortedList.filter { it.matchesQuery(debouncedSearchText) }
+            if(displayedList.isEmpty() && debouncedSearchText.isNotBlank() && sortedList.isNotEmpty()) {
                 ScrollableList {
                     PaymentSurface(isPrimary = true) {
                         ParagraphText(stringResource(R.string.action_clipboard_manager_no_clips_found))

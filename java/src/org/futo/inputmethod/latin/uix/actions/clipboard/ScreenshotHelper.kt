@@ -18,6 +18,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.futo.inputmethod.latin.uix.actions.throwIfDebug
 import org.futo.inputmethod.latin.uix.getSetting
@@ -51,6 +53,7 @@ class ScreenshotHelper(
     private val contentResolver = context.contentResolver
     private var lastSeenId: Long = -1L
     private var observer: ContentObserver? = null
+    private val scanMutex = Mutex()
 
     private val settingsObservingJob = lifecycleScope.launch {
         combine(
@@ -117,7 +120,11 @@ class ScreenshotHelper(
         settingsObservingJob.cancel()
     }
 
-    private suspend fun handleNewScreenshot(dry: Boolean = false) = withContext(Dispatchers.IO) {
+    private suspend fun handleNewScreenshot(dry: Boolean = false) = scanMutex.withLock {
+        handleNewScreenshotLocked(dry)
+    }
+
+    private suspend fun handleNewScreenshotLocked(dry: Boolean) = withContext(Dispatchers.IO) {
         if(Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return@withContext
         if(!context.getSetting(ClipboardHistoryEnabled)) return@withContext
         if(context.getSetting(ClipboardIncognitoMode)) return@withContext

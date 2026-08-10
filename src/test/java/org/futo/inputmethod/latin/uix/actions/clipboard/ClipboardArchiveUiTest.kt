@@ -393,14 +393,7 @@ class ClipboardArchiveUiTest {
             val snapshot = clipboardArchiveUiSnapshot(
                 archives = archives,
                 clipboardDir = clipboardDir,
-                storageFileNames = fileNames,
-                downloadState = ClipboardArchiveDownloadStateSnapshot(
-                    progressByArchiveKey = emptyMap(),
-                    queuedSourceUrlsByArchiveKey = emptyMap(),
-                    cooldownsByProvider = emptyMap(),
-                    activeArchiveKeys = emptySet()
-                ),
-                loadingArchiveKeys = emptySet()
+                storageFileNames = fileNames
             )
 
             archives.clear()
@@ -408,7 +401,6 @@ class ClipboardArchiveUiTest {
 
             assertEquals(listOf(archive.key), snapshot.archives.map { it.key })
             assertEquals("saved.jpg", snapshot.previewFilesByArchiveKey[archive.key]?.single()?.name)
-            assertTrue(snapshot.galleryItemsByArchiveKey[archive.key]?.single()?.isShareable == true)
             assertFalse(File(clipboardDir, "saved.jpg").exists())
         } finally {
             clipboardDir.deleteRecursively()

@@ -13,6 +13,7 @@ import androidx.core.net.toUri
 import org.futo.inputmethod.latin.BuildConfig
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 
 val CLIPBOARD_AUTHORITY = BuildConfig.APPLICATION_ID + ".clipboard"
@@ -30,17 +31,18 @@ data class ClipboardPasteRequest(
 )
 
 object ClipboardProviderState {
-    val requests: HashMap<UUID, ClipboardPasteRequest> = HashMap()
+    private val requests = ConcurrentHashMap<UUID, ClipboardPasteRequest>()
 
     fun addRequest(request: ClipboardPasteRequest): UUID {
+        val now = System.currentTimeMillis()
+        requests.entries.removeIf { it.value.expiration < now }
         val uuid = UUID.randomUUID()
-        requests.put(uuid, request)
+        requests[uuid] = request
         return uuid
     }
 
     fun fulfillRequest(context: Context, uuid: UUID): ParcelFileDescriptor? {
-        val request = requests[uuid] ?: throw IllegalArgumentException("Invalid request")
-        if(System.currentTimeMillis() > request.expiration) throw IllegalArgumentException("Invalid request")
+        val request = getRequest(context, uuid)
 
         val file = request.file
 
@@ -49,14 +51,15 @@ object ClipboardProviderState {
     }
 
     fun getMimeType(context: Context, uuid: UUID): String {
-        val request = requests[uuid] ?: throw IllegalArgumentException("Invalid request")
-
-        return request.mimeType
+        return getRequest(context, uuid).mimeType
     }
 
     fun getRequest(context: Context, uuid: UUID): ClipboardPasteRequest {
         val request = requests[uuid] ?: throw IllegalArgumentException("Invalid request")
-        if(System.currentTimeMillis() > request.expiration) throw IllegalArgumentException("Invalid request")
+        if(System.currentTimeMillis() > request.expiration) {
+            requests.remove(uuid, request)
+            throw IllegalArgumentException("Invalid request")
+        }
 
         return request
     }

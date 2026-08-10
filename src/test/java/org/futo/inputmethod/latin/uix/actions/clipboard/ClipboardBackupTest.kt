@@ -17,6 +17,20 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
     @Test
+    fun clipboardSaveQueueMergesPendingRequestsAndPreservesReconciliation() {
+        val queue = ClipboardSaveRequestQueue()
+
+        queue.enqueue(reconcileBeforeSave = false)
+        queue.enqueue(reconcileBeforeSave = true)
+
+        assertTrue(queue.take() == true)
+        assertNull(queue.take())
+
+        queue.enqueue(reconcileBeforeSave = false)
+        assertTrue(queue.take() == false)
+    }
+
+    @Test
     fun pinMutationJournal_replaysChangesUntilMatchingClipboardSaveCompletes() {
         val root = createTempDirectory().toFile()
         try {

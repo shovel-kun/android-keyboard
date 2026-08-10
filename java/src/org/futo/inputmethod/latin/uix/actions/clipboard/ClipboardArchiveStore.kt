@@ -167,6 +167,9 @@ internal class ClipboardArchiveStore(
     ): ClipboardStorageInventory {
         val mediaFiles = listOf(mediaDir, legacyArchiveMediaDir)
             .flatMap { it.listFiles()?.filter(File::isFile).orEmpty() }
+        val mediaBytesByFileName = mediaFiles
+            .groupingBy(File::getName)
+            .fold(0L) { bytes, file -> bytes + file.length() }
         val clipboardFileNames = referencedClipboardFileNames(entries)
         val archiveFileNames = referencedClipboardArchiveFileNames(archives)
         val referencedFileNames = clipboardFileNames + archiveFileNames
@@ -195,7 +198,7 @@ internal class ClipboardArchiveStore(
             mediaFileNames = mediaFiles.map(File::getName).toSet(),
             archiveBytesByKey = archives.associate { archive ->
                 val fileNames = referencedClipboardArchiveFileNames(listOf(archive))
-                archive.key to mediaFiles.filter { it.name in fileNames }.sumOf(File::length)
+                archive.key to fileNames.sumOf { mediaBytesByFileName[it] ?: 0L }
             }
         )
     }

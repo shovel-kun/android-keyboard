@@ -868,7 +868,7 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
-    fun archiveBackfillRequests_stayUnboundedWhenStartupPreviewFetchIsBounded() {
+    fun automaticPreviewAndArchiveBackfillRequestsAreBothBounded() {
         val ids = (101..110).toList()
         val entries = ids.mapIndexed { index, id ->
             samplePixivEntry().copy(
@@ -887,10 +887,11 @@ class ClipboardArchiveBackfillTest {
 
         assertEquals(3, startupPreviewFetchTexts(entries = previewFetchEntries, limit = 3).size)
         assertEquals(
-            ids.map { "pixiv:$it" },
+            ids.take(3).map { "pixiv:$it" },
             archiveBackfillRequests(
                 entries = entries,
-                existingArchiveKeys = emptySet()
+                existingArchiveKeys = emptySet(),
+                limit = 3
             ).map { it.archiveKey }
         )
     }
