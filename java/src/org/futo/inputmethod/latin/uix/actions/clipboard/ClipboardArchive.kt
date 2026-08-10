@@ -331,14 +331,30 @@ fun referencedClipboardArchiveFileNames(archives: Collection<ClipboardLinkArchiv
         .toSet()
 
 fun existingClipboardMediaFileNames(clipboardDir: File, legacyArchiveDir: File? = null): Set<String> =
-    listOfNotNull(clipboardDir, legacyArchiveDir)
-        .flatMap { dir ->
-            dir.listFiles()
-                ?.filter { it.isFile }
-                ?.map { it.name }
-                .orEmpty()
+    buildSet {
+        listOfNotNull(clipboardDir, legacyArchiveDir).forEach { dir ->
+            dir.list()?.forEach { name ->
+                if(File(dir, name).isFile) add(name)
+            }
         }
-        .toSet()
+    }
+
+fun existingReferencedClipboardArchiveFileNames(
+    archives: Collection<ClipboardLinkArchive>,
+    clipboardDir: File,
+    legacyArchiveDir: File? = null
+): Set<String> = buildSet {
+    archives.forEach { archive ->
+        archive.media.forEach mediaLoop@ { media ->
+            val fileName = media.fileName ?: return@mediaLoop
+            if(File(clipboardDir, fileName).isFile ||
+                legacyArchiveDir?.let { File(it, fileName).isFile } == true
+            ) {
+                add(fileName)
+            }
+        }
+    }
+}
 
 fun clipboardMediaFile(clipboardDir: File, fileName: String): File? =
     File(clipboardDir, fileName).takeIf { it.isFile }
@@ -375,7 +391,11 @@ fun reconcileClipboardArchivesWithStorage(
     legacyArchiveDir: File? = null,
     now: Long = System.currentTimeMillis()
 ): List<ClipboardLinkArchive> {
-    val existingFileNames = existingClipboardMediaFileNames(clipboardDir, legacyArchiveDir)
+    val existingFileNames = existingReferencedClipboardArchiveFileNames(
+        archives,
+        clipboardDir,
+        legacyArchiveDir
+    )
     return archives.mapNotNull {
         reduceArchive(it, ClipboardArchiveEvent.DiskReconciled(existingFileNames, now))
     }

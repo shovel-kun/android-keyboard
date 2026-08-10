@@ -75,6 +75,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -1020,12 +1021,17 @@ class UixManager(private val latinIME: LatinIME) {
 
     @Composable
     private fun OffsetPositioner(offset: Offset, content: @Composable () -> Unit) {
-        Column(modifier = Modifier
-            .fillMaxHeight()
-            .absoluteOffset { IntOffset(offset.x.toInt(), 0) }) {
-            Spacer(Modifier.weight(1.0f))
-            content()
-            Spacer(Modifier.height(with(LocalDensity.current) { offset.y.toDp() }))
+        Box(modifier = Modifier.fillMaxHeight()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .graphicsLayer {
+                        translationX = offset.x
+                        translationY = -offset.y
+                    }
+            ) {
+                content()
+            }
         }
     }
 

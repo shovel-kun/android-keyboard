@@ -1155,11 +1155,18 @@ class ClipboardHistoryManager private constructor(
         return updated
     }
 
-    private fun scanArchiveFileNames(): Set<String> =
-        existingClipboardMediaFileNames(context.clipboardDir, context.clipboardArchiveDir)
+    private fun scanArchiveFileNames(archives: Collection<ClipboardLinkArchive>): Set<String> =
+        existingReferencedClipboardArchiveFileNames(
+            archives,
+            context.clipboardDir,
+            context.clipboardArchiveDir
+        )
 
     private suspend fun refreshArchiveFileNames(): Set<String> {
-        return refreshClipboardStorageInventory().mediaFileNames
+        val archives = withContext(Dispatchers.Main) { linkArchives.values.toList() }
+        val fileNames = withContext(ClipboardIOContext) { scanArchiveFileNames(archives) }
+        withContext(Dispatchers.Main) { applyArchiveFileNames(fileNames) }
+        return fileNames
     }
 
     private fun applyArchiveFileNames(fileNames: Set<String>) {
@@ -1606,7 +1613,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
                 archives = storedArchives.archives,
                 deletedArchiveKeys = tombstoneKeys
             )
-            val archiveFileNames = scanArchiveFileNames()
+            val archiveFileNames = scanArchiveFileNames(loadedArchives)
 
             publishClipboardLoaded(
                 activeEntries,

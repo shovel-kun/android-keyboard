@@ -33,6 +33,34 @@ class ClipboardBackupTest {
     }
 
     @Test
+    fun reconcileClipboardArchivesWithStorage_doesNotListEveryStoredFile() {
+        val root = createTempDirectory().toFile()
+        try {
+            File(root, "one.jpg").writeText("one")
+            File(root, "two.png").writeText("two")
+            val directory = object : File(root.path) {
+                override fun listFiles(): Array<File> =
+                    throw AssertionError("listFiles materializes every File in the directory")
+            }
+
+            val archive = sampleArchive(
+                media = listOf(savedArchiveMedia("one.jpg", sourceIndex = 0))
+            )
+
+            assertEquals(
+                ClipboardArchiveMediaStatus.Saved,
+                reconcileClipboardArchivesWithStorage(listOf(archive), directory)
+                    .single()
+                    .media
+                    .single()
+                    .status
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun backupCompressionLevel_skipsCompressionForCompressedFileTypes() {
         listOf(
             "archive.JPG",
