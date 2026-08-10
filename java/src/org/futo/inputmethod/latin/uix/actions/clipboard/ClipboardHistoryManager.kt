@@ -36,6 +36,7 @@ import org.futo.inputmethod.latin.uix.isDirectBootUnlocked
 import org.futo.inputmethod.latin.uix.setSetting
 import android.webkit.MimeTypeMap
 import java.io.File
+import java.io.FileOutputStream
 import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 
@@ -45,6 +46,7 @@ private val ClipboardIOContext = Dispatchers.IO.limitedParallelism(1)
 private val ClipboardPreviewFetchContext = Dispatchers.IO.limitedParallelism(3)
 private const val ClipboardStoredMediaMaxBytes = 50L * 1024L * 1024L
 private const val ClipboardStartupPreviewFetchLimit = 8
+private const val ClipboardArchiveResumeConcurrency = 3
 
 private data class ClipboardPreviewFetchRequest(
     val text: String,
@@ -155,6 +157,101 @@ internal fun replaceFileWithBackup(
         throw Exception("Failed to swap new file")
     }
 }
+
+private const val ClipboardPinMutationJournalName = "clipboard-pin-mutations"
+
+private data class ClipboardPinMutationState(
+    val revision: Long,
+    val pinnedByKeyHash: Map<String, Boolean>
+)
+
+internal class ClipboardPinMutationJournal(private val filesDir: File) {
+    private val file = File(filesDir, ClipboardPinMutationJournalName)
+    private val backupFile = File(filesDir, "$ClipboardPinMutationJournalName.bak")
+    private val swapFile = File(filesDir, "$ClipboardPinMutationJournalName.swap")
+    private var state = readStateFromDisk()
+
+    @Synchronized
+    fun record(entries: Collection<ClipboardEntry>, pinned: Boolean): Long {
+        val current = state ?: ClipboardPinMutationState(0L, emptyMap())
+        val updated = current.pinnedByKeyHash.toMutableMap()
+        entries.forEach { updated[it.pinMutationKeyHash()] = pinned }
+        val nextState = ClipboardPinMutationState(current.revision + 1L, updated)
+        writeState(nextState)
+        state = nextState
+        return nextState.revision
+    }
+
+    @Synchronized
+    fun apply(entries: List<ClipboardEntry>): List<ClipboardEntry> {
+        val mutations = state?.pinnedByKeyHash ?: return entries
+        return entries.map { entry ->
+            mutations[entry.pinMutationKeyHash()]?.let { pinned ->
+                if(entry.pinned == pinned) entry else entry.copy(pinned = pinned)
+            } ?: entry
+        }
+    }
+
+    @Synchronized
+    fun revision(): Long = state?.revision ?: 0L
+
+    @Synchronized
+    fun clearIfRevision(revision: Long) {
+        if(state?.revision != revision) return
+        file.delete()
+        backupFile.delete()
+        swapFile.delete()
+        state = null
+    }
+
+    private fun readStateFromDisk(): ClipboardPinMutationState? =
+        listOf(swapFile, file, backupFile)
+            .firstNotNullOfOrNull { candidate ->
+                candidate.takeIf(File::isFile)?.readText()?.decodePinMutationState()
+            }
+
+    private fun writeState(state: ClipboardPinMutationState) {
+        val encoded = buildString {
+            append("v1\t")
+            append(state.revision)
+            append('\n')
+            state.pinnedByKeyHash.toSortedMap().forEach { (keyHash, pinned) ->
+                append(keyHash)
+                append('\t')
+                append(if(pinned) '1' else '0')
+                append('\n')
+            }
+        }
+        FileOutputStream(swapFile).use { output ->
+            output.write(encoded.toByteArray())
+            output.fd.sync()
+        }
+        replaceFileWithBackup(swapFile, file, backupFile)
+    }
+}
+
+private fun String.decodePinMutationState(): ClipboardPinMutationState? {
+    val lines = lineSequence().filter(String::isNotBlank).toList()
+    val header = lines.firstOrNull()?.split('\t') ?: return null
+    if(header.size != 2 || header[0] != "v1") return null
+    val revision = header[1].toLongOrNull() ?: return null
+    val mutations = lines.drop(1).associate { line ->
+        val fields = line.split('\t')
+        if(fields.size != 2 || fields[0].length != 64) return null
+        val pinned = when(fields[1]) {
+            "1" -> true
+            "0" -> false
+            else -> return null
+        }
+        fields[0] to pinned
+    }
+    return ClipboardPinMutationState(revision, mutations)
+}
+
+private fun ClipboardEntry.pinMutationKeyHash(): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(selectionKey().toByteArray())
+        .joinToString("") { "%02x".format(it) }
 
 internal fun ClipboardEntry.archiveBackfillMetadata(): ClipboardPreviewMetadata? {
     val text = text ?: return null
@@ -379,6 +476,7 @@ class ClipboardHistoryManager private constructor(
     private val clipboardFile = context.clipboardFile
     private val clipboardFileBak = File(context.filesDir, "$ClipboardFileName.bak")
     private val clipboardFileSwap = File(context.filesDir, "$ClipboardFileName.swap")
+    private val pinMutationJournal = ClipboardPinMutationJournal(context.filesDir)
     private val archiveStore = ClipboardArchiveStore(context.filesDir)
     private val archiveSaveLock = Any()
 
@@ -392,6 +490,7 @@ class ClipboardHistoryManager private constructor(
     private var archiveBackfillBlockedByCooldown = false
     private var storageCleanupInProgress = false
     private val pendingArchiveSaves = ClipboardArchiveSaveQueue()
+    private val archiveResumeQueue = ClipboardArchiveResumeQueue(ClipboardArchiveResumeConcurrency)
 
     private val screenshotHelper = ScreenshotHelper(
         context = context,
@@ -679,8 +778,9 @@ class ClipboardHistoryManager private constructor(
             try {
                 if(reconcileBeforeSave) reconcileClipboardStorage()
 
-                val list = withContext(Dispatchers.Main) {
-                    clipboardHistory.map { it.copy(deletedArchiveKeys = emptySet()) }
+                val (list, pinMutationRevision) = withContext(Dispatchers.Main) {
+                    clipboardHistory.map { it.copy(deletedArchiveKeys = emptySet()) } to
+                        pinMutationJournal.revision()
                 }
                 val encoded = encodeClipboardEntries(list)
                 val normalizedList = decodeClipboardEntries(encoded)
@@ -700,6 +800,8 @@ class ClipboardHistoryManager private constructor(
                 if(decodeFile(clipboardFile) != normalizedList) {
                     throw Exception("Saved file data does not match expected data")
                 }
+
+                pinMutationJournal.clearIfRevision(pinMutationRevision)
 
                 clipboardIOFailure.value = false
             } catch (e: Exception) {
@@ -886,16 +988,38 @@ class ClipboardHistoryManager private constructor(
         if(!canRunAutomaticClipboardNetworkDownloads()) return
         coroutineScope.launch {
             val existingArchiveFileNames = refreshArchiveFileNames()
-            val archiveKeys = providerArchiveDownloadResumeKeys(
-                archives = linkArchives.values.toList(),
-                existingArchiveFileNames = existingArchiveFileNames,
-                isRetryBlocked = ::isArchiveRetryBlockedByCooldown
-            )
-            archiveKeys.forEach { archiveKey ->
-                linkArchives[archiveKey]?.let {
-                    updateArchiveWithCurrentStorageState(it, existingArchiveFileNames)
+            val archives = linkArchives.values.toList()
+            val blockedProviders = archives
+                .map { it.provider }
+                .distinct()
+                .filter { providerCooldown(it) != null }
+                .toSet()
+            val archiveKeys = withContext(Dispatchers.Default) {
+                providerArchiveDownloadResumeKeys(
+                    archives = archives,
+                    existingArchiveFileNames = existingArchiveFileNames,
+                    isRetryBlocked = { it.provider in blockedProviders }
+                )
+            }
+            archiveResumeQueue.enqueue(archiveKeys)
+            launchPendingProviderArchiveDownloads()
+        }
+    }
+
+    private fun launchPendingProviderArchiveDownloads() {
+        archiveResumeQueue.takeAvailable { archiveKey ->
+            linkArchives[archiveKey]?.let { archive ->
+                !isArchiveDownloadActive(archiveKey) && !isArchiveRetryBlockedByCooldown(archive)
+            } == true
+        }.forEach { archiveKey ->
+            launchArchiveDownload(
+                archiveKey = archiveKey,
+                onFinished = {
+                    archiveResumeQueue.finished(archiveKey)
+                    launchPendingProviderArchiveDownloads()
                 }
-                startArchiveDownload(text = null, archiveKey = archiveKey)
+            ) {
+                downloadArchiveMedia(text = null, archiveKey = archiveKey)
             }
         }
     }
@@ -1002,7 +1126,8 @@ class ClipboardHistoryManager private constructor(
     }
 
     internal fun hasActiveArchiveDownloads(): Boolean =
-        archiveDownloadCoordinator.snapshot().activeArchiveKeys.isNotEmpty() ||
+        archiveResumeQueue.hasPendingOrActive() ||
+            archiveDownloadCoordinator.snapshot().activeArchiveKeys.isNotEmpty() ||
             previewLoadingByText.keys.any { it in linkArchives }
 
     internal suspend fun refreshClipboardStorageInventory(): ClipboardStorageInventory {
@@ -1369,6 +1494,7 @@ class ClipboardHistoryManager private constructor(
 
     private fun cancelArchiveDownloadState(archiveKey: String) {
         previewLoadingByText.remove(archiveKey)
+        archiveResumeQueue.remove(archiveKey)
         archiveDownloadCoordinator.cancel(archiveKey)
     }
 
@@ -1380,6 +1506,12 @@ class ClipboardHistoryManager private constructor(
     }
 
     fun onTogglePin(item: ClipboardEntry) {
+        val pinned = !item.pinned
+        val updatedItem = item.copy(
+            pinned = pinned,
+            timestamp = System.currentTimeMillis()
+        )
+        pinMutationJournal.record(listOf(item, updatedItem), pinned)
         val itemPos = clipboardHistory.indexOf(item).coerceAtLeast(0)
         val targetPos = if(context.getSetting(ClipboardShowPinnedOnTop)) {
             clipboardHistory.size - 1
@@ -1392,14 +1524,11 @@ class ClipboardHistoryManager private constructor(
                 removeAll { it == item }
                 add(
                     targetPos.coerceIn(0, size),
-                    item.copy(
-                        pinned = !item.pinned,
-                        timestamp = System.currentTimeMillis()
-                    )
+                    updatedItem
                 )
             }
         )
-        saveClipboard(reconcileBeforeSave = true)
+        saveClipboard(reconcileBeforeSave = false)
     }
 
     fun onRemove(item: ClipboardEntry) {
@@ -1429,7 +1558,7 @@ class ClipboardHistoryManager private constructor(
         if(items.isEmpty()) return
 
         val now = System.currentTimeMillis()
-        applyEntryMutations(items) { entry ->
+        fun updated(entry: ClipboardEntry): ClipboardEntry =
             if(entry.pinned == pinned) {
                 entry
             } else {
@@ -1438,6 +1567,12 @@ class ClipboardHistoryManager private constructor(
                     timestamp = now
                 )
             }
+
+        val itemKeys = items.map { it.selectionKey() }.toSet()
+        val affectedEntries = clipboardHistory.filter { it.selectionKey() in itemKeys }
+        pinMutationJournal.record(affectedEntries.flatMap { listOf(it, updated(it)) }, pinned)
+        applyEntryMutations(items, reconcileBeforeSave = false) { entry ->
+            updated(entry)
         }
     }
 
@@ -1608,7 +1743,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             }
 
             val tombstoneKeys = archiveTombstoneKeys(migratedTombstones)
-            val activeEntries = clearEntryArchiveTombstones(loadedEntries)
+            val activeEntries = pinMutationJournal.apply(clearEntryArchiveTombstones(loadedEntries))
             val loadedArchives = filterDeletedClipboardArchives(
                 archives = storedArchives.archives,
                 deletedArchiveKeys = tombstoneKeys
@@ -1795,6 +1930,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
 
     private fun applyEntryMutations(
         items: Collection<ClipboardEntry>,
+        reconcileBeforeSave: Boolean = true,
         transform: (ClipboardEntry) -> ClipboardEntry?
     ) {
         val itemKeys = items.map { it.selectionKey() }.toSet()
@@ -1809,7 +1945,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         }
 
         replaceEntries(updatedEntries)
-        saveClipboard()
+        saveClipboard(reconcileBeforeSave = reconcileBeforeSave)
     }
 
     private fun archiveKeysOnlyReferencedBy(items: Collection<ClipboardEntry>): List<String> {
@@ -1981,16 +2117,18 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
 
     private fun launchArchiveDownload(
         archiveKey: String,
+        onFinished: suspend () -> Unit = {},
         block: suspend () -> Unit
-    ) {
-        if(isArchiveDownloadActive(archiveKey)) return
-        archiveDownloadCoordinator.launch(
+    ): Job? {
+        if(isArchiveDownloadActive(archiveKey)) return null
+        return archiveDownloadCoordinator.launch(
             archiveKey = archiveKey,
             block = { withArchiveLoading(archiveKey, block) },
             onFinished = {
                 flushArchiveSave(archiveKey)
                 flushPreviewSave(reconcileBeforeSave = false)
                 launchQueuedArchiveDownloadIfNeeded(archiveKey)
+                onFinished()
             }
         )
     }

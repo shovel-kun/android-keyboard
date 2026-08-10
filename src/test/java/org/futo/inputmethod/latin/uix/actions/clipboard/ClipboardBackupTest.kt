@@ -17,6 +17,33 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
     @Test
+    fun pinMutationJournal_replaysChangesUntilMatchingClipboardSaveCompletes() {
+        val root = createTempDirectory().toFile()
+        try {
+            val entry = ClipboardEntry(
+                timestamp = 1L,
+                pinned = true,
+                text = null,
+                uri = null,
+                mimeTypes = listOf("image/png"),
+                backingFile = "restored.png"
+            )
+            val journal = ClipboardPinMutationJournal(root)
+
+            val unpinRevision = journal.record(listOf(entry), pinned = false)
+            assertFalse(journal.apply(listOf(entry)).single().pinned)
+
+            journal.clearIfRevision(unpinRevision - 1L)
+            assertFalse(journal.apply(listOf(entry)).single().pinned)
+
+            journal.clearIfRevision(unpinRevision)
+            assertTrue(journal.apply(listOf(entry)).single().pinned)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun archiveSaveQueue_continuousUpdatesKeepFirstFlushAndLatestState() {
         val queue = ClipboardArchiveSaveQueue()
         val initial = sampleArchive(media = emptyList())

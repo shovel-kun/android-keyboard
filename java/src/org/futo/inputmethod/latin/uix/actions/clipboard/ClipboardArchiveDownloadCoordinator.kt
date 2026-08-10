@@ -13,6 +13,42 @@ internal data class ClipboardArchiveDownloadStateSnapshot(
     val activeArchiveKeys: Set<String>
 )
 
+internal class ClipboardArchiveResumeQueue(private val maxConcurrent: Int) {
+    private val pendingArchiveKeys = linkedSetOf<String>()
+    private val activeArchiveKeys = mutableSetOf<String>()
+
+    init {
+        require(maxConcurrent > 0)
+    }
+
+    fun enqueue(archiveKeys: Collection<String>) {
+        archiveKeys.filterNot { it in activeArchiveKeys }.forEach(pendingArchiveKeys::add)
+    }
+
+    fun takeAvailable(isEligible: (String) -> Boolean = { true }): List<String> = buildList {
+        val iterator = pendingArchiveKeys.iterator()
+        while(activeArchiveKeys.size < maxConcurrent && iterator.hasNext()) {
+            val archiveKey = iterator.next()
+            iterator.remove()
+            if(!isEligible(archiveKey)) continue
+            activeArchiveKeys.add(archiveKey)
+            add(archiveKey)
+        }
+    }
+
+    fun finished(archiveKey: String) {
+        activeArchiveKeys.remove(archiveKey)
+    }
+
+    fun remove(archiveKey: String) {
+        pendingArchiveKeys.remove(archiveKey)
+        activeArchiveKeys.remove(archiveKey)
+    }
+
+    fun hasPendingOrActive(): Boolean =
+        pendingArchiveKeys.isNotEmpty() || activeArchiveKeys.isNotEmpty()
+}
+
 internal class ClipboardArchiveDownloadCoordinator(
     private val scope: CoroutineScope,
     private val now: () -> Long = System::currentTimeMillis

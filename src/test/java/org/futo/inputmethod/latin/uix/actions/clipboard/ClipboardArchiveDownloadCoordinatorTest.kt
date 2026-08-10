@@ -15,6 +15,23 @@ import org.junit.Test
 
 class ClipboardArchiveDownloadCoordinatorTest {
     @Test
+    fun startupResumeQueueBoundsConcurrentArchivesAndDrainsInOrder() {
+        val queue = ClipboardArchiveResumeQueue(maxConcurrent = 3)
+        queue.enqueue(listOf("one", "two", "three", "four", "five"))
+
+        assertEquals(listOf("one", "two", "three"), queue.takeAvailable())
+        assertEquals(emptyList<String>(), queue.takeAvailable())
+
+        queue.finished("two")
+        assertEquals(listOf("four"), queue.takeAvailable())
+
+        queue.finished("one")
+        queue.finished("three")
+        queue.finished("four")
+        assertEquals(listOf("five"), queue.takeAvailable())
+    }
+
+    @Test
     fun completedDownloadSerializesBeforeCodecReload() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         try {
