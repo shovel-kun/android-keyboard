@@ -12,6 +12,92 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardArchiveUiTest {
     @Test
+    fun clipMediaFilters_classifyFilesAndMixedEmbedsWithoutTreatingTextAsMedia() {
+        val text = sampleTwitterEntry("1", 1L)
+        assertTrue(ClipboardHistoryFilter.Text.matches(text))
+        assertTrue(ClipboardHistoryFilter.All.matches(text))
+        assertFalse(ClipboardHistoryFilter.Images.matches(text))
+        assertFalse(ClipboardHistoryFilter.Videos.matches(text))
+
+        val video = text.copy(text = null, backingFile = "clip.MP4", mimeTypes = emptyList())
+        assertTrue(ClipboardHistoryFilter.Videos.matches(video))
+        assertFalse(ClipboardHistoryFilter.Images.matches(video))
+        assertTrue(video.matchesQuery("videos"))
+
+        val typedVideo = video.copy(backingFile = "opaque", mimeTypes = listOf("video/webm"))
+        assertTrue(ClipboardHistoryFilter.Videos.matches(typedVideo))
+        assertFalse(ClipboardHistoryFilter.Images.matches(typedVideo))
+
+        val gif = video.copy(backingFile = "animation.gif", mimeTypes = listOf("image/*"))
+        assertTrue(ClipboardHistoryFilter.Gifs.matches(gif))
+        assertTrue(ClipboardHistoryFilter.Images.matches(gif))
+        assertFalse(ClipboardHistoryFilter.Videos.matches(gif))
+
+        val mixed = text.copy(
+            previewMediaFiles = listOf(
+                ClipboardPreviewMedia("photo.jpg"),
+                ClipboardPreviewMedia("movie", mimeType = "video/mp4")
+            )
+        )
+        assertTrue(ClipboardHistoryFilter.Images.matches(mixed))
+        assertTrue(ClipboardHistoryFilter.Videos.matches(mixed))
+        assertFalse(ClipboardHistoryFilter.Gifs.matches(mixed))
+        assertTrue(mixed.matchesQuery("videos"))
+        assertFalse(mixed.matchesQuery("gifs"))
+
+        val legacy = text.copy(previewImageFile = "legacy.gif")
+        assertTrue(ClipboardHistoryFilter.Gifs.matches(legacy))
+        assertTrue(ClipboardHistoryFilter.Pinned.matches(legacy.copy(pinned = true)))
+        val unknown = video.copy(backingFile = "document.pdf", mimeTypes = listOf("application/pdf"))
+        assertFalse(ClipboardHistoryFilter.Images.matches(unknown))
+        assertFalse(ClipboardHistoryFilter.Videos.matches(unknown))
+    }
+
+    @Test
+    fun archiveMediaFilters_matchKnownTypesBeforeDownloadAndComposeWithOtherFilters() {
+        val video = sampleArchive(
+            media = listOf(
+                savedArchiveMedia().copy(
+                    fileName = null,
+                    mimeType = "video/mp4",
+                    status = ClipboardArchiveMediaStatus.Pending
+                )
+            )
+        )
+        assertTrue(video.matchesMediaFilter(ClipboardMediaFilter.Videos))
+        assertFalse(video.matchesMediaFilter(ClipboardMediaFilter.Images))
+        assertTrue(
+            video.matchesMediaFilter(ClipboardMediaFilter.Videos) &&
+                video.matchesProviderFilter(ClipboardArchiveProviderFilter.Pixiv)
+        )
+        assertFalse(
+            video.matchesMediaFilter(ClipboardMediaFilter.Videos) &&
+                video.matchesProviderFilter(ClipboardArchiveProviderFilter.Twitter)
+        )
+
+        val gif = savedArchiveMedia().copy(
+            fileName = null,
+            sourceUrl = "https://example.com/animation.GIF?token=a.b#fragment"
+        )
+        val mixed = video.copy(media = video.media + gif)
+        assertTrue(mixed.matchesMediaFilter(ClipboardMediaFilter.Images))
+        assertTrue(mixed.matchesMediaFilter(ClipboardMediaFilter.Gifs))
+        assertTrue(mixed.matchesMediaFilter(ClipboardMediaFilter.Videos))
+        assertTrue(sampleArchive(emptyList()).matchesMediaFilter(ClipboardMediaFilter.All))
+        assertFalse(sampleArchive(emptyList()).matchesMediaFilter(ClipboardMediaFilter.Videos))
+    }
+
+    @Test
+    fun mediaClassification_prefersDeclaredTypeAndFallsBackForGenericMimeTypes() {
+        assertTrue(ClipboardMediaFilter.Videos.matches("VIDEO/MP4; codecs=avc1", "thumb.jpg"))
+        assertFalse(ClipboardMediaFilter.Images.matches("video/mp4", "thumb.jpg"))
+        assertTrue(ClipboardMediaFilter.Images.matches("application/octet-stream", "image.avif"))
+        assertTrue(ClipboardMediaFilter.Gifs.matches("image/gif", "opaque"))
+        assertFalse(ClipboardMediaFilter.Gifs.matches("image/png", "image.png"))
+        assertFalse(ClipboardMediaFilter.Videos.matches(null, "unknown"))
+    }
+
+    @Test
     fun archiveSearchMatchesAiTagsWithSpacesOrUnderscores() {
         val archive = sampleArchive(
             media = listOf(

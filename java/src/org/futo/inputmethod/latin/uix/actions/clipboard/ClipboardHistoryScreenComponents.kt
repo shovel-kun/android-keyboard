@@ -471,7 +471,17 @@ internal enum class ClipboardHistoryFilter(
     Images(
         labelRes = R.string.clipboard_history_filter_images,
         iconRes = R.drawable.image,
-        matches = { it.backingFile != null || it.previewMedia().isNotEmpty() }
+        matches = { it.matchesMediaFilter(ClipboardMediaFilter.Images) }
+    ),
+    Videos(
+        labelRes = R.string.clipboard_history_filter_videos,
+        iconRes = null,
+        matches = { it.matchesMediaFilter(ClipboardMediaFilter.Videos) }
+    ),
+    Gifs(
+        labelRes = R.string.clipboard_history_filter_gifs,
+        iconRes = null,
+        matches = { it.matchesMediaFilter(ClipboardMediaFilter.Gifs) }
     ),
     Pinned(
         labelRes = R.string.clipboard_history_filter_pinned,

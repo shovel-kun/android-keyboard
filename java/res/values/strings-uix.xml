@@ -142,7 +142,10 @@
     <string name="action_clipboard_manager_retry_preview">Retry preview</string>
     <string name="clipboard_history_filter_all">All</string>
     <string name="clipboard_history_filter_text">Text</string>
-    <string name="clipboard_history_filter_images">Media</string>
+    <string name="clipboard_history_filter_images">Images</string>
+    <string name="clipboard_history_filter_videos">Videos</string>
+    <string name="clipboard_history_filter_gifs">GIFs</string>
+    <string name="clipboard_history_archive_filter_media">Media type</string>
     <string name="clipboard_history_filter_pinned">Pinned</string>
     <string name="clipboard_history_search_placeholder">Search clipboard history</string>
     <string name="clipboard_history_clear_search">Clear search</string>

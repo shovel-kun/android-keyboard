@@ -9,6 +9,7 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import org.futo.inputmethod.latin.R
 import java.io.File
 import java.util.Locale
 
@@ -124,7 +125,7 @@ private val ClipboardGifExtensions = setOf("gif")
 private val ClipboardImageExtensions = setOf("png", "jpg", "jpeg", "webp", "bmp", "avif") + ClipboardGifExtensions
 
 private fun String.fileExtensionLowercase(): String =
-    substringAfterLast('.', "").substringBefore('?').lowercase(Locale.ROOT)
+    substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase(Locale.ROOT)
 
 fun String.guessedClipboardMimeType(): String? = when (fileExtensionLowercase()) {
     "png" -> "image/png"
@@ -285,17 +286,58 @@ fun String.toFNV1aHash(): Long {
 }
 
 private fun ClipboardEntry.searchTokens(): Set<String> = buildSet {
-    when {
-        backingFile != null && backingFile.isClipboardVideoFileName() ->
-            addAll(setOf("media", "video", "videos", "clip"))
-        backingFile != null && backingFile.isClipboardGifFileName() ->
-            addAll(setOf("media", "gif", "gifs", "image", "images"))
-        backingFile != null ->
-            addAll(setOf("media", "image", "images", "photo", "picture"))
-        text != null -> addAll(setOf("text", "link"))
+    if(text != null) addAll(setOf("text", "link"))
+    if(matchesMediaFilter(ClipboardMediaFilter.Images)) {
+        addAll(setOf("media", "image", "images", "photo", "picture"))
+    }
+    if(matchesMediaFilter(ClipboardMediaFilter.Videos)) {
+        addAll(setOf("media", "video", "videos", "clip"))
+    }
+    if(matchesMediaFilter(ClipboardMediaFilter.Gifs)) {
+        addAll(setOf("gif", "gifs"))
     }
 
     if(pinned) {
         addAll(setOf("pinned", "pin"))
     }
 }
+
+internal enum class ClipboardMediaFilter(val labelRes: Int) {
+    All(R.string.clipboard_history_filter_all),
+    Images(R.string.clipboard_history_filter_images),
+    Videos(R.string.clipboard_history_filter_videos),
+    Gifs(R.string.clipboard_history_filter_gifs);
+
+    fun matches(mimeType: String?, fileName: String?): Boolean {
+        if(this == All) return true
+        val declaredType = mimeType?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
+        val guessedType = fileName?.guessedClipboardMimeType()
+        val type = when (declaredType) {
+            null, "", "*/*", "application/octet-stream" -> guessedType
+            "image/*" -> guessedType?.takeIf { it.startsWith("image/") } ?: declaredType
+            else -> declaredType
+        }
+        return when (this) {
+            All -> true
+            Images -> type?.startsWith("image/") == true
+            Videos -> type?.startsWith("video/") == true
+            Gifs -> type == "image/gif"
+        }
+    }
+}
+
+internal fun ClipboardEntry.matchesMediaFilter(filter: ClipboardMediaFilter): Boolean {
+    if(filter == ClipboardMediaFilter.All) return true
+
+    val fileMatches = if(backingFile != null || uri != null) {
+        if(mimeTypes.isEmpty()) filter.matches(null, backingFile)
+        else mimeTypes.any { filter.matches(it, backingFile) }
+    } else {
+        false
+    }
+    return fileMatches || previewMedia().any { filter.matches(it.mimeType, it.fileName) }
+}
+
+internal fun ClipboardLinkArchive.matchesMediaFilter(filter: ClipboardMediaFilter): Boolean =
+    filter == ClipboardMediaFilter.All ||
+        media.any { filter.matches(it.mimeType, it.fileName ?: it.sourceUrl) }

@@ -758,11 +758,13 @@ internal fun ClipboardArchiveFilterButton(
 internal fun ClipboardArchiveFilterSheet(
     providerFilter: ClipboardArchiveProviderFilter,
     statusFilter: ClipboardArchiveStatusFilter,
+    mediaFilter: ClipboardMediaFilter,
     colorFilter: ClipboardArchiveColorFilter,
     sortMode: ClipboardArchiveSortMode,
     sortDirection: ClipboardArchiveSortDirection,
     onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit,
     onStatusFilterSelected: (ClipboardArchiveStatusFilter) -> Unit,
+    onMediaFilterSelected: (ClipboardMediaFilter) -> Unit,
     onColorFilterSelected: (ClipboardArchiveColorFilter) -> Unit,
     onSortModeSelected: (ClipboardArchiveSortMode) -> Unit,
     onSortDirectionSelected: (ClipboardArchiveSortDirection) -> Unit,
@@ -771,6 +773,7 @@ internal fun ClipboardArchiveFilterSheet(
 ) {
     val filtersActive = providerFilter != ClipboardArchiveProviderFilter.All ||
         statusFilter != ClipboardArchiveStatusFilter.All ||
+        mediaFilter != ClipboardMediaFilter.All ||
         colorFilter != ClipboardArchiveColorFilter.All ||
         sortMode != ClipboardArchiveSortMode.ClipDate ||
         sortDirection != ClipboardArchiveSortDirection.Descending
@@ -805,6 +808,12 @@ internal fun ClipboardArchiveFilterSheet(
                 labels = ClipboardArchiveStatusFilter.entries.map { it to it.labelText() },
                 selected = statusFilter,
                 onSelected = onStatusFilterSelected
+            )
+            ClipboardArchiveFilterGroup(
+                title = stringResource(R.string.clipboard_history_archive_filter_media),
+                labels = ClipboardMediaFilter.entries.map { it to stringResource(it.labelRes) },
+                selected = mediaFilter,
+                onSelected = onMediaFilterSelected
             )
             ClipboardArchiveFilterGroup(
                 title = stringResource(R.string.clipboard_history_archive_filter_color),
@@ -1729,4 +1738,34 @@ private fun copyArchiveDetails(
             details
         )
     )
+}
+
+@Preview(widthDp = 390)
+@Preview(widthDp = 600)
+@Composable
+private fun ClipboardMediaFiltersPreview() {
+    MaterialTheme {
+        Surface {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                ClipboardHistoryFilterRow(
+                    activeFilter = ClipboardHistoryFilter.Videos,
+                    counts = mapOf(
+                        ClipboardHistoryFilter.All to 42,
+                        ClipboardHistoryFilter.Text to 30,
+                        ClipboardHistoryFilter.Images to 18,
+                        ClipboardHistoryFilter.Videos to 7,
+                        ClipboardHistoryFilter.Gifs to 3,
+                        ClipboardHistoryFilter.Pinned to 4
+                    ),
+                    onFilterSelected = {}
+                )
+                ClipboardArchiveFilterGroup(
+                    title = stringResource(R.string.clipboard_history_archive_filter_media),
+                    labels = ClipboardMediaFilter.entries.map { it to stringResource(it.labelRes) },
+                    selected = ClipboardMediaFilter.Videos,
+                    onSelected = {}
+                )
+            }
+        }
+    }
 }
