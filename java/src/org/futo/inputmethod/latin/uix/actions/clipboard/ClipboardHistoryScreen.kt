@@ -446,6 +446,10 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     BackHandler(enabled = selectionMode || downloadsVisible) {
         handleBack()
     }
+    BackHandler(enabled = tagSearch.visible) {
+        tagSearch.dismiss(query.value)
+        keyboardController?.hide()
+    }
 
     Column(modifier = Modifier.fillMaxSize().onSizeChanged { contentHeight = it.height }) {
         ClipboardHistoryTitle(

@@ -1,7 +1,6 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
 import android.view.KeyEvent
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -17,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -31,6 +31,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -176,7 +178,6 @@ internal fun ClipboardTagSuggestions(
             controller.onSubmit = null
         }
     }
-    BackHandler(visible) { finish() }
     LaunchedEffect(highlighted) {
         if(highlighted >= 0) listState.scrollToItem(highlighted)
     }
@@ -285,6 +286,48 @@ private fun ClipboardTagSuggestionsSingleMatchPreview() {
         Column {
             ClipboardTagSuggestionList(TagSuggestionPreviewRows.take(1), "blue", false, -1, rememberLazyListState(), 192.dp) {}
             Text("Results", Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(12.dp))
+        }
+    }
+}
+
+// The IME hosts Compose in a service, without an Activity's back dispatcher.
+@Preview(widthDp = 360, heightDp = 120)
+@Composable
+private fun ClipboardTagSuggestionsKeyboardHostPreview() {
+    ClipboardTagSuggestionsKeyboardHost(showSuggestions = false)
+}
+
+@Preview(widthDp = 360, heightDp = 192)
+@Composable
+private fun ClipboardTagSuggestionsKeyboardSearchPreview() {
+    ClipboardTagSuggestionsKeyboardHost(showSuggestions = true)
+}
+
+@Composable
+private fun ClipboardTagSuggestionsKeyboardHost(showSuggestions: Boolean) {
+    val context = LocalContext.current.applicationContext
+    val view = remember(context) { android.view.View(context) }
+    CompositionLocalProvider(
+        LocalContext provides context,
+        LocalView provides view
+    ) {
+        MaterialTheme {
+            Column {
+                ClipboardTagSuggestions(
+                    search = ClipboardTagSearch(
+                        text = if(showSuggestions) "bl" else "",
+                        token = if(showSuggestions) ClipboardSearchToken(0, 2, "bl", false) else null,
+                        suggestions = if(showSuggestions) TagSuggestionPreviewRows else emptyList(),
+                        loading = false,
+                        visible = showSuggestions,
+                        queryText = "",
+                        dismiss = {}
+                    ),
+                    controller = remember { ActionTextEditController() },
+                    height = 120.dp
+                )
+                Text("Clipboard history")
+            }
         }
     }
 }
