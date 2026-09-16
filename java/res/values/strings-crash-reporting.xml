@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="crashed_text_email">FUTO Keyboard has crashed! Please email us a report to help us fix this (keyboard@futo.org)</string>
-    <string name="crashed_text">FUTO Keyboard has crashed! Please send a report to help us fix this.</string>
-    <string name="crashed_title">Crash Reporter</string>
-
-    <string name="crash_report_accept">Send Report</string>
-    <string name="crash_report_reject">Ignore</string>
+    <string name="crash_log_saved_title">Crash log saved</string>
+    <string name="crash_log_saved_message">The keyboard saved a crash log on this device. Share it when you want help investigating.</string>
+    <string name="crash_log_share">Share latest crash log</string>
+    <string name="crash_log_share_subtitle">Export a text file for troubleshooting</string>
+    <string name="crash_log_dismiss">Dismiss</string>
+    <string name="crash_log_share_failed">Could not share the crash log. Try again later.</string>
+    <string name="crash_log_none">No crash logs saved</string>
 </resources>

@@ -34,6 +34,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.futo.inputmethod.latin.LocalCrashReportPrompt
 import org.futo.inputmethod.latin.uix.BasicThemeProvider
 import org.futo.inputmethod.latin.uix.DynamicThemeProvider
 import org.futo.inputmethod.latin.uix.DynamicThemeProviderOwner
@@ -171,6 +172,7 @@ class SettingsActivity : ComponentActivity(), DynamicThemeProviderOwner {
             DataStoreCacheProvider {
                 SharedPrefsCacheProvider {
                     UixThemeAuto {
+                        LocalCrashReportPrompt()
                         Surface(
                             modifier = Modifier
                                 .fillMaxSize(),

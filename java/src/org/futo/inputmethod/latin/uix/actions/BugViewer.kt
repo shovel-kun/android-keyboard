@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.util.Log
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
@@ -18,7 +17,6 @@ import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.uix.Action
 import org.futo.inputmethod.latin.uix.ActionWindow
 import org.futo.inputmethod.latin.uix.settings.ScrollableList
-import org.futo.inputmethod.updates.openURI
 
 
 data class BugInfo(val name: String, val details: String)
@@ -111,22 +109,14 @@ val BugViewerAction = Action(
                     BugViewerState.bugs.forEach {
                         val name = "Bug in ${it.name} (${BuildConfig.VERSION_NAME})"
                         Text(name, style = DebugTitle)
-                        Row {
-                            TextButton(onClick = {
-                                val clipboardManager = manager.getContext()
-                                    .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip =
-                                    ClipData.newPlainText("label", "$name\n\n${it.details}")
-                                clipboardManager.setPrimaryClip(clip)
-                            }) {
-                                Text("Copy to clipboard")
-                            }
-
-                            TextButton(onClick = {
-                                manager.getContext().openURI("mailto:keyboard@futo.org", newTask = true)
-                            }) {
-                                Text("Email us (include the copy)")
-                            }
+                        TextButton(onClick = {
+                            val clipboardManager = manager.getContext()
+                                .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip =
+                                ClipData.newPlainText("label", "$name\n\n${it.details}")
+                            clipboardManager.setPrimaryClip(clip)
+                        }) {
+                            Text("Copy to clipboard")
                         }
                         Text(it.details, style = DebugLabel)
                         Spacer(modifier = Modifier.height(8.dp))

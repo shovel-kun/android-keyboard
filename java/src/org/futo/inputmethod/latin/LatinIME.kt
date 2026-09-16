@@ -471,12 +471,6 @@ class LatinIME : InputMethodServiceCompose(), LatinIMELegacy.SuggestionStripCont
             }
         }
 
-        launchJob {
-            dataStore.data.collect {
-                CrashLoggingApplication.logPreferences(it)
-            }
-        }
-
         // Listen to size changes
         launchJob {
             val prev: MutableMap<KeyboardSizeSettingKind, String?> =
