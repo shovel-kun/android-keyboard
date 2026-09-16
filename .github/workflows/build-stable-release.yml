@@ -80,11 +80,11 @@ jobs:
 
       - name: Test clipboard backup
         run: |
-          ./gradlew testStableDebugUnitTest --tests 'org.futo.inputmethod.latin.uix.actions.clipboard.*' --stacktrace
+          ./gradlew testStableReleaseUnitTest --tests 'org.futo.inputmethod.latin.uix.actions.clipboard.*' --stacktrace
 
-      - name: Build stable APKs
+      - name: Build stable release APKs
         run: |
-          ./gradlew assembleStable --stacktrace
+          ./gradlew assembleStableRelease --stacktrace
 
       - name: Upload stable release artifacts
         id: upload_artifact
@@ -92,7 +92,7 @@ jobs:
         with:
           name: keyboard-stable-apks
           path: |
-            build/outputs/apk/stable/**/*.apk
+            build/outputs/apk/stable/release/*.apk
           if-no-files-found: error
           retention-days: 14
 
