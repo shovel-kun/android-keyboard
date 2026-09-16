@@ -445,21 +445,39 @@ object SettingsExporter {
     suspend fun loadSettings(
         context: Context,
         inputStream: InputStream,
-        destructive: Boolean
-    ) = ZipInputStream(inputStream).use { zipIn ->
-        var entry = zipIn.nextEntry
+        destructive: Boolean,
+        beforeApply: suspend () -> Unit = {}
+    ) {
+        val staging = File(context.cacheDir, "settings_backup_import")
+        staging.deleteRecursively()
+        try {
+            val files = prepareSettingsBackup(inputStream, staging)
+            // Decode settings before any destructive changes.
+            File(staging, datastoreFileName).takeIf(File::isFile)?.inputStream()?.use {
+                PreferencesSerializer.readFrom(it.source().buffer())
+            }
+            File(staging, sharedPreferencesFileName).takeIf(File::isFile)?.readText()?.let(::JSONObject)
+            File(staging, personalDictFileName).takeIf(File::isFile)?.readText()?.let {
+                Json.decodeFromString<List<PersonalWord>>(it)
+            }
+            beforeApply()
+            applyPreparedSettings(context, staging, files, destructive)
+        } finally {
+            staging.deleteRecursively()
+        }
+    }
 
+    private suspend fun applyPreparedSettings(
+        context: Context,
+        staging: File,
+        files: List<File>,
+        destructive: Boolean
+    ) {
         val clipboardFile = context.clipboardFile
         val transformersDir = ModelPaths.getModelDirectory(context)
         val extFilesDir = context.getExternalFilesDir(null)!!
         val themesDir = ZipThemes.customThemesDir(context)
-        var importedClipboardFile = false
         if (destructive) {
-            // delete old clipboard
-            if (clipboardFile.exists()) {
-                clipboardFile.delete()
-            }
-
             // delete all transformers
             transformersDir.listFiles()?.forEach {
                 it.delete()
@@ -477,66 +495,52 @@ object SettingsExporter {
                 }
             }
 
-            context.clipboardDir.deleteRecursively()
-            context.clipboardArchiveFile.delete()
-            context.clipboardArchiveMetadataDir.deleteRecursively()
-            context.clipboardArchiveDir.deleteRecursively()
             ChineseIME.getRimeDir(context).deleteRecursively()
             mozcUserProfileDir(context).deleteRecursively()
 
             // delete all themes
             ZipThemes.customThemesDir(context).listFiles()?.forEach { it.delete() }
         }
-        while (entry != null) {
+        for(file in files) {
+            kotlin.coroutines.coroutineContext.ensureActive()
+            val name = file.relativeTo(staging).invariantSeparatorsPath
+            file.inputStream().use { zipIn ->
             when {
-                entry.name == versionFileName -> {}
+                name == versionFileName -> {}
 
-                entry.name == datastoreFileName -> {
+                name == datastoreFileName -> {
                     val prefsData = zipIn.readAllBytesCompat()
                     val prefs = PreferencesSerializer.readFrom(prefsData.inputStream().source().buffer())
                     context.dataStore.updateData { prefs }
                 }
 
-                entry.name == sharedPreferencesFileName -> {
+                name == sharedPreferencesFileName -> {
                     val editor = getDefaultSharedPreferences(context).edit()
                     readSharedPrefs(editor, zipIn)
                     @SuppressLint("ApplySharedPref")
                     editor.commit()
                 }
 
-                entry.name == personalDictFileName -> {
+                name == personalDictFileName -> {
                     readPersonalDict(context, zipIn, destructive)
                 }
 
-                entry.name == clipboardFileName -> {
-                    clipboardFile.outputStream().use {
-                        zipIn.copyTo(it)
-                    }
+                name == clipboardFileName || name == ClipboardArchiveFileName -> {}
 
-                    importedClipboardFile = true
-                }
-
-                entry.name == ClipboardArchiveFileName -> {
-                    val store = ClipboardArchiveStore(context.filesDir)
-                    store.replaceArchiveMetadata(
-                        decodeLegacyClipboardArchives(zipIn.readAllBytesCompat().toByteString().utf8())
-                    )
-                }
-
-                entry.name.startsWith("ext/") -> {
-                    File(extFilesDir, entry.name.splitSlash()).outputStream().use {
+                name.startsWith("ext/") -> {
+                    File(extFilesDir, name.splitSlash()).outputStream().use {
                         zipIn.copyTo(it)
                     }
                 }
 
-                entry.name.startsWith("transformers/") -> {
-                    File(transformersDir, entry.name.splitSlash()).outputStream().use {
+                name.startsWith("transformers/") -> {
+                    File(transformersDir, name.splitSlash()).outputStream().use {
                         zipIn.copyTo(it)
                     }
                 }
 
-                entry.name.startsWith("userdict/") -> {
-                    val names = entry.name.split("/")
+                name.startsWith("userdict/") -> {
+                    val names = name.split("/")
                     assert(names.size == 3)
 
                     val subdirName = names[1]
@@ -550,30 +554,11 @@ object SettingsExporter {
                     }
                 }
 
-                entry.name.startsWith("clipboard/") -> {
-                    val relDir = entry.name.splitSlash()
-                    assert(!relDir.contains('/'))
+                name.startsWith("clipboard/") ||
+                    name.startsWith("$ClipboardArchiveFilesDirectoryName/") -> {}
 
-                    val clipboardDir = context.clipboardDir
-                    clipboardDir.mkdirs()
-                    File(clipboardDir, relDir).outputStream().use {
-                        zipIn.copyTo(it)
-                    }
-                }
-
-                entry.name.startsWith("$ClipboardArchiveFilesDirectoryName/") -> {
-                    val relDir = entry.name.removePrefix("$ClipboardArchiveFilesDirectoryName/")
-                    assert(!relDir.contains('/'))
-
-                    context.clipboardDir.mkdirs()
-                    File(context.clipboardDir, relDir).outputStream().use {
-                        zipIn.copyTo(it)
-                    }
-                }
-
-
-                entry.name.startsWith("mozc/") -> {
-                    val relDir = entry.name.splitSlash()
+                name.startsWith("mozc/") -> {
+                    val relDir = name.splitSlash()
 
                     assert(!relDir.contains('/'))
 
@@ -584,8 +569,8 @@ object SettingsExporter {
                     }
                 }
 
-                entry.name.startsWith("rime/") -> {
-                    val relDir = entry.name.splitSlash()
+                name.startsWith("rime/") -> {
+                    val relDir = name.splitSlash()
                     val rimeDir = ChineseIME.getRimeDir(context)
 
                     val targetFile = File(rimeDir, relDir)
@@ -596,10 +581,10 @@ object SettingsExporter {
                     }
                 }
 
-                entry.name.startsWith("themes/") -> {
+                name.startsWith("themes/") -> {
                     themesDir.mkdirs()
 
-                    File(themesDir, entry.name.splitSlash()).outputStream().use {
+                    File(themesDir, name.splitSlash()).outputStream().use {
                         zipIn.copyTo(it)
                     }
                 }
@@ -607,17 +592,23 @@ object SettingsExporter {
                 else -> {
                     Log.w(
                         "SettingsExporter",
-                        "Encountered unknown file when reading exported backup: ${entry.name}"
+                        "Encountered unknown file when reading exported backup: ${name}"
                     )
                 }
             }
-            zipIn.closeEntry()
-            entry = zipIn.nextEntry
+            }
         }
 
-        if(importedClipboardFile) {
-            onClipboardImportedFlow.emit(clipboardFile)
-        }
+        val extracted = ExtractedClipboardBackup(
+            manifest = clipboardBackupManifest(),
+            entries = File(staging, clipboardFileName).takeIf(File::isFile)?.decodeClipboardEntries().orEmpty(),
+            filesDir = File(staging, "clipboard"),
+            archives = File(staging, ClipboardArchiveFileName).takeIf(File::isFile)
+                ?.readText()?.let(::decodeLegacyClipboardArchives).orEmpty(),
+            archiveFilesDir = File(staging, ClipboardArchiveFilesDirectoryName)
+        )
+        if(destructive) replaceClipboardBackup(context, extracted) else mergeClipboardBackup(context, extracted)
+        onClipboardImportedFlow.emit(clipboardFile)
 
         GlobalIMEMessage.tryEmit(IMEMessage.ReloadResources)
     }
@@ -625,11 +616,13 @@ object SettingsExporter {
     suspend fun loadClipboardBackup(
         context: Context,
         inputStream: InputStream,
-        mode: ClipboardImportMode
+        mode: ClipboardImportMode,
+        beforeApply: suspend () -> Unit = {}
     ) {
         val tempRoot = File(context.cacheDir, "clipboard_backup_import_${System.currentTimeMillis()}")
         try {
             val extracted = extractClipboardBackup(inputStream, tempRoot)
+            beforeApply()
             when (mode) {
                 ClipboardImportMode.Merge -> mergeClipboardBackup(context, extracted)
                 ClipboardImportMode.Replace -> replaceClipboardBackup(context, extracted)
@@ -658,7 +651,8 @@ object SettingsExporter {
         ClipboardArchiveStore(context.filesDir).stageAndPromote(
             state = ClipboardArchiveStoreState(importedEntries, importedArchives, importedTombstones),
             importedMediaDirs = listOf(extracted.filesDir, extracted.archiveFilesDir),
-            preserveExistingMedia = false
+            preserveExistingMedia = false,
+            consumeImportedMedia = true
         )
     }
 
@@ -691,7 +685,8 @@ object SettingsExporter {
         store.stageAndPromote(
             state = ClipboardArchiveStoreState(mergedEntries, mergedArchives, retainedTombstones),
             importedMediaDirs = listOf(extracted.filesDir, extracted.archiveFilesDir),
-            preserveExistingMedia = true
+            preserveExistingMedia = true,
+            consumeImportedMedia = true
         )
     }
 

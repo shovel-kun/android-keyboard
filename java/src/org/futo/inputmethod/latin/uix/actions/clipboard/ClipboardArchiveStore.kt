@@ -222,7 +222,8 @@ internal class ClipboardArchiveStore(
     fun stageAndPromote(
         state: ClipboardArchiveStoreState,
         importedMediaDirs: List<File>,
-        preserveExistingMedia: Boolean
+        preserveExistingMedia: Boolean,
+        consumeImportedMedia: Boolean = false
     ): ClipboardArchiveStoreState {
         val stageDir = File(filesDir, ".clipboard-store-stage-${System.nanoTime()}")
         val stagedMediaDir = File(stageDir, ClipboardBackupFilesDirectoryName)
@@ -233,7 +234,18 @@ internal class ClipboardArchiveStore(
                 copyFiles(mediaDir, stagedMediaDir, overwrite = true)
                 copyFiles(legacyArchiveMediaDir, stagedMediaDir, overwrite = false)
             }
-            importedMediaDirs.forEach { copyFiles(it, stagedMediaDir, overwrite = false) }
+            importedMediaDirs.forEach { source ->
+                if(consumeImportedMedia) {
+                    source.listFiles()?.filter(File::isFile)?.forEach { file ->
+                        val target = File(stagedMediaDir, file.name)
+                        if(!target.exists()) {
+                            require(file.renameTo(target)) { "Could not stage imported clipboard media" }
+                        }
+                    }
+                } else {
+                    copyFiles(source, stagedMediaDir, overwrite = false)
+                }
+            }
 
             val reconciledArchives = reconcileClipboardArchivesWithStorage(
                 archives = state.archives,
