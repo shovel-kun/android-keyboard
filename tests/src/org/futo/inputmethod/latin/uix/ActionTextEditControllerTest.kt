@@ -27,7 +27,7 @@ class ActionTextEditControllerTest {
             var reported = ""
             view.setTextChangeCallback { reported = it }
 
-            controller.replace("hello bl tag:solo", 6, 9, "tag:blue_hair ")
+            assertTrue(controller.replace("hello bl tag:solo", 6, 9, "tag:blue_hair "))
 
             assertEquals("hello tag:blue_hair tag:solo", view.text.toString())
             assertEquals(view.text.toString(), reported)
@@ -36,7 +36,7 @@ class ActionTextEditControllerTest {
             assertEquals(-1, BaseInputConnection.getComposingSpanStart(view.editableText))
             connection.commitText("new ", 1)
             assertEquals("hello tag:blue_hair new tag:solo", view.text.toString())
-            controller.replace("outdated query", 0, 99, "tag:hat ")
+            assertFalse(controller.replace("outdated query", 0, 99, "tag:hat "))
             assertEquals("hello tag:blue_hair new tag:solo", view.text.toString())
             assertEquals(1, controller.completionVersion)
             controller.detach()

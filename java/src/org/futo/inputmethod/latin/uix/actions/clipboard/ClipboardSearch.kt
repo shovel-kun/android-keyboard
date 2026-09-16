@@ -50,12 +50,7 @@ internal fun clipboardSearchToken(text: String, selectionStart: Int, selectionEn
     val match = ClipboardSearchTokens.findAll(text).firstOrNull {
         start >= it.range.first && start <= it.range.last + 1 && end <= it.range.last + 1
     }
-    if(match == null) {
-        val query = parseClipboardSearch(text)
-        return if(start == end && (query.included.isNotEmpty() || query.excluded.isNotEmpty())) {
-            ClipboardSearchToken(start, end, "", false)
-        } else null
-    }
+    if(match == null) return null
     val raw = match.value
     val prefix = ClipboardTagPrefix.find(raw)?.value
     val value = if(prefix != null) raw.substring(prefix.length) else raw.removePrefix("-")
@@ -67,11 +62,13 @@ internal fun clipboardSearchToken(text: String, selectionStart: Int, selectionEn
     )
 }
 
+// Only the token being completed is a draft. Selecting a suggestion or finishing commits it.
+internal fun clipboardEditingSearchText(text: String, token: ClipboardSearchToken?): String =
+    if(token == null) text else listOf(text.substring(0, token.start).trim(), text.substring(token.end).trim())
+        .filter { it.isNotEmpty() }.joinToString(" ")
+
 internal fun clipboardSearchContext(text: String, token: ClipboardSearchToken): ClipboardSearchQuery =
-    parseClipboardSearch(
-        listOf(text.substring(0, token.start).trim(), text.substring(token.end).trim())
-            .filter { it.isNotEmpty() }.joinToString(" ")
-    )
+    parseClipboardSearch(clipboardEditingSearchText(text, token))
 
 internal data class ClipboardSearchReplacement(val start: Int, val end: Int, val text: String) {
     val cursor: Int get() = start + text.length

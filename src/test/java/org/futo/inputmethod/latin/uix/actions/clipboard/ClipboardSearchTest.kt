@@ -60,8 +60,31 @@ class ClipboardSearchTest {
         val token = clipboardSearchToken(text, text.length, text.length)!!
         assertEquals("blue_ha", token.prefix)
         assertEquals("猫 tag:blue_hair ", text.replaceRange(token.start, token.end, clipboardTagReplacement(text, token, "blue_hair").text))
-        assertEquals("", clipboardSearchToken("tag:solo ", 9, 9)!!.prefix)
+        assertNull(clipboardSearchToken("tag:solo ", 9, 9))
         assertNull(clipboardSearchToken("", 0, 0))
+    }
+
+    @Test
+    fun editingSearch_keepsCommittedFiltersUntilCompletionOrSubmit() {
+        val text = "tag:solo tag:blu"
+        val token = clipboardSearchToken(text, text.length, text.length)!!
+        assertEquals("tag:solo", clipboardEditingSearchText(text, token))
+        assertEquals(text, clipboardEditingSearchText(text, null))
+        val replacement = clipboardTagReplacement(text, token, "blue_hair")
+        val completed = text.replaceRange(replacement.start, replacement.end, replacement.text)
+        assertNull(clipboardSearchToken(completed, replacement.cursor, replacement.cursor))
+        assertEquals(setOf("solo", "blue_hair"), parseClipboardSearch(completed).included)
+    }
+
+    @Test
+    fun editingSearch_preservesTextWhenFinishedAndOtherTermsWhileCompleting() {
+        val text = "hello  world"
+        val token = clipboardSearchToken(text, text.length, text.length)!!
+        assertEquals("hello", clipboardEditingSearchText(text, token))
+        assertEquals(text, clipboardEditingSearchText(text, null))
+        val middle = "hello -tag:bl world tag:solo"
+        val middleToken = clipboardSearchToken(middle, 12, 12)!!
+        assertEquals("hello world tag:solo", clipboardEditingSearchText(middle, middleToken))
     }
 
     @Test

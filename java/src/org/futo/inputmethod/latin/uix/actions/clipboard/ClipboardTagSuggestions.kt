@@ -5,8 +5,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,18 +15,21 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -56,21 +59,32 @@ private data class ClipboardTagSuggestionResult(
     val rows: List<ClipboardTagSuggestion>
 )
 
+internal class ClipboardTagSearch(
+    val text: String,
+    val token: ClipboardSearchToken?,
+    val suggestions: List<ClipboardTagSuggestion>,
+    val loading: Boolean,
+    val visible: Boolean,
+    val queryText: String,
+    val dismiss: (String) -> Unit
+)
+
 @Composable
-internal fun ClipboardTagSuggestions(
+internal fun rememberClipboardTagSearch(
     text: String,
     controller: ActionTextEditController,
     index: ClipboardSearchIndex,
     enabled: Boolean,
-    height: Dp,
-    onVisibilityChanged: (Boolean) -> Unit = {},
     candidateArchiveKeys: (ClipboardSearchQuery) -> List<String>
-) {
-    var dismissed by remember(text, controller.selectionStart, controller.selectionEnd) { mutableStateOf(false) }
+): ClipboardTagSearch {
+    var dismissedText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(text) {
+        if(dismissedText != text) dismissedText = null
+    }
     val token = remember(text, controller.selectionStart, controller.selectionEnd) {
         clipboardSearchToken(text, controller.selectionStart, controller.selectionEnd)
     }
-    val active = enabled && controller.focused && !dismissed && token != null
+    val active = enabled && controller.focused && text != dismissedText && token != null
     val contextQuery = remember(text, token) {
         if(token == null) parseClipboardSearch(text) else clipboardSearchContext(text, token)
     }
@@ -89,27 +103,57 @@ internal fun ClipboardTagSuggestions(
         }
         value = ClipboardTagSuggestionResult(request, rows)
     }
-    // Keep the tray's footprint while a new query is computed, but don't accept stale rows.
-    val suggestions = result.rows
     val loading = result.request != request
-    var highlighted by remember(suggestions) { mutableIntStateOf(-1) }
-    val listState = rememberLazyListState()
-    val visible = active && suggestions.isNotEmpty()
+    // Keep rows in place during refinement, but never allow a stale completion.
+    val suggestions = result.rows
+    val explicitTag = token?.let { text.substring(it.start, it.end).removePrefix("-").startsWith("tag:", true) } == true
+    val visible = active && (suggestions.isNotEmpty() || explicitTag)
+    val queryText = clipboardEditingSearchText(text, token.takeIf { visible })
+    return ClipboardTagSearch(text, token, suggestions, loading, visible, queryText) { dismissedText = it }
+}
+
+@Composable
+internal fun ClipboardTagSuggestions(
+    search: ClipboardTagSearch,
+    controller: ActionTextEditController,
+    height: Dp,
+    onFinish: () -> Unit = {}
+) {
+    val token = search.token
+    val suggestions = search.suggestions
+    val visible = search.visible
+    val loading = search.loading
+    var highlighted by remember(search.text, token, suggestions) { mutableIntStateOf(-1) }
+    // A new completion context starts at the best match; index refreshes keep the position.
+    val listState = key(search.text, token) { rememberLazyListState() }
+    fun finish() {
+        search.dismiss(search.text)
+        onFinish()
+    }
     fun accept(suggestion: ClipboardTagSuggestion) {
         if(token == null || loading) return
-        val replacement = clipboardTagReplacement(text, token, suggestion.name)
-        controller.replace(text, replacement.start, replacement.end, replacement.text)
+        val replacement = clipboardTagReplacement(search.text, token, suggestion.name)
+        if(controller.replace(search.text, replacement.start, replacement.end, replacement.text)) {
+            search.dismiss(search.text.replaceRange(replacement.start, replacement.end, replacement.text))
+            onFinish()
+        }
     }
     SideEffect {
-        onVisibilityChanged(visible)
+        controller.onSubmit = {
+            if(visible && !loading && highlighted >= 0) accept(suggestions[highlighted]) else finish()
+        }
         controller.onKey = { key ->
             when {
                 !visible -> false
                 key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_ESCAPE -> {
-                    dismissed = true
+                    finish()
                     true
                 }
-                loading -> false
+                key == KeyEvent.KEYCODE_ENTER && highlighted < 0 -> {
+                    finish()
+                    true
+                }
+                loading || suggestions.isEmpty() -> false
                 key == KeyEvent.KEYCODE_DPAD_DOWN -> {
                     highlighted = (highlighted + 1).coerceAtMost(suggestions.lastIndex)
                     true
@@ -126,14 +170,13 @@ internal fun ClipboardTagSuggestions(
             }
         }
     }
-    val currentVisibilityChanged by rememberUpdatedState(onVisibilityChanged)
     DisposableEffect(controller) {
         onDispose {
             controller.onKey = null
-            currentVisibilityChanged(false)
+            controller.onSubmit = null
         }
     }
-    BackHandler(visible) { dismissed = true }
+    BackHandler(visible) { finish() }
     LaunchedEffect(highlighted) {
         if(highlighted >= 0) listState.scrollToItem(highlighted)
     }
@@ -141,12 +184,13 @@ internal fun ClipboardTagSuggestions(
 
     ClipboardTagSuggestionList(
         suggestions = suggestions,
-        prefix = result.request?.token?.prefix.orEmpty(),
-        negative = result.request?.token?.negative == true,
+        prefix = token?.prefix.orEmpty(),
+        negative = token?.negative == true,
         highlighted = highlighted,
         listState = listState,
         height = height,
         enabled = !loading,
+        onFinish = ::finish,
         onAccept = ::accept
     )
 }
@@ -160,41 +204,52 @@ private fun ClipboardTagSuggestionList(
     listState: LazyListState,
     height: Dp,
     enabled: Boolean = true,
+    onFinish: () -> Unit = {},
     onAccept: (ClipboardTagSuggestion) -> Unit
 ) {
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxWidth().height(height)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
-    ) {
-        itemsIndexed(suggestions, key = { _, suggestion -> suggestion.name }) { position, suggestion ->
-            val category = stringResource(when(suggestion.category) {
-                ClipboardImageTagCategory.General -> R.string.clipboard_tag_category_general
-                ClipboardImageTagCategory.Character -> R.string.clipboard_tag_category_character
-            })
-            val count = if(negative) {
-                stringResource(R.string.clipboard_tag_excluded_count, suggestion.count)
-            } else {
-                pluralStringResource(R.plurals.clipboard_tag_match_count, suggestion.count, suggestion.count)
-            }
-            val label = buildAnnotatedString {
-                append(suggestion.name)
-                val start = suggestion.name.indexOf(prefix)
-                if(prefix.isNotEmpty() && start >= 0) {
-                    addStyle(SpanStyle(fontWeight = FontWeight.Bold), start, start + prefix.length)
+    Column(Modifier.fillMaxWidth().heightIn(max = height).background(MaterialTheme.colorScheme.surfaceContainer)) {
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.clipboard_tag_suggestions), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+            TextButton(onClick = onFinish) { Text(stringResource(R.string.clipboard_tag_finish_search)) }
+        }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxWidth().weight(1f, fill = false)
+        ) {
+            if(suggestions.isEmpty() && enabled) {
+                item {
+                    Text(stringResource(R.string.clipboard_tag_no_suggestions), Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
                 }
             }
-            Column(
-                Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                    .background(
-                        if(position == highlighted) MaterialTheme.colorScheme.secondaryContainer
-                        else MaterialTheme.colorScheme.surfaceContainer
-                    )
-                    .semantics { selected = position == highlighted }
-                    .clickable(enabled = enabled) { onAccept(suggestion) }.padding(horizontal = 12.dp, vertical = 4.dp)
-            ) {
-                Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                Text("$category · $count", style = MaterialTheme.typography.labelSmall)
+            itemsIndexed(suggestions, key = { _, suggestion -> suggestion.name }) { position, suggestion ->
+                val category = stringResource(when(suggestion.category) {
+                    ClipboardImageTagCategory.General -> R.string.clipboard_tag_category_general
+                    ClipboardImageTagCategory.Character -> R.string.clipboard_tag_category_character
+                })
+                val count = if(negative) {
+                    stringResource(R.string.clipboard_tag_excluded_count, suggestion.count)
+                } else {
+                    pluralStringResource(R.plurals.clipboard_tag_match_count, suggestion.count, suggestion.count)
+                }
+                val label = buildAnnotatedString {
+                    append(suggestion.name)
+                    val start = suggestion.name.indexOf(prefix)
+                    if(prefix.isNotEmpty() && start >= 0) {
+                        addStyle(SpanStyle(fontWeight = FontWeight.Bold), start, start + prefix.length)
+                    }
+                }
+                Column(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .background(
+                            if(position == highlighted) MaterialTheme.colorScheme.secondaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainer
+                        )
+                        .semantics { selected = position == highlighted }
+                        .clickable(enabled = enabled) { onAccept(suggestion) }.padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                    Text("$category · $count", style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
@@ -207,18 +262,29 @@ private val TagSuggestionPreviewRows = listOf(
     ClipboardTagSuggestion("dark_blue_hair", ClipboardImageTagCategory.General, 5)
 )
 
-@Preview(widthDp = 360, heightDp = 144)
+@Preview(widthDp = 360, heightDp = 120)
 @Composable
 private fun ClipboardTagSuggestionsCompactPreview() {
     MaterialTheme {
-        ClipboardTagSuggestionList(TagSuggestionPreviewRows, "blue", false, -1, rememberLazyListState(), 144.dp) {}
+        ClipboardTagSuggestionList(TagSuggestionPreviewRows, "blue", false, -1, rememberLazyListState(), 120.dp) {}
     }
 }
 
-@Preview(widthDp = 360, heightDp = 288, fontScale = 1.5f)
+@Preview(widthDp = 360, heightDp = 192, fontScale = 1.5f)
 @Composable
 private fun ClipboardTagSuggestionsLargeTextPreview() {
     MaterialTheme {
-        ClipboardTagSuggestionList(TagSuggestionPreviewRows, "blue", true, 0, rememberLazyListState(), 288.dp) {}
+        ClipboardTagSuggestionList(TagSuggestionPreviewRows, "blue", true, 0, rememberLazyListState(), 192.dp) {}
+    }
+}
+
+@Preview(widthDp = 360, heightDp = 192)
+@Composable
+private fun ClipboardTagSuggestionsSingleMatchPreview() {
+    MaterialTheme {
+        Column {
+            ClipboardTagSuggestionList(TagSuggestionPreviewRows.take(1), "blue", false, -1, rememberLazyListState(), 192.dp) {}
+            Text("Results", Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(12.dp))
+        }
     }
 }

@@ -57,6 +57,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -121,7 +122,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     var downloadsVisible by remember { mutableStateOf(false) }
     var clipboardControlsVisible by remember { mutableStateOf(true) }
     val searchEditor = remember { ActionTextEditController() }
-    var tagSuggestionsVisible by remember { mutableStateOf(false) }
+    val keyboardController = LocalSoftwareKeyboardController.current
     var appliedCompletionVersion by remember { mutableIntStateOf(0) }
     var contentHeight by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
@@ -136,17 +137,6 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val archiveBackfillRemainingCount by manager.archiveBackfillRemainingCount
     val storageInventory by manager.clipboardStorageInventory
     val coroutineScope = rememberCoroutineScope()
-
-    LaunchedEffect(query.value, searchEditor.completionVersion) {
-        if(appliedCompletionVersion == searchEditor.completionVersion) delay(150L)
-        appliedCompletionVersion = searchEditor.completionVersion
-        val normalizedQuery = query.value.trim().lowercase()
-        if(debouncedQuery != normalizedQuery) {
-            clipsGridState.requestScrollToItem(0)
-            archivesGridState.requestScrollToItem(0)
-            debouncedQuery = normalizedQuery
-        }
-    }
 
     LaunchedEffect(uiState.shouldRefreshPreviews) {
         if(uiState.shouldRefreshPreviews) {
@@ -238,8 +228,6 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         }
     }
     val searchIndex by rememberUpdatedState(manager.searchIndex)
-    val parsedQuery = remember(debouncedQuery) { parseClipboardSearch(debouncedQuery) }
-    val currentQuery by rememberUpdatedState(parsedQuery)
     val filteredEntries by remember {
         derivedStateOf { allEntries.filter { activeFilter.matches(it) } }
     }
@@ -256,6 +244,32 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             }
         }
     }
+    val tagSearch = rememberClipboardTagSearch(
+        text = query.value,
+        controller = searchEditor,
+        index = searchIndex,
+        enabled = uiState.historyVisible && !selectionMode,
+        candidateArchiveKeys = { suggestionQuery ->
+            if(activeMode == ClipboardHistoryContentMode.Archives) {
+                filteredArchives.filter { searchIndex.matches(it, suggestionQuery) }.map { it.key }
+            } else {
+                filteredEntries.filter { searchIndex.matches(it, suggestionQuery) }
+                    .mapNotNull { searchIndex.archiveByEntry[it.selectionKey()] }
+            }
+        }
+    )
+    LaunchedEffect(tagSearch.queryText, searchEditor.completionVersion) {
+        if(appliedCompletionVersion == searchEditor.completionVersion) delay(150L)
+        appliedCompletionVersion = searchEditor.completionVersion
+        val normalizedQuery = tagSearch.queryText.trim().lowercase()
+        if(debouncedQuery != normalizedQuery) {
+            clipsGridState.requestScrollToItem(0)
+            archivesGridState.requestScrollToItem(0)
+            debouncedQuery = normalizedQuery
+        }
+    }
+    val parsedQuery = remember(debouncedQuery) { parseClipboardSearch(debouncedQuery) }
+    val currentQuery by rememberUpdatedState(parsedQuery)
     val visibleEntries by remember {
         derivedStateOf { filteredEntries.filter { searchIndex.matches(it, currentQuery) } }
     }
@@ -368,7 +382,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         archivesGridState.requestScrollToItem(0)
     }
 
-    val keepControlsVisible = searchEditing || tagSuggestionsVisible || selectionMode
+    val keepControlsVisible = searchEditing || tagSearch.visible || selectionMode
     val scrollControlsConnection = rememberScrollControlsConnection(
         state = activeGridState,
         controlsVisible = clipboardControlsVisible,
@@ -633,20 +647,10 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                     }
 
                     ClipboardTagSuggestions(
-                        text = query.value,
+                        search = tagSearch,
                         controller = searchEditor,
-                        height = with(density) { (contentHeight / 3).toDp() }.coerceAtMost(288.dp),
-                        index = searchIndex,
-                        enabled = uiState.historyVisible && !selectionMode,
-                        onVisibilityChanged = { tagSuggestionsVisible = it },
-                        candidateArchiveKeys = { suggestionQuery ->
-                            if(activeMode == ClipboardHistoryContentMode.Archives) {
-                                filteredArchives.filter { searchIndex.matches(it, suggestionQuery) }.map { it.key }
-                            } else {
-                                filteredEntries.filter { searchIndex.matches(it, suggestionQuery) }
-                                    .mapNotNull { searchIndex.archiveByEntry[it.selectionKey()] }
-                            }
-                        }
+                        height = with(density) { (contentHeight / 3).toDp() }.coerceAtMost(192.dp),
+                        onFinish = { keyboardController?.hide() }
                     )
 
                     if(!selectionMode) {

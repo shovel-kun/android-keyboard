@@ -127,15 +127,6 @@ internal fun ClipboardHistoryActionWindowContents(
     val gridState = rememberLazyStaggeredGridState()
     var debouncedSearchText by remember { mutableStateOf(searchText.trim().lowercase()) }
     var appliedCompletionVersion by remember { mutableIntStateOf(searchEditor.completionVersion) }
-    LaunchedEffect(searchText, searchEditor.completionVersion) {
-        if(appliedCompletionVersion == searchEditor.completionVersion) delay(150L)
-        appliedCompletionVersion = searchEditor.completionVersion
-        val normalizedQuery = searchText.trim().lowercase()
-        if(debouncedSearchText != normalizedQuery) {
-            gridState.requestScrollToItem(0)
-            debouncedSearchText = normalizedQuery
-        }
-    }
     val pixivPasteDomain = useDataStore(ClipboardPixivLinkPasteDomain)
     val phixivPasteSession = remember(pixivPasteDomain.value) {
         PhixivArtworkPasteSession(pixivPasteDomain.value)
@@ -245,6 +236,25 @@ internal fun ClipboardHistoryActionWindowContents(
                 }
             }
             val searchIndex by rememberUpdatedState(clipboardHistoryManager.searchIndex)
+            val tagSearch = rememberClipboardTagSearch(
+                text = searchText,
+                controller = searchEditor,
+                index = searchIndex,
+                enabled = searchActive,
+                candidateArchiveKeys = { suggestionQuery ->
+                    sortedList.filter { searchIndex.matches(it, suggestionQuery) }
+                        .mapNotNull { searchIndex.archiveByEntry[it.selectionKey()] }
+                }
+            )
+            LaunchedEffect(tagSearch.queryText, searchEditor.completionVersion) {
+                if(appliedCompletionVersion == searchEditor.completionVersion) delay(150L)
+                appliedCompletionVersion = searchEditor.completionVersion
+                val normalizedQuery = tagSearch.queryText.trim().lowercase()
+                if(debouncedSearchText != normalizedQuery) {
+                    gridState.requestScrollToItem(0)
+                    debouncedSearchText = normalizedQuery
+                }
+            }
             val parsedQuery by remember { derivedStateOf { parseClipboardSearch(debouncedSearchText) } }
             val displayedList by remember(clipboardHistoryManager) {
                 derivedStateOf { sortedList.filter { searchIndex.matches(it, parsedQuery) } }
@@ -253,15 +263,9 @@ internal fun ClipboardHistoryActionWindowContents(
             val density = LocalDensity.current
             Column(Modifier.fillMaxSize().onSizeChanged { contentHeight = it.height }) {
                 ClipboardTagSuggestions(
-                    text = searchText,
+                    search = tagSearch,
                     controller = searchEditor,
-                    index = searchIndex,
-                    enabled = searchActive,
-                    height = with(density) { (contentHeight / 2).toDp() }.coerceAtMost(144.dp),
-                    candidateArchiveKeys = { suggestionQuery ->
-                        sortedList.filter { searchIndex.matches(it, suggestionQuery) }
-                            .mapNotNull { searchIndex.archiveByEntry[it.selectionKey()] }
-                    }
+                    height = with(density) { (contentHeight / 2).toDp() }.coerceAtMost(120.dp)
                 )
                 if(displayedList.isEmpty() && debouncedSearchText.isNotBlank() && sortedList.isNotEmpty()) {
                     ScrollableList {

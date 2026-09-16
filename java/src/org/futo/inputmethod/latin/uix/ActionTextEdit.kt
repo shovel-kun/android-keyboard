@@ -144,6 +144,7 @@ class ActionTextEditController {
     var completionVersion by mutableIntStateOf(0)
         private set
     var onKey: ((Int) -> Boolean)? = null
+    var onSubmit: (() -> Unit)? = null
     private var editor: ActionEditText? = null
 
     internal fun attach(view: ActionEditText) {
@@ -165,10 +166,10 @@ class ActionTextEditController {
         focused = false
     }
 
-    fun replace(expectedText: String, start: Int, end: Int, replacement: String) {
-        val view = editor ?: return
+    fun replace(expectedText: String, start: Int, end: Int, replacement: String): Boolean {
+        val view = editor ?: return false
         // Native input can advance before Compose has refreshed a suggestion row.
-        if(view.text.toString() != expectedText) return
+        if(view.text.toString() != expectedText) return false
         view.beginBatchEdit()
         try {
             view.inputConnection?.finishComposingText()
@@ -177,6 +178,7 @@ class ActionTextEditController {
             view.setSelection(start + replacement.length)
             view.requestFocus()
             completionVersion++
+            return true
         } finally {
             view.endBatchEdit()
         }
@@ -335,7 +337,7 @@ private fun GenericEditTextCompose(
 
             if(!multiline) {
                 setOnEditorActionListener { view, actionId, ev ->
-                    onEnter?.invoke()
+                    (controller?.onSubmit ?: onEnter)?.invoke()
                     return@setOnEditorActionListener true
                 }
             }
