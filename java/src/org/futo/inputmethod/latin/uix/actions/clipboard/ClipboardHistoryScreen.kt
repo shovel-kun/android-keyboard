@@ -13,15 +13,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
-import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
@@ -43,10 +44,17 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -109,6 +117,12 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     var archiveDeleteRequest by remember { mutableStateOf<ArchiveDeleteRequest?>(null) }
     var downloadsVisible by remember { mutableStateOf(false) }
     var clipboardControlsVisible by remember { mutableStateOf(true) }
+    var searchFocused by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    val searchEditing by remember(density, imeInsets) {
+        derivedStateOf { searchFocused && imeInsets.getBottom(density) > 0 }
+    }
     val clipsGridState = rememberLazyStaggeredGridState()
     val archivesGridState = rememberLazyStaggeredGridState()
     val activeGridState = if(activeMode == ClipboardHistoryContentMode.Clips) clipsGridState else archivesGridState
@@ -119,7 +133,12 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
 
     LaunchedEffect(query.value) {
         delay(150L)
-        debouncedQuery = query.value
+        val normalizedQuery = query.value.trim().lowercase()
+        if(debouncedQuery != normalizedQuery) {
+            clipsGridState.requestScrollToItem(0)
+            archivesGridState.requestScrollToItem(0)
+            debouncedQuery = normalizedQuery
+        }
     }
 
     LaunchedEffect(uiState.shouldRefreshPreviews) {
@@ -139,11 +158,14 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         }
     }
 
-    val allEntries by remember(showPinnedOnTop) {
+    val currentShowPinnedOnTop by rememberUpdatedState(showPinnedOnTop)
+    val currentArchiveSortMode by rememberUpdatedState(archiveSortMode)
+    val currentArchiveSortDirection by rememberUpdatedState(archiveSortDirection)
+    val allEntries by remember(manager) {
         derivedStateOf {
             sortedClipboardEntries(
                 entries = manager.clipboardHistory.toList(),
-                showPinnedOnTop = showPinnedOnTop
+                showPinnedOnTop = currentShowPinnedOnTop
             ).filter { it != DefaultClipboardEntry }
         }
     }
@@ -153,13 +175,13 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val archiveActivitySnapshot by remember {
         derivedStateOf { manager.archiveActivitySnapshot() }
     }
-    val allArchives by remember(archiveSortMode, archiveSortDirection) {
+    val allArchives by remember(manager) {
         derivedStateOf {
             sortedClipboardArchives(
                 archives = archiveUiSnapshot.archives,
                 entries = manager.clipboardHistory.toList(),
-                sortMode = archiveSortMode,
-                sortDirection = archiveSortDirection
+                sortMode = currentArchiveSortMode,
+                sortDirection = currentArchiveSortDirection
             )
         }
     }
@@ -211,7 +233,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val visibleEntries by remember {
         derivedStateOf {
             allEntries.filter {
-                activeFilter.matches(it) && it.matchesQuery(debouncedQuery)
+                activeFilter.matches(it) && it.matchesNormalizedQuery(debouncedQuery)
             }
         }
     }
@@ -283,9 +305,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val hasUnpinnedSelection by remember {
         derivedStateOf { selectedEntries.any { !it.pinned } }
     }
-    val canBrowseHistory by remember {
-        derivedStateOf { uiState.historyVisible && hasHistoryEntries }
-    }
+    val canBrowseHistory = uiState.historyVisible && hasHistoryEntries
 
     LaunchedEffect(hasHistoryEntries, hasArchiveRecords) {
         if(!hasHistoryEntries && hasArchiveRecords) {
@@ -313,6 +333,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         archiveProviderFilter,
         archiveStatusFilter,
         archiveMediaFilter,
+        archiveColorFilter,
         archiveSortMode,
         archiveSortDirection,
         selectionMode,
@@ -322,9 +343,25 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         clipboardControlsVisible = true
     }
 
-    rememberScrollControlsVisible(
+    LaunchedEffect(activeFilter, showPinnedOnTop) {
+        clipsGridState.requestScrollToItem(0)
+    }
+    LaunchedEffect(
+        archiveProviderFilter,
+        archiveStatusFilter,
+        archiveMediaFilter,
+        archiveColorFilter,
+        archiveSortMode,
+        archiveSortDirection
+    ) {
+        archivesGridState.requestScrollToItem(0)
+    }
+
+    val keepControlsVisible = searchEditing || selectionMode
+    val scrollControlsConnection = rememberScrollControlsConnection(
         state = activeGridState,
         controlsVisible = clipboardControlsVisible,
+        keepVisible = keepControlsVisible,
         onControlsVisibleChanged = { clipboardControlsVisible = it }
     )
 
@@ -542,7 +579,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             }
 
             else -> {
-                ClipboardScrollControlsVisibility(visible = clipboardControlsVisible) {
+                ClipboardScrollControlsVisibility(visible = clipboardControlsVisible || keepControlsVisible) {
                     Box(Modifier.padding(8.dp)) {
                         SettingsTextEdit(
                             text = query,
@@ -578,6 +615,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                                 null
                             },
                             placeholder = stringResource(R.string.clipboard_history_search_placeholder),
+                            onFocusChanged = { searchFocused = it },
                             forceQwerty = true
                         )
                     }
@@ -620,7 +658,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
 
                 when (activeMode) {
                     ClipboardHistoryContentMode.Clips -> ClipboardClipsContent(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).nestedScroll(scrollControlsConnection),
                         gridState = clipsGridState,
                         visibleEntries = visibleEntries,
                         activeFilter = activeFilter,
@@ -637,7 +675,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                     )
 
                     ClipboardHistoryContentMode.Archives -> ClipboardArchivesContent(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).nestedScroll(scrollControlsConnection),
                         gridState = archivesGridState,
                         visibleArchives = visibleArchives,
                         previewFilesByKey = archivePreviewFilesByKey,
@@ -820,29 +858,35 @@ private fun ClipboardScrollControlsVisibility(
 }
 
 @Composable
-private fun rememberScrollControlsVisible(
+private fun rememberScrollControlsConnection(
     state: LazyStaggeredGridState,
     controlsVisible: Boolean,
+    keepVisible: Boolean,
     onControlsVisibleChanged: (Boolean) -> Unit
-) {
-    var previousPosition by remember(state) {
-        mutableStateOf(
-            ClipboardScrollControlsPosition(
-                firstVisibleItemIndex = state.firstVisibleItemIndex,
-                firstVisibleItemScrollOffset = state.firstVisibleItemScrollOffset
-            )
-        )
+): NestedScrollConnection {
+    val onVisibilityChanged by rememberUpdatedState(onControlsVisibleChanged)
+    val thresholdPx = with(LocalDensity.current) { 48.dp.toPx() }
+    val atTop by remember(state) { derivedStateOf { !state.canScrollBackward } }
+    LaunchedEffect(state) {
+        snapshotFlow { !state.canScrollBackward }.collect { atTop ->
+            if(atTop) onVisibilityChanged(true)
+        }
     }
-    val currentPosition = ClipboardScrollControlsPosition(
-        firstVisibleItemIndex = state.firstVisibleItemIndex,
-        firstVisibleItemScrollOffset = state.firstVisibleItemScrollOffset
-    )
-
-    LaunchedEffect(currentPosition, controlsVisible) {
-        val visible = scrollControlsVisibleAfterScroll(previousPosition, currentPosition, controlsVisible)
-        previousPosition = currentPosition
-        if(visible != controlsVisible) {
-            onControlsVisibleChanged(visible)
+    // Discard accumulated movement when visibility, interaction mode, or the top boundary changes.
+    return remember(state, thresholdPx, controlsVisible, keepVisible, atTop) {
+        val tracker = ClipboardControlsScrollTracker(thresholdPx)
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if(source == NestedScrollSource.UserInput && !keepVisible) {
+                    val visible = tracker.onScroll(consumed.y, controlsVisible)
+                    if(visible != controlsVisible) onVisibilityChanged(visible)
+                }
+                return Offset.Zero
+            }
         }
     }
 }
@@ -893,10 +937,7 @@ private fun ClipboardClipsContent(
         verticalItemSpacing = 4.dp,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
     ) {
-        itemsIndexed(
-            items = visibleEntries,
-            key = { index, entry -> entry.lazyListKey(index) }
-        ) { _, entry ->
+        items(visibleEntries, key = { it.lazyListKey() }) { entry ->
             val isSelected = entry.selectionKey() in selectedKeys
             val canPreview = previewState.showsEmbed &&
                 (entry.backingFile != null || entry.previewMedia().isNotEmpty())

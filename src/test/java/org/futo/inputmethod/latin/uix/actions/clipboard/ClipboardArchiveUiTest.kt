@@ -590,6 +590,57 @@ class ClipboardArchiveUiTest {
     }
 
     @Test
+    fun scrollControls_requireDeliberateMovementInEitherDirection() {
+        val tracker = ClipboardControlsScrollTracker(48f)
+        assertFalse(tracker.onScroll(1f, currentlyVisible = false))
+        assertFalse(tracker.onScroll(23f, currentlyVisible = false))
+        assertTrue(tracker.onScroll(24f, currentlyVisible = false))
+        assertTrue(tracker.onScroll(-1f, currentlyVisible = true))
+        assertFalse(tracker.onScroll(-47f, currentlyVisible = true))
+    }
+
+    @Test
+    fun scrollControls_directionReversalDiscardsPreviousMovement() {
+        val tracker = ClipboardControlsScrollTracker(48f)
+        assertFalse(tracker.onScroll(47f, currentlyVisible = false))
+        assertFalse(tracker.onScroll(-1f, currentlyVisible = false))
+        assertFalse(tracker.onScroll(1f, currentlyVisible = false))
+        assertFalse(tracker.onScroll(0f, currentlyVisible = false))
+        assertTrue(tracker.onScroll(47f, currentlyVisible = false))
+    }
+
+    @Test
+    fun clipboardKeys_surviveFilteringPinningAndRecopying() {
+        val first = sampleTwitterEntry("first", 1L)
+        val second = sampleTwitterEntry("second", 1L)
+        val entries = listOf(first, second)
+        assertNotEquals(first.lazyListKey(), second.lazyListKey())
+        assertEquals(entries[1].lazyListKey(), entries.filter { it == second }[0].lazyListKey())
+        assertEquals(second.lazyListKey(), second.copy(pinned = true, timestamp = 99L).lazyListKey())
+        assertNotEquals(first.lazyListKey(), first.copy(text = null, backingFile = first.text).lazyListKey())
+        assertTrue(first.copy(text = "x".repeat(10000)).lazyListKey().length < 512)
+    }
+
+    @Test
+    fun clipboardSearch_matchesTextAndMetadataIgnoringCaseAndOuterWhitespace() {
+        val entry = sampleTwitterEntry("first", 1L).copy(previewText = "A Mixed CASE Caption")
+        assertTrue(entry.matchesQuery("  MIXED case  "))
+        assertTrue(entry.matchesQuery("   "))
+        assertFalse(entry.matchesQuery("unrelated caption"))
+    }
+
+    @Test
+    fun clipboardCardDecoding_boundsLargeImagesWithoutUpscalingThumbnails() {
+        assertEquals(1, clipboardCardBitmapSampleSize(384, 384))
+        for((width, height) in listOf(4000 to 3000, 3000 to 4000, 20000 to 200, 769 to 769)) {
+            val sample = clipboardCardBitmapSampleSize(width, height)
+            assertTrue((maxOf(width, height) + sample - 1) / sample <= 768)
+            assertEquals(0, sample and (sample - 1))
+        }
+        assertEquals(1, clipboardCardBitmapSampleSize(-1, -1))
+    }
+
+    @Test
     fun scrollControlsVisibleAfterScroll_keepsControlsVisibleAtTop() {
         val previous = ClipboardScrollControlsPosition(
             firstVisibleItemIndex = 4,

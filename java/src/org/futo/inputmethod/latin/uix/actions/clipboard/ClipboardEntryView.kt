@@ -51,6 +51,8 @@ import org.futo.inputmethod.latin.uix.actions.fonttyper.SuperheroRenderer
 import org.futo.inputmethod.latin.uix.theme.Typography
 import java.io.File
 
+private const val ClipboardCardMaxBitmapEdge = 768
+
 private object ClipboardThumbCache {
     private const val MaxCacheBytes = 16 * 1024 * 1024
 
@@ -119,7 +121,7 @@ internal fun decodeClipboardBitmap(
     val requestKey = clipboardBitmapRequestKey(imageFile, preferThumbnail)
     return ClipboardThumbCache.cache[source.cacheKey]?.also {
         ClipboardThumbCache.latestByRequest.put(requestKey, it)
-    } ?: decodeClipboardBitmapSource(source, imageFile)?.also {
+    } ?: decodeClipboardBitmapSource(source, imageFile, preferThumbnail)?.also {
         ClipboardThumbCache.cache.put(source.cacheKey, it)
         ClipboardThumbCache.latestByRequest.put(requestKey, it)
     }
@@ -127,14 +129,30 @@ internal fun decodeClipboardBitmap(
 
 private fun decodeClipboardBitmapSource(
     source: ClipboardBitmapSource,
-    originalFile: File
+    originalFile: File,
+    preferThumbnail: Boolean
 ): ImageBitmap? {
-    BitmapFactory.decodeFile(source.file.absolutePath)?.let {
+    val options = BitmapFactory.Options()
+    if(preferThumbnail) {
+        options.inJustDecodeBounds = true
+        BitmapFactory.decodeFile(source.file.absolutePath, options)
+        options.inSampleSize = clipboardCardBitmapSampleSize(options.outWidth, options.outHeight)
+        options.inJustDecodeBounds = false
+    }
+    BitmapFactory.decodeFile(source.file.absolutePath, options)?.let {
         return it.asImageBitmap()
     }
 
     val thumbnail = generatedClipboardThumbnailFallback(originalFile) ?: return null
     return BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()
+}
+
+// Cards never need a full-resolution original, even when its thumbnail is missing.
+internal fun clipboardCardBitmapSampleSize(width: Int, height: Int): Int {
+    var sample = 1
+    val longestEdge = maxOf(width, height).toLong()
+    while((longestEdge + sample - 1) / sample > ClipboardCardMaxBitmapEdge) sample *= 2
+    return sample
 }
 
 private fun generatedClipboardThumbnailFallback(originalFile: File): File? =
@@ -286,7 +304,7 @@ fun ClipboardEntryView(
         imageFiles = imageFiles,
         bitmapOverrides = bitmapOverrides ?: bitmapOverride?.let { listOf(it) },
         maxCount = 4,
-        requestVersion = clipboardEntry
+        requestVersion = clipboardEntry.previewFetchLastAttemptAt to clipboardEntry.previewMediaFiles
     )
 
     val cardColor = if(clipboardEntry.pinned) {

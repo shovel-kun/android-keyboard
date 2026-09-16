@@ -81,6 +81,20 @@ internal enum class ClipboardArchiveDownloadRowStatus {
     Failed
 }
 
+// Positive consumed scroll moves towards the beginning of the history.
+internal class ClipboardControlsScrollTracker(private val thresholdPx: Float) {
+    private var distance = 0f
+
+    fun onScroll(delta: Float, currentlyVisible: Boolean): Boolean {
+        if(delta == 0f) return currentlyVisible
+        if((delta > 0f) != (distance > 0f)) distance = 0f
+        distance += delta
+        if(kotlin.math.abs(distance) < thresholdPx) return currentlyVisible
+        distance = 0f
+        return delta > 0f
+    }
+}
+
 internal data class ClipboardScrollControlsPosition(
     val firstVisibleItemIndex: Int,
     val firstVisibleItemScrollOffset: Int

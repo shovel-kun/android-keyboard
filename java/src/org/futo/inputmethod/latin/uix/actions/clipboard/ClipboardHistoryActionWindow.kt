@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
@@ -14,9 +16,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -110,10 +114,15 @@ internal fun ClipboardHistoryActionWindowContents(
     val context = LocalContext.current
     val clipboardHistory = useDataStore(ClipboardHistoryEnabled, blocking = true)
     val uiState = rememberClipboardUiState(clipboardHistoryManager)
-    var debouncedSearchText by remember { mutableStateOf(searchText) }
+    val gridState = rememberLazyStaggeredGridState()
+    var debouncedSearchText by remember { mutableStateOf(searchText.trim().lowercase()) }
     LaunchedEffect(searchText) {
         delay(150L)
-        debouncedSearchText = searchText
+        val normalizedQuery = searchText.trim().lowercase()
+        if(debouncedSearchText != normalizedQuery) {
+            gridState.requestScrollToItem(0)
+            debouncedSearchText = normalizedQuery
+        }
     }
     val pixivPasteDomain = useDataStore(ClipboardPixivLinkPasteDomain)
     val phixivPasteSession = remember(pixivPasteDomain.value) {
@@ -214,11 +223,18 @@ internal fun ClipboardHistoryActionWindowContents(
         }
 
         else -> {
-            val sortedList = when {
-                useDataStoreValue(ClipboardShowPinnedOnTop) -> clipboardHistoryManager.clipboardHistory.sortedBy { it.pinned }
-                else -> clipboardHistoryManager.clipboardHistory
+            val showPinnedOnTop by rememberUpdatedState(useDataStoreValue(ClipboardShowPinnedOnTop))
+            val sortedList by remember(clipboardHistoryManager) {
+                derivedStateOf {
+                    sortedClipboardEntries(
+                        entries = clipboardHistoryManager.clipboardHistory.toList(),
+                        showPinnedOnTop = showPinnedOnTop
+                    )
+                }
             }
-            val displayedList = sortedList.filter { it.matchesQuery(debouncedSearchText) }
+            val displayedList by remember(clipboardHistoryManager) {
+                derivedStateOf { sortedList.filter { it.matchesNormalizedQuery(debouncedSearchText) } }
+            }
             if(displayedList.isEmpty() && debouncedSearchText.isNotBlank() && sortedList.isNotEmpty()) {
                 ScrollableList {
                     PaymentSurface(isPrimary = true) {
@@ -238,16 +254,11 @@ internal fun ClipboardHistoryActionWindowContents(
             LazyVerticalStaggeredGrid(
                 modifier = Modifier.fillMaxWidth(),
                 columns = columns,
+                state = gridState,
                 verticalItemSpacing = 4.dp,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(displayedList.size, key = { reverseIndex ->
-                    val index = displayedList.size - reverseIndex - 1
-                    val entry = displayedList[index]
-                    entry.lazyListKey(index)
-                }) { reverseIndex ->
-                    val index = displayedList.size - reverseIndex - 1
-                    val entry = displayedList[index]
+                items(displayedList, key = { it.lazyListKey() }) { entry ->
                     ClipboardEntryView(
                         modifier = Modifier,
                         clipboardEntry = entry,

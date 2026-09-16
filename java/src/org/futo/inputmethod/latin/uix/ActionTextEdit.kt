@@ -187,6 +187,7 @@ private fun GenericEditTextCompose(
     forceQwerty: Boolean = false,
     forcedLayout: String? = null,
     inputFilters: Array<InputFilter>? = null,
+    onFocusChanged: ((Boolean) -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -271,6 +272,9 @@ private fun GenericEditTextCompose(
     AndroidView(
         factory = { editText },
         modifier = modifier,
+        update = { view ->
+            view.setOnFocusChangeListener { _, focused -> onFocusChanged?.invoke(focused) }
+        },
         onRelease = {
             onUnoverride?.invoke()
         }
@@ -359,6 +363,7 @@ fun SettingsTextEdit(
     forceQwerty: Boolean = false,
     forcedLayout: String? = null,
     error: Boolean = false,
+    onFocusChanged: ((Boolean) -> Unit)? = null,
 ) {
     Surface(
         color = if(error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -383,6 +388,7 @@ fun SettingsTextEdit(
                     placeholder = placeholder,
                     autocorrect = autocorrect,
                     autofocus = autofocus,
+                    onFocusChanged = onFocusChanged,
                     forceQwerty = forceQwerty,
                     forcedLayout = forcedLayout,
                     modifier = Modifier.fillMaxWidth()

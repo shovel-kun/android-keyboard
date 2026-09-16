@@ -1021,20 +1021,6 @@ class ClipboardBackupTest {
     }
 
     @Test
-    fun lazyListKey_isUniqueForDuplicateTextEntries() {
-        val first = ClipboardEntry(
-            timestamp = 1L,
-            pinned = false,
-            text = "https://www.pixiv.net/en/artworks/107946644",
-            uri = null,
-            mimeTypes = listOf("text/plain")
-        )
-        val second = first.copy(timestamp = 2L)
-
-        assertFalse(first.lazyListKey(0) == second.lazyListKey(1))
-    }
-
-    @Test
     fun reconcileClipboardEntriesWithStorage_dropsOnlyMissingPreviewMedia() {
         val dir = createTempDirectory().toFile()
         try {

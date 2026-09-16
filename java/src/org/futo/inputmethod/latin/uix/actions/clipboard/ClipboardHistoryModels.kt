@@ -218,31 +218,25 @@ fun ClipboardEntry.shouldShowManualPreviewRetry(): Boolean =
 fun ClipboardEntry.selectionKey(): String =
     text ?: backingFile ?: timestamp.toString()
 
-fun ClipboardEntry.lazyListKey(index: Int): String {
-    val entryKey = text?.takeIf { value -> value.length <= 512 }
-        ?: text?.toFNV1aHash()?.toString()
-        ?: backingFile
-        ?: selectionKey()
-    return "$entryKey:$timestamp:$index"
+// History loading and imports deduplicate by text or backing file, not timestamp.
+fun ClipboardEntry.lazyListKey(): String = when {
+    text != null -> if(text.length <= 512) "text:$text" else "textHash:${text.toFNV1aHash()}"
+    backingFile != null -> "file:$backingFile"
+    else -> "timestamp:$timestamp"
 }
 
-fun ClipboardEntry.matchesQuery(query: String): Boolean {
-    if(query.isBlank()) return true
+fun ClipboardEntry.matchesQuery(query: String): Boolean =
+    matchesNormalizedQuery(query.trim().lowercase())
 
-    val normalizedQuery = query.trim().lowercase()
-    val haystacks = buildList {
-        text?.let { add(it.lowercase()) }
-        previewText?.let { add(it.lowercase()) }
-        previewMetadata?.title?.let { add(it.lowercase()) }
-        previewMetadata?.bodyText?.let { add(it.lowercase()) }
-        previewMetadata?.authorName?.let { add(it.lowercase()) }
-        previewMetadata?.authorHandle?.let { add(it.lowercase()) }
-        previewMetadata?.tags?.forEach { add(it.lowercase()) }
-        mimeTypes.forEach { add(it.lowercase()) }
-        addAll(searchTokens())
-    }
+internal fun ClipboardEntry.matchesNormalizedQuery(query: String): Boolean {
+    if(query.isEmpty()) return true
+    fun String?.matches() = this?.contains(query, ignoreCase = true) == true
 
-    return haystacks.any { it.contains(normalizedQuery) }
+    return text.matches() || previewText.matches() ||
+        previewMetadata?.title.matches() || previewMetadata?.bodyText.matches() ||
+        previewMetadata?.authorName.matches() || previewMetadata?.authorHandle.matches() ||
+        previewMetadata?.tags.orEmpty().any { it.matches() } ||
+        mimeTypes.any { it.matches() } || searchTokens().any { it.matches() }
 }
 
 fun sortedClipboardEntries(
