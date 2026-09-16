@@ -735,6 +735,8 @@
     <string name="theme_settings_custom_theme_delete_cancel">Cancel</string>
     <string name="theme_settings_add_new_theme">Add new theme</string>
     <string name="theme_settings_add_new_theme_question">Create a new theme from a picture, or add a downloaded ZIP theme?</string>
+    <string name="theme_settings_warning_newer_version">This theme may require a newer version of FUTO Keyboard than the one you have. If you\'re a theme developer, check the error log below.</string>
+    <string name="theme_settings_visit_theme_store">Explore themes online</string>
 
     <!-- Theme customizer -->
     <string name="theme_customizer_select_background_image_button">Select picture</string>
@@ -786,6 +788,15 @@
     <!-- Voice input settings menu -->
     <string name="voice_input_settings_title">Voice Input</string>
     <string name="voice_input_settings_builtin_disabled_notice">Built-in voice input is disabled!</string>
+
+    <string name="voice_input_settings_builtin_disabled_notice2">Using external engine: %s</string>
+    <string name="voice_input_settings_backend_system">External engine</string>
+    <string name="voice_input_settings_backend_system_internal">None (built-in)</string>
+    <string name="voice_input_settings_backend_system_external_warning">Note: the %s app will record your speech and may send it to online servers, it is not covered by our privacy policy.</string>
+    <string name="voice_input_settings_backend_system_confirm">Switch voice input engine to %s?</string>
+    <string name="voice_input_settings_backend_system_confirm_yes">Switch</string>
+    <string name="voice_input_settings_backend_system_confirm_no">Cancel</string>
+
     <string name="voice_input_settings_disable_builtin_voice_input">Disable built-in voice input</string>
     <string name="voice_input_settings_disable_builtin_voice_input_subtitle">Use voice input provided by external app</string>
     <string name="voice_input_settings_indication_sounds">Indication sounds</string>

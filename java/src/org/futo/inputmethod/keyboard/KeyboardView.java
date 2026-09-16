@@ -39,6 +39,7 @@ import org.futo.inputmethod.latin.uix.DynamicThemeProvider;
 import org.futo.inputmethod.latin.R;
 import org.futo.inputmethod.latin.common.Constants;
 import org.futo.inputmethod.latin.uix.theme.KeyDrawingConfiguration;
+import org.futo.inputmethod.latin.uix.theme.KeyOutline;
 import org.futo.inputmethod.latin.utils.TypefaceUtils;
 
 import java.util.HashSet;
@@ -452,6 +453,7 @@ public class KeyboardView extends View {
         float labelBaseline = centerY;
         final String label = kdc.getLabel();
         final Rect bgPadding = kdc.getBackgroundPadding();
+        final KeyOutline outline = kdc.getOutline();
 
         float keyHintPaddingX = mKeyHintLetterPadding;
         float keyHintPaddingY = mKeyHintLetterPadding;
@@ -495,6 +497,17 @@ public class KeyboardView extends View {
             }
 
             if (key.isEnabled()) {
+                if(outline != null) {
+                    paint.setStrokeWidth(outline.getWidthPx());
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeMiter(3.0f);
+                    paint.setColor(outline.getColor());
+                    canvas.drawText(label, 0, label.length(), labelX, labelBaseline, paint);
+
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setStrokeWidth(0);
+                }
+
                 paint.setColor(kdc.getTextColor());
                 // Set a drop shadow for the text if the shadow radius is positive value.
                 if (mKeyTextShadowRadius > 0.0f) {
@@ -507,8 +520,11 @@ public class KeyboardView extends View {
                 paint.setColor(Color.TRANSPARENT);
                 paint.clearShadowLayer();
             }
-            blendAlpha(paint, params.mAnimAlpha);
+
+            if(outline == null) blendAlpha(paint, params.mAnimAlpha);
+
             canvas.drawText(label, 0, label.length(), labelX, labelBaseline, paint);
+
             // Turn off drop shadow and reset x-scale.
             paint.clearShadowLayer();
             paint.setTextScaleX(1.0f);
@@ -550,8 +566,9 @@ public class KeyboardView extends View {
                 hintX = keyWidth - keyHintPaddingX - Math.max(hintDigitWidth, hintLabelWidth) / 2.0f;
                 hintBaseline = -paint.ascent() + keyHintPaddingY;
 
-                if(kdc.getCenteredHint()) {
+                if (kdc.getCenteredHint()) {
                     hintX = centerX;
+                    hintBaseline += paint.ascent() / 3.0f;
                 }
                 paint.setTextAlign(Align.CENTER);
             }

@@ -5,9 +5,13 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 
 data class KeyBackground(
     val foregroundColor: Int?,
+    val outlineColor: Int?,
+    val outlineWidth: Dp = 3.dp,
     val padding: Rect = Rect(0,0,0,0),
     val gap: RectF = RectF(1.0f,1.0f,1.0f,1.0f),
     val background: Drawable
@@ -24,6 +28,7 @@ data class AdvancedThemeOptions(
     val thumbnailImage: ImageBitmap? = null,
     val thumbnailScale: Float = 1.0f,
     val keyRoundness: Float = 1.0f,
+    val actionBarOpacity: Float = 0.5f,
     val keyBorders: Boolean? = null,
     val keyBackgrounds: KeyedBitmaps<KeyBackground>? = null,
     val keyIcons: KeyedBitmaps<KeyIcon>? = null,

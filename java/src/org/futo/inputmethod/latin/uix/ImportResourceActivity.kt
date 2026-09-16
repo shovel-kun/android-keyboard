@@ -57,6 +57,7 @@ import org.futo.inputmethod.latin.uix.actions.BugInfo
 import org.futo.inputmethod.latin.uix.actions.BugViewerState
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardBackupMetadata
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardImportMode
+import org.futo.inputmethod.latin.uix.actions.DebugLabel
 import org.futo.inputmethod.latin.uix.settings.NavigationItem
 import org.futo.inputmethod.latin.uix.settings.NavigationItemStyle
 import org.futo.inputmethod.latin.uix.settings.ScreenTitle
@@ -876,8 +877,13 @@ class ImportResourceActivity : ComponentActivity() {
                     painterResource(R.drawable.themes)
                 )
 
-                if(item.v.meta.isNewer) {
-                    Tip("⚠\uFE0F " + stringResource(R.string.resource_importer_warning_cfg_backup_newer_version))
+                val errors = item.v.config?.errors ?: ""
+                if(item.v.meta.isNewer || errors.isNotEmpty()) {
+                    Tip("⚠\uFE0F " + stringResource(R.string.theme_settings_warning_newer_version))
+                }
+
+                if(errors.isNotEmpty()) {
+                    Text("${errors}", style = DebugLabel)
                 }
 
                 if(item.v.config == null) {
@@ -1075,7 +1081,7 @@ class ImportResourceActivity : ComponentActivity() {
             if(item is ItemBeingImported.CustomTheme && DevAutoAcceptThemeImport) {
                 if(item.v.config == null) {
                     BugViewerState.pushBug(BugInfo(
-                        name = "your custom theme (invalid metadata json)",
+                        name = "your custom theme (invalid metadata)",
                         details = item.v.error ?: "Unknown error",
                     ))
                     BugViewerState.triggerOpen()

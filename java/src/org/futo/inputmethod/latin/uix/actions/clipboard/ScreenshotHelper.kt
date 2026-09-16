@@ -25,6 +25,8 @@ import org.futo.inputmethod.latin.uix.actions.throwIfDebug
 import org.futo.inputmethod.latin.uix.getSetting
 import org.futo.inputmethod.latin.uix.getSettingFlow
 
+val SupportsAddingScreenshots = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+
 interface ScreenshotListener {
     fun onScreenshotAdded(mime: String, uri: Uri)
 }
@@ -125,24 +127,24 @@ class ScreenshotHelper(
     }
 
     private suspend fun handleNewScreenshotLocked(dry: Boolean) = withContext(Dispatchers.IO) {
-        if(Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return@withContext
+        if(!SupportsAddingScreenshots) return@withContext
         if(!context.getSetting(ClipboardHistoryEnabled)) return@withContext
         if(context.getSetting(ClipboardIncognitoMode)) return@withContext
         if(!context.getSetting(ClipboardSaveScreenshots)) return@withContext
         if(!hasPermission()) return@withContext
 
+        val pathKey = when {
+            Build.VERSION.SDK_INT >= 29 -> MediaStore.Images.Media.RELATIVE_PATH
+            else -> MediaStore.Images.Media.DATA
+        }
+
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.MIME_TYPE,
-            MediaStore.Images.Media.RELATIVE_PATH
+            pathKey
         )
-        val selection = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            "${MediaStore.Images.Media.RELATIVE_PATH} LIKE '%Pictures/Screenshots%' " +
-                "AND ${MediaStore.Images.Media._ID} > ?"
-        } else {
-            "${MediaStore.Images.Media.DISPLAY_NAME} LIKE '%screenshot%' " +
-                "AND ${MediaStore.Images.Media._ID} > ?"
-        }
+
+        val selection = "$pathKey LIKE '%/Screenshots/%' AND ${MediaStore.Images.Media._ID} > ?"
 
         try {
             val queryArgs = Bundle().apply {

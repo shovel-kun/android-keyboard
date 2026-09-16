@@ -57,6 +57,11 @@ object ZipThemes {
     val themeCache: MutableMap<ThemeFileName, KeyboardColorScheme> = mutableMapOf()
     val thumbThemeCache: MutableMap<ThemeFileName, KeyboardColorScheme> = mutableMapOf()
 
+    private fun invalidateCache(name: ThemeFileName) {
+        themeCache.remove(name)
+        thumbThemeCache.remove(name)
+    }
+
     private val json = themeJson
 
     fun customThemesDir(context: Context) = File(context.filesDir, "themes").also { it.mkdirs() }
@@ -115,7 +120,7 @@ object ZipThemes {
         theme.keyIcons.values.forEach(putFile)
 
         zos.close()
-        themeCache.remove(name)
+        invalidateCache(name)
         updateCount.intValue += 1
     }
 
@@ -197,7 +202,7 @@ object ZipThemes {
             inputStream.copyTo(outputStream)
         }
 
-        themeCache.remove(custom(id))
+        invalidateCache(custom(id))
 
         val setting = custom(id).toSetting()
         val currTheme = context.getSetting(THEME_KEY)
@@ -223,6 +228,8 @@ object ZipThemes {
         val ctx = object : ThemeDecodingContext {
             override val context: Context
                 get() = androidContext
+
+            override val palette = lazy { dynamicTonalPalette(androidContext) }
 
             override fun getFileBytes(path: String): ByteArray? {
                 val entry = zipFile.getEntry(path)
@@ -297,6 +304,8 @@ object ZipThemes {
                 override val context: Context
                     get() = i.first.context
 
+                override val palette = lazy { dynamicTonalPalette(context) }
+
                 override fun getFileBytes(path: String): ByteArray? =
                     if(path == i.second.thumbnailImage) i.first.getFileBytes(path) else null
 
@@ -332,7 +341,7 @@ object ZipThemes {
         }
 
         file.delete()
-        themeCache.remove(name)
+        invalidateCache(name)
         updateCount.intValue += 1
     }
 }

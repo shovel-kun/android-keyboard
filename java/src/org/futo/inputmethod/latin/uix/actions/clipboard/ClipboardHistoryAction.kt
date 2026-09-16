@@ -279,7 +279,8 @@ val ClipboardHistoryAction = Action(
                         subtitle = stringResource(R.string.action_clipboard_manager_settings_save_screenshots_subtitle)
                     )
                 },
-                visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) }
+                visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) && SupportsAddingScreenshots },
+                appearInSearchIfVisibilityCheckFailed = SupportsAddingScreenshots
             ),
             userSettingToggleDataStore(
                 title = R.string.action_clipboard_manager_settings_link_previews,

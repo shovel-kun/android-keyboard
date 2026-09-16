@@ -6,6 +6,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Build
+import android.util.TypedValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import org.futo.inputmethod.keyboard.Key
@@ -15,6 +16,10 @@ import org.futo.inputmethod.latin.uix.DynamicThemeProvider
 import org.futo.inputmethod.latin.uix.KeyboardColorScheme
 import kotlin.math.roundToInt
 
+data class KeyOutline(
+    val color: Int,
+    val widthPx: Int
+)
 
 data class KeyDrawingConfiguration(
     val background: Drawable?,
@@ -30,7 +35,8 @@ data class KeyDrawingConfiguration(
     val hintSize: Float,
     val textTypeface: Typeface,
     val hintTypeface: Typeface,
-    val centeredHint: Boolean = false
+    val centeredHint: Boolean = false,
+    val outline: KeyOutline? = null,
 )
 
 data class CachedKeyedMatcher<T>(
@@ -139,6 +145,14 @@ class AdvancedThemeMatcher(
         val background = foundBackground?.background ?: key.selectBackground(drawableProvider)
         val textColor = foundBackground?.foregroundColor ?: key.selectTextColor(drawableProvider, params)
 
+        val outline = foundBackground?.outlineColor?.let {
+            KeyOutline(it, TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                foundBackground.outlineWidth.value,
+                context.resources.displayMetrics
+            ).roundToInt())
+        }
+
         val hintColor = foundBackground?.foregroundColor?.let { fgCol ->
             Color(fgCol).let { it.copy(alpha = it.alpha*0.8f) }.toArgb()
         } ?: key.selectHintTextColor(drawableProvider, params)
@@ -187,7 +201,8 @@ class AdvancedThemeMatcher(
             hintSize = hintSize,
             textTypeface = textTypeface,
             hintTypeface = hintTypeface,
-            centeredHint = scheme.extended.advancedThemeOptions.centerHints
+            centeredHint = scheme.extended.advancedThemeOptions.centerHints,
+            outline = outline
         )
     }
 }

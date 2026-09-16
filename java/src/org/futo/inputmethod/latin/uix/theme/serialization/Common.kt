@@ -76,4 +76,5 @@ interface SerializableTheme {
 
     val name: String
     val author: String
+    val errors: String
 }
