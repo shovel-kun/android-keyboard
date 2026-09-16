@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -518,6 +519,8 @@ class ClipboardHistoryManager private constructor(
     private val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     val clipboardHistory = mutableStateListOf<ClipboardEntry>()
     val linkArchives = mutableStateMapOf<String, ClipboardLinkArchive>()
+    internal var searchIndex by mutableStateOf(ClipboardSearchIndex())
+        private set
 
     private val clipboardFile = context.clipboardFile
     private val clipboardFileBak = File(context.filesDir, "$ClipboardFileName.bak")
@@ -590,6 +593,12 @@ class ClipboardHistoryManager private constructor(
     }
 
     init {
+        coroutineScope.launch {
+            snapshotFlow { clipboardSearchSource(linkArchives.values.toList(), clipboardHistory.toList()) }
+                .collectLatest { source ->
+                    searchIndex = withContext(Dispatchers.Default) { buildClipboardSearchIndex(source) }
+                }
+        }
         coroutineScope.launch {
             loadClipboard()
 

@@ -28,6 +28,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.uix.Action
+import org.futo.inputmethod.latin.uix.ActionTextEditController
 import org.futo.inputmethod.latin.uix.ActionWindow
 import org.futo.inputmethod.latin.uix.PersistentStateInitialization
 import org.futo.inputmethod.latin.uix.SettingsExporter
@@ -169,6 +170,7 @@ val ClipboardHistoryAction = Action(
         val clipboardHistoryManager = persistent as ClipboardHistoryManager
         val clipboardSearchActive = mutableStateOf(false)
         val clipboardSearchText = mutableStateOf("")
+        val clipboardSearchEditor = ActionTextEditController()
 
         manager.getLifecycleScope().launch {
             clipboardHistoryManager.reconcileClipboardStorage()
@@ -200,7 +202,8 @@ val ClipboardHistoryAction = Action(
                         clipboardHistoryManager = clipboardHistoryManager,
                         unlocked = unlocked,
                         searchActive = clipboardSearchActive,
-                        searchText = clipboardSearchText
+                        searchText = clipboardSearchText,
+                        searchEditor = clipboardSearchEditor
                     )
                 }
             }
@@ -211,7 +214,9 @@ val ClipboardHistoryAction = Action(
                     manager = manager,
                     clipboardHistoryManager = clipboardHistoryManager,
                     unlocked = unlocked,
-                    searchText = clipboardSearchText.value
+                    searchText = clipboardSearchText.value,
+                    searchActive = clipboardSearchActive.value,
+                    searchEditor = clipboardSearchEditor
                 )
             }
         }

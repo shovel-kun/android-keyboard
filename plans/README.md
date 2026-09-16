@@ -9,6 +9,7 @@ starting, honor its STOP conditions, and update the status row when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001 | Add private on-device AI tags to clipboard archives | P1 | L | - | DONE |
+| 002 | Add local tag suggestions to clipboard search | P1 | M | 001 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)
@@ -21,6 +22,11 @@ REJECTED (with one-line rationale)
 - Unit tests, model graph validation, Compose preview inspection, and the debug
   APK build pass. Physical-device timing remains a follow-up because no Android
   device was connected during implementation.
+
+- Plan 002 implements shared local tag indexing and explicit tag filters across
+  Clips, Archives and the keyboard menu, with cursor-aware suggestions. Compact
+  and large-text suggestion previews were rendered and inspected. Native editor
+  instrumentation tests compile; device execution remains unverified.
 
 ## Findings considered and rejected
 

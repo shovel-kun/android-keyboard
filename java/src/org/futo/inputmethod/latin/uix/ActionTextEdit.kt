@@ -12,6 +12,7 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.ViewGroup
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CompletionInfo
 import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
@@ -45,7 +46,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -128,6 +133,56 @@ class ActionEditTextInputConnection(val ic: InputConnection, val view: ActionEdi
     override fun hashCode(): Int = ic.hashCode()
 }
 
+/** Optional native editing bridge for cursor-aware completions. */
+class ActionTextEditController {
+    var selectionStart by mutableIntStateOf(0)
+        private set
+    var selectionEnd by mutableIntStateOf(0)
+        private set
+    var focused by mutableStateOf(false)
+        internal set
+    var completionVersion by mutableIntStateOf(0)
+        private set
+    var onKey: ((Int) -> Boolean)? = null
+    private var editor: ActionEditText? = null
+
+    internal fun attach(view: ActionEditText) {
+        editor = view
+        focused = view.hasFocus()
+        selectionStart = view.selectionStart
+        selectionEnd = view.selectionEnd
+        view.selectionChanged = { start, end ->
+            selectionStart = start
+            selectionEnd = end
+        }
+        view.completionKey = { onKey?.invoke(it) == true }
+    }
+
+    internal fun detach() {
+        editor?.selectionChanged = null
+        editor?.completionKey = null
+        editor = null
+        focused = false
+    }
+
+    fun replace(expectedText: String, start: Int, end: Int, replacement: String) {
+        val view = editor ?: return
+        // Native input can advance before Compose has refreshed a suggestion row.
+        if(view.text.toString() != expectedText) return
+        view.beginBatchEdit()
+        try {
+            view.inputConnection?.finishComposingText()
+            BaseInputConnection.removeComposingSpans(view.editableText)
+            view.editableText.replace(start, end, replacement)
+            view.setSelection(start + replacement.length)
+            view.requestFocus()
+            completionVersion++
+        } finally {
+            view.endBatchEdit()
+        }
+    }
+}
+
 class ActionEditText(
     context: Context,
     attrs: AttributeSet? = null,
@@ -135,6 +190,31 @@ class ActionEditText(
     val inspection: Boolean = false
 ) :
     androidx.appcompat.widget.AppCompatEditText(context, attrs, defStyleAttr) {
+    internal var selectionChanged: ((Int, Int) -> Unit)? = null
+    internal var completionKey: ((Int) -> Boolean)? = null
+    private var consumedBack = false
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        selectionChanged?.invoke(selStart, selEnd)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
+        if(completionKey?.invoke(keyCode) == true) true else super.onKeyDown(keyCode, event)
+
+    override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+        if(keyCode == KeyEvent.KEYCODE_BACK) {
+            if(event.action == KeyEvent.ACTION_DOWN) {
+                consumedBack = completionKey?.invoke(keyCode) == true
+                if(consumedBack) return true
+            } else if(event.action == KeyEvent.ACTION_UP && consumedBack) {
+                consumedBack = false
+                return true
+            }
+        }
+        return super.onKeyPreIme(keyCode, event)
+    }
+
     var inputConnection: InputConnection? = null
         private set
 
@@ -188,6 +268,7 @@ private fun GenericEditTextCompose(
     forcedLayout: String? = null,
     inputFilters: Array<InputFilter>? = null,
     onFocusChanged: ((Boolean) -> Unit)? = null,
+    controller: ActionTextEditController? = null,
 ) {
     val context = LocalContext.current
 
@@ -269,11 +350,19 @@ private fun GenericEditTextCompose(
         }
     }
 
+    DisposableEffect(editText, controller) {
+        controller?.attach(editText)
+        onDispose { controller?.detach() }
+    }
+
     AndroidView(
         factory = { editText },
         modifier = modifier,
         update = { view ->
-            view.setOnFocusChangeListener { _, focused -> onFocusChanged?.invoke(focused) }
+            view.setOnFocusChangeListener { _, focused ->
+                controller?.focused = focused
+                onFocusChanged?.invoke(focused)
+            }
         },
         onRelease = {
             onUnoverride?.invoke()
@@ -325,7 +414,8 @@ fun ActionTextEditor(
     onEnter: (() -> Unit)? = null,
     autofocus: Boolean = true,
     inputFilters: Array<InputFilter>? = null,
-    placeholder: String? = null
+    placeholder: String? = null,
+    controller: ActionTextEditController? = null
 ) {
     val manager = if(!LocalInspectionMode.current) LocalManager.current else null
     GenericEditTextCompose(
@@ -347,6 +437,7 @@ fun ActionTextEditor(
             afterUnOverride?.invoke(result)
         },
         inputFilters = inputFilters,
+        controller = controller,
     )
 }
 
@@ -364,6 +455,7 @@ fun SettingsTextEdit(
     forcedLayout: String? = null,
     error: Boolean = false,
     onFocusChanged: ((Boolean) -> Unit)? = null,
+    controller: ActionTextEditController? = null,
 ) {
     Surface(
         color = if(error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -389,6 +481,7 @@ fun SettingsTextEdit(
                     autocorrect = autocorrect,
                     autofocus = autofocus,
                     onFocusChanged = onFocusChanged,
+                    controller = controller,
                     forceQwerty = forceQwerty,
                     forcedLayout = forcedLayout,
                     modifier = Modifier.fillMaxWidth()
@@ -404,7 +497,12 @@ fun SettingsTextEdit(
 }
 
 @Composable
-fun ActionHeaderSearch(searchText: MutableState<String>, modifier: Modifier = Modifier, placeholder: String? = null) {
+fun ActionHeaderSearch(
+    searchText: MutableState<String>,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    controller: ActionTextEditController? = null
+) {
     Surface(
         color = LocalKeyboardScheme.current.keyboardContainer,
         contentColor = LocalKeyboardScheme.current.onKeyboardContainer,
@@ -417,7 +515,7 @@ fun ActionHeaderSearch(searchText: MutableState<String>, modifier: Modifier = Mo
             modifier = Modifier.padding(8.dp),
             contentAlignment = Alignment.CenterStart
         ) {
-            ActionTextEditor(text = searchText, placeholder = placeholder)
+            ActionTextEditor(text = searchText, placeholder = placeholder, controller = controller)
         }
     }
 }

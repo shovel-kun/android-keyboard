@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <string name="clipboard_tag_category_general">General</string>
+    <string name="clipboard_tag_category_character">Character</string>
+    <plurals name="clipboard_tag_match_count">
+        <item quantity="one">%1$d match</item>
+        <item quantity="other">%1$d matches</item>
+    </plurals>
+    <string name="clipboard_tag_excluded_count">Excludes %1$d</string>
     <!-- Keyboard actions -->
     <string name="action_theme_switcher_title">Theme Switcher</string>
     <string name="action_select_all_title">Select All</string>
