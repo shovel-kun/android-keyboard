@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.datastore.preferences.core.PreferencesSerializer
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -57,8 +58,6 @@ import org.futo.inputmethod.latin.uix.actions.clipboard.archiveTombstoneKeys
 import org.futo.inputmethod.latin.uix.actions.clipboard.archiveTombstonesForEntries
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardBackupMetadata
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveDir
-import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveFile
-import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardArchiveMetadataDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardDir
 import org.futo.inputmethod.latin.uix.actions.clipboard.clipboardFile
 import org.futo.inputmethod.latin.uix.actions.clipboard.clearEntryArchiveTombstones
@@ -94,6 +93,7 @@ import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlin.coroutines.coroutineContext
 
 const val IMPORT_SETTINGS_REQUEST = 1801146881
 const val EXPORT_SETTINGS_REQUEST = 69835032
@@ -257,7 +257,6 @@ object SettingsExporter {
                 "n" -> editor.remove(k)
             }
         }
-        editor.apply()
     }
 
     private fun writePersonalDict(
@@ -456,7 +455,9 @@ object SettingsExporter {
             File(staging, datastoreFileName).takeIf(File::isFile)?.inputStream()?.use {
                 PreferencesSerializer.readFrom(it.source().buffer())
             }
-            File(staging, sharedPreferencesFileName).takeIf(File::isFile)?.readText()?.let(::JSONObject)
+            File(staging, sharedPreferencesFileName).takeIf(File::isFile)?.inputStream()?.use {
+                readSharedPrefs(getDefaultSharedPreferences(context).edit(), it)
+            }
             File(staging, personalDictFileName).takeIf(File::isFile)?.readText()?.let {
                 Json.decodeFromString<List<PersonalWord>>(it)
             }
@@ -502,100 +503,100 @@ object SettingsExporter {
             ZipThemes.customThemesDir(context).listFiles()?.forEach { it.delete() }
         }
         for(file in files) {
-            kotlin.coroutines.coroutineContext.ensureActive()
-            val name = file.relativeTo(staging).invariantSeparatorsPath
+            coroutineContext.ensureActive()
+            val name = file.relativeTo(staging.canonicalFile).invariantSeparatorsPath
             file.inputStream().use { zipIn ->
-            when {
-                name == versionFileName -> {}
+                when {
+                    name == versionFileName -> {}
 
-                name == datastoreFileName -> {
-                    val prefsData = zipIn.readAllBytesCompat()
-                    val prefs = PreferencesSerializer.readFrom(prefsData.inputStream().source().buffer())
-                    context.dataStore.updateData { prefs }
-                }
+                    name == datastoreFileName -> {
+                        val prefsData = zipIn.readAllBytesCompat()
+                        val prefs = PreferencesSerializer.readFrom(prefsData.inputStream().source().buffer())
+                        context.dataStore.updateData { prefs }
+                    }
 
-                name == sharedPreferencesFileName -> {
-                    val editor = getDefaultSharedPreferences(context).edit()
-                    readSharedPrefs(editor, zipIn)
-                    @SuppressLint("ApplySharedPref")
-                    editor.commit()
-                }
+                    name == sharedPreferencesFileName -> {
+                        val editor = getDefaultSharedPreferences(context).edit()
+                        readSharedPrefs(editor, zipIn)
+                        @SuppressLint("ApplySharedPref")
+                        editor.commit()
+                    }
 
-                name == personalDictFileName -> {
-                    readPersonalDict(context, zipIn, destructive)
-                }
+                    name == personalDictFileName -> {
+                        readPersonalDict(context, zipIn, destructive)
+                    }
 
-                name == clipboardFileName || name == ClipboardArchiveFileName -> {}
+                    name == clipboardFileName || name == ClipboardArchiveFileName -> {}
 
-                name.startsWith("ext/") -> {
-                    File(extFilesDir, name.splitSlash()).outputStream().use {
-                        zipIn.copyTo(it)
+                    name.startsWith("ext/") -> {
+                        File(extFilesDir, name.splitSlash()).outputStream().use {
+                            zipIn.copyTo(it)
+                        }
+                    }
+
+                    name.startsWith("transformers/") -> {
+                        File(transformersDir, name.splitSlash()).outputStream().use {
+                            zipIn.copyTo(it)
+                        }
+                    }
+
+                    name.startsWith("userdict/") -> {
+                        val names = name.split("/")
+                        assert(names.size == 3)
+
+                        val subdirName = names[1]
+                        val fileName = names[2]
+
+                        val subdir = File(context.filesDir, subdirName)
+                        subdir.mkdirs()
+
+                        File(subdir, fileName).outputStream().use {
+                            zipIn.copyTo(it)
+                        }
+                    }
+
+                    name.startsWith("clipboard/") ||
+                        name.startsWith("$ClipboardArchiveFilesDirectoryName/") -> {}
+
+                    name.startsWith("mozc/") -> {
+                        val relDir = name.splitSlash()
+
+                        assert(!relDir.contains('/'))
+
+                        val userProfileDir = mozcUserProfileDir(context)
+                        userProfileDir.mkdirs()
+                        File(userProfileDir, relDir).outputStream().use {
+                            zipIn.copyTo(it)
+                        }
+                    }
+
+                    name.startsWith("rime/") -> {
+                        val relDir = name.splitSlash()
+                        val rimeDir = ChineseIME.getRimeDir(context)
+
+                        val targetFile = File(rimeDir, relDir)
+                        targetFile.parentFile!!.mkdirs()
+
+                        targetFile.outputStream().use {
+                            zipIn.copyTo(it)
+                        }
+                    }
+
+                    name.startsWith("themes/") -> {
+                        themesDir.mkdirs()
+
+                        File(themesDir, name.splitSlash()).outputStream().use {
+                            zipIn.copyTo(it)
+                        }
+                    }
+
+                    else -> {
+                        Log.w(
+                            "SettingsExporter",
+                            "Encountered unknown file when reading exported backup: $name"
+                        )
                     }
                 }
-
-                name.startsWith("transformers/") -> {
-                    File(transformersDir, name.splitSlash()).outputStream().use {
-                        zipIn.copyTo(it)
-                    }
-                }
-
-                name.startsWith("userdict/") -> {
-                    val names = name.split("/")
-                    assert(names.size == 3)
-
-                    val subdirName = names[1]
-                    val fileName = names[2]
-
-                    val subdir = File(context.filesDir, subdirName)
-                    subdir.mkdirs()
-
-                    File(subdir, fileName).outputStream().use {
-                        zipIn.copyTo(it)
-                    }
-                }
-
-                name.startsWith("clipboard/") ||
-                    name.startsWith("$ClipboardArchiveFilesDirectoryName/") -> {}
-
-                name.startsWith("mozc/") -> {
-                    val relDir = name.splitSlash()
-
-                    assert(!relDir.contains('/'))
-
-                    val userProfileDir = mozcUserProfileDir(context)
-                    userProfileDir.mkdirs()
-                    File(userProfileDir, relDir).outputStream().use {
-                        zipIn.copyTo(it)
-                    }
-                }
-
-                name.startsWith("rime/") -> {
-                    val relDir = name.splitSlash()
-                    val rimeDir = ChineseIME.getRimeDir(context)
-
-                    val targetFile = File(rimeDir, relDir)
-                    targetFile.parentFile!!.mkdirs()
-
-                    targetFile.outputStream().use {
-                        zipIn.copyTo(it)
-                    }
-                }
-
-                name.startsWith("themes/") -> {
-                    themesDir.mkdirs()
-
-                    File(themesDir, name.splitSlash()).outputStream().use {
-                        zipIn.copyTo(it)
-                    }
-                }
-
-                else -> {
-                    Log.w(
-                        "SettingsExporter",
-                        "Encountered unknown file when reading exported backup: ${name}"
-                    )
-                }
-            }
             }
         }
 

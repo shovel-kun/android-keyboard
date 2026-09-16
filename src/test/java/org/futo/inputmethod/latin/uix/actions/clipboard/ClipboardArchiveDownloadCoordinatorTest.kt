@@ -15,6 +15,21 @@ import org.junit.Test
 
 class ClipboardArchiveDownloadCoordinatorTest {
     @Test
+    fun cancelAll_waitsForDownloadCleanupBeforeImportCanReplaceFiles() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val coordinator = ClipboardArchiveDownloadCoordinator(scope)
+            var cleanedUp = false
+            coordinator.launch("archive", block = { kotlinx.coroutines.awaitCancellation() }, onFinished = { cleanedUp = true })
+            coordinator.cancelAll()
+            assertTrue(cleanedUp)
+            assertFalse(coordinator.isActive("archive"))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun startupResumeQueueBoundsConcurrentArchivesAndDrainsInOrder() {
         val queue = ClipboardArchiveResumeQueue(maxConcurrent = 3)
         queue.enqueue(listOf("one", "two", "three", "four", "five"))

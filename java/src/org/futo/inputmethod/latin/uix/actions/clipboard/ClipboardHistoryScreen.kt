@@ -58,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.futo.inputmethod.latin.R
+import org.futo.inputmethod.latin.uix.BackupImportProgressScreen
 import org.futo.inputmethod.latin.uix.SettingsTextEdit
 import org.futo.inputmethod.latin.uix.settings.ScrollableList
 import org.futo.inputmethod.latin.uix.settings.pages.ParagraphText
@@ -386,7 +387,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             onBack = ::handleBack,
             badgeCount = archiveDownloadItems.size.takeIf { downloadsVisible },
             actions = {
-                if(!selectionMode && !downloadsVisible && uiState.historyEnabled && uiState.historyVisible) {
+                if(!manager.backupImportInProgress && !selectionMode && !downloadsVisible && uiState.historyEnabled && uiState.historyVisible) {
                     if(activeMode == ClipboardHistoryContentMode.Archives) {
                         IconButton(
                             onClick = {
@@ -421,6 +422,10 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         )
 
         when {
+            manager.backupImportInProgress -> {
+                BackupImportProgressScreen(onClose = ::handleBack)
+            }
+
             downloadsVisible && uiState.historyEnabled && uiState.historyVisible -> {
                 ClipboardArchiveDownloadsScreen(
                     items = archiveDownloadItems,

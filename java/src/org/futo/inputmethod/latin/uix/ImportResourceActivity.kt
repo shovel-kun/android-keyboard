@@ -1,6 +1,7 @@
 package org.futo.inputmethod.latin.uix
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.Resources
 import android.net.Uri
 import android.os.Bundle
@@ -22,6 +23,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -229,6 +231,32 @@ fun ClipboardBackupImportScreen(
                 style = NavigationItemStyle.MiscNoArrow,
                 navigate = onCancel
             )
+        }
+    }
+}
+
+@Composable
+internal fun BackupImportProgressScreen(onClose: () -> Unit) {
+    val context = LocalContext.current
+    val status = BackupImportService.status.collectAsState().value
+    ScrollableList {
+        ScreenTitle(stringResource(R.string.backup_import_title))
+        if(status.running) {
+            Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+        Text(status.description(context), modifier = Modifier.padding(16.dp))
+        if(status.running) {
+            Text(stringResource(R.string.backup_import_background), modifier = Modifier.padding(16.dp))
+        }
+        if(status.phase == BackupImportPhase.Preparing) {
+            Button(onClick = { BackupImportService.cancel(context) }, modifier = Modifier.padding(16.dp)) {
+                Text(stringResource(android.R.string.cancel))
+            }
+        }
+        Button(onClick = onClose, modifier = Modifier.padding(16.dp)) {
+            Text(stringResource(if(status.running) R.string.backup_import_leave else R.string.backup_import_close))
         }
     }
 }
@@ -714,6 +742,7 @@ class ImportResourceActivity : ComponentActivity() {
     private val itemBeingImported: MutableState<ItemBeingImported?> = mutableStateOf(null)
     private var uri: Uri? = null
     private val detectingImport = mutableStateOf(true)
+    private val showImportProgress = mutableStateOf(false)
 
     private fun normalizeFilename(name: String) = name.replace("/", "_").replace(":", "_").replace(" ", "_")
 
@@ -900,49 +929,15 @@ class ImportResourceActivity : ComponentActivity() {
         is ItemBeingImported.SettingsBackup -> {
             SettingsImportScreen(
                 metadata = item.v,
-                onApply = {
-                    lifecycleScope.launch {
-                        withContext(Dispatchers.IO) {
-                            contentResolver.openInputStream(uri!!)!!.use {
-                                SettingsExporter.loadSettings(
-                                    this@ImportResourceActivity,
-                                    it,
-                                    true
-                                )
-                            }
-                        }
-                        withContext(Dispatchers.Main) {
-                            finish()
-                        }
-                    }
-                },
-                onCancel = {
-                    finish()
-                }
+                onApply = { startBackupImport() },
+                onCancel = { finish() }
             )
         }
         is ItemBeingImported.ClipboardBackup -> {
             ClipboardBackupImportScreen(
                 metadata = item.v,
-                onApply = { mode ->
-                    lifecycleScope.launch {
-                        withContext(Dispatchers.IO) {
-                            contentResolver.openInputStream(uri!!)!!.use {
-                                SettingsExporter.loadClipboardBackup(
-                                    this@ImportResourceActivity,
-                                    it,
-                                    mode
-                                )
-                            }
-                        }
-                        withContext(Dispatchers.Main) {
-                            finish()
-                        }
-                    }
-                },
-                onCancel = {
-                    finish()
-                }
+                onApply = { mode -> startBackupImport(mode) },
+                onCancel = { finish() }
             )
         }
         is ItemBeingImported.UserDictFile -> {
@@ -973,6 +968,12 @@ class ImportResourceActivity : ComponentActivity() {
         }
     } }
 
+    private fun startBackupImport(mode: ClipboardImportMode? = null) {
+        BackupImportService.start(this, uri!!, mode)
+        intent.putExtra(BackupImportService.ShowProgressExtra, true)
+        showImportProgress.value = true
+    }
+
     private fun updateContent() {
         setContent {
             themeOption.value?.let { themeOption ->
@@ -985,7 +986,9 @@ class ImportResourceActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.background
                     ) {
                         Box(Modifier.safeDrawingPadding()) {
-                            if(detectingImport.value) {
+                            if(showImportProgress.value) {
+                                BackupImportProgressScreen(onClose = { finish() })
+                            } else if(detectingImport.value) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     CircularProgressIndicator()
                                 }
@@ -1050,7 +1053,8 @@ class ImportResourceActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        this.uri = intent?.data!!
+        this.uri = intent?.data
+        showImportProgress.value = intent.getBooleanExtra(BackupImportService.ShowProgressExtra, false)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -1060,6 +1064,8 @@ class ImportResourceActivity : ComponentActivity() {
 
         val key = getSetting(THEME_KEY)
         this.themeOption.value = getThemeOption(this, key).orDefault(this)
+
+        if(showImportProgress.value) return
 
         lifecycleScope.launch {
             val item = withContext(Dispatchers.IO) { detectItemBeingImported() }
@@ -1081,6 +1087,12 @@ class ImportResourceActivity : ComponentActivity() {
                 finish()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        recreate()
     }
 
     override fun onResume() {

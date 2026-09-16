@@ -152,6 +152,12 @@ internal class ClipboardArchiveDownloadCoordinator(
         jobsByArchiveKey.remove(archiveKey)
     }
 
+    suspend fun cancelAll() {
+        val jobs = jobsByArchiveKey.values.toList()
+        jobsByArchiveKey.keys.toList().forEach(::cancel)
+        jobs.forEach { it.join() }
+    }
+
     fun cancel(archiveKey: String) {
         clearQueuedSourceUrls(archiveKey)
         cancelActive(archiveKey)

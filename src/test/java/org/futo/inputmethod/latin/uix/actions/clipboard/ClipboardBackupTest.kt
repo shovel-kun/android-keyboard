@@ -1,5 +1,7 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
+import org.futo.inputmethod.latin.uix.BackupProgressInputStream
+import org.futo.inputmethod.latin.uix.prepareSettingsBackup
 import org.futo.inputmethod.latin.uix.SettingsExporter
 import org.futo.inputmethod.latin.uix.backupCompressionLevel
 import org.futo.inputmethod.latin.uix.clipboardBackupMediaFiles
@@ -17,6 +19,93 @@ import java.util.zip.ZipOutputStream
 import kotlin.io.path.createTempDirectory
 
 class ClipboardBackupTest {
+    @Test
+    fun settingsPreparation_cancelledReadRemovesStagingWithoutChangingLiveFiles() {
+        val root = createTempDirectory().toFile()
+        try {
+            val live = File(root, "live").apply { mkdirs() }
+            val original = File(live, ClipboardFileName).apply { writeText(encodeClipboardEntries(listOf(sampleEntry("existing")))) }
+            val staging = File(root, "stage")
+            val before = original.readText()
+            val input = BackupProgressInputStream(backupProbeInput(
+                "FUTOKeyboardSettings_CfgExportVersion", ByteArray(9).apply { this[0] = 1 }
+            )) { if(it > 1024) throw kotlinx.coroutines.CancellationException("cancelled") }
+            try {
+                prepareSettingsBackup(input, staging)
+                throw AssertionError("Expected cancellation")
+            } catch(_: kotlinx.coroutines.CancellationException) {
+                assertFalse(staging.exists())
+                assertEquals(before, original.readText())
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun settingsPreparation_validatesMetadataAndRejectsTraversalBeforeApply() {
+        val root = createTempDirectory().toFile()
+        try {
+            val header = "FUTOKeyboardSettings_CfgExportVersion" to ByteArray(9).apply { this[0] = 1 }
+            val entries = listOf(sampleEntry("restored"))
+            val stage = File(root, "valid")
+            prepareSettingsBackup(zip(header, ClipboardFileName to encodeClipboardEntries(entries).toByteArray()), stage)
+            assertEquals(entries, File(stage, ClipboardFileName).decodeClipboardEntries())
+            listOf(ClipboardFileName to "invalid".toByteArray(), "../outside" to byteArrayOf(1)).forEachIndexed { index, entry ->
+                val invalid = File(root, "invalid$index")
+                try {
+                    prepareSettingsBackup(zip(header, entry), invalid)
+                    throw AssertionError("Expected invalid backup rejection")
+                } catch(_: IllegalArgumentException) {
+                    assertFalse(invalid.exists())
+                    assertFalse(File(root, "outside").exists())
+                }
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun backupReadProgress_countsBeyondTwoGiB() {
+        val size = 3L * 1024 * 1024 * 1024
+        var remaining = size
+        val source = object : java.io.InputStream() {
+            override fun read(): Int = error("Use buffered reads")
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if(remaining == 0L) return -1
+                val read = minOf(remaining, length.toLong()).toInt()
+                remaining -= read
+                return read
+            }
+        }
+        var progress = 0L
+        val input = BackupProgressInputStream(source) { progress = it }
+        val buffer = ByteArray(64 * 1024)
+        while(input.read(buffer) != -1) { }
+        assertEquals(size, progress)
+    }
+
+    @Test
+    fun archiveStore_consumesStagedMediaOnlyWhenRequested() {
+        val root = createTempDirectory().toFile()
+        try {
+            val incoming = File(root, "incoming").apply { mkdirs() }
+            File(incoming, "photo.jpg").writeText("media")
+            val live = File(root, "live").apply { mkdirs() }
+            val entry = sampleEntry("restored").copy(backingFile = "photo.jpg")
+            ClipboardArchiveStore(live).stageAndPromote(
+                ClipboardArchiveStoreState(listOf(entry), emptyList(), emptyList()),
+                listOf(incoming), preserveExistingMedia = false, consumeImportedMedia = true
+            )
+            assertFalse(File(incoming, "photo.jpg").exists())
+            assertEquals("media", File(live, "clipboardfiles/photo.jpg").readText())
+            assertEquals(listOf(entry), File(live, ClipboardFileName).decodeClipboardEntries())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test
     fun clipboardSaveQueueMergesPendingRequestsAndPreservesReconciliation() {
         val queue = ClipboardSaveRequestQueue()

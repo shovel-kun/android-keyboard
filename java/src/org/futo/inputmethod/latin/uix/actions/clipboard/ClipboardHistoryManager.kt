@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -531,6 +532,8 @@ class ClipboardHistoryManager private constructor(
     private var clipboardSaveDrainJob: Job? = null
     private val pendingClipboardSaves = ClipboardSaveRequestQueue()
     private var saveClipboardLoadJob: Job? = null
+    internal var backupImportInProgress by mutableStateOf(false)
+        private set
     internal var clipboardLoaded by mutableStateOf(false)
         private set
     private val archiveBackfillAttemptedKeys = mutableSetOf<String>()
@@ -601,8 +604,33 @@ class ClipboardHistoryManager private constructor(
         }
     }
 
+    internal suspend fun withBackupImport(block: suspend () -> Unit) {
+        try {
+            withContext(Dispatchers.Main) {
+                backupImportInProgress = true
+                scheduledPreviewSaveJob?.cancelAndJoin()
+                archiveEntryUpdateJob?.cancelAndJoin()
+                clipboardSaveDrainJob?.join()
+                saveClipboardLoadJob?.cancelAndJoin()
+                archiveDownloadCoordinator.cancelAll()
+                imageTagCoordinator.cancelAll()
+                pendingArchiveSaves.drain()
+            }
+            loadMutex.withLock {
+                // Wait for already-running clipboard file writes before replacing storage.
+                withContext(ClipboardIOContext) { synchronized(archiveSaveLock) {} }
+                block()
+            }
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main) {
+                backupImportInProgress = false
+                loadClipboard()
+            }
+        }
+    }
+
     private fun shouldImportClipboardChanges(): Boolean =
-        context.getSettingBlocking(ClipboardHistoryEnabled) &&
+        !backupImportInProgress && context.getSettingBlocking(ClipboardHistoryEnabled) &&
             !context.getSettingBlocking(ClipboardIncognitoMode)
 
     private suspend fun readPrimaryClipboardImport(): PrimaryClipboardImport? =
@@ -641,6 +669,7 @@ class ClipboardHistoryManager private constructor(
         }
 
     private fun importTextEntry(timestamp: Long, rawText: String, mimeTypes: List<String>) {
+        if(backupImportInProgress) return
         val text = ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
         val existingEntries = clipboardHistory.filter { it.text == text }
         val preservedEntry = existingEntries.lastOrNull { it.hasRetainedPreviewState() }
@@ -695,6 +724,7 @@ class ClipboardHistoryManager private constructor(
     }
 
     private suspend fun importScreenshotEntry(mime: String, uri: Uri) {
+        if(backupImportInProgress) return
         if(!shouldObserveScreenshots(
                 historyEnabled = context.getSettingBlocking(ClipboardHistoryEnabled),
                 incognitoMode = context.getSettingBlocking(ClipboardIncognitoMode),
@@ -792,6 +822,7 @@ class ClipboardHistoryManager private constructor(
     }
 
     private suspend fun onClipboardImported(file: File) {
+        if(backupImportInProgress) return // The import owner reloads once after applying all files.
         if(file != clipboardFile && file.name != clipboardFile.name) return
 
         loadClipboard()
@@ -800,6 +831,7 @@ class ClipboardHistoryManager private constructor(
     }
 
     suspend fun reconcileClipboardStorage(): Boolean = withContext(ClipboardIOContext) {
+        if(backupImportInProgress) return@withContext false
         reconcileArchiveStorage()
 
         // Enumerate the clipboard media directory once on a background thread rather
@@ -828,7 +860,7 @@ class ClipboardHistoryManager private constructor(
         exiting: Boolean = false,
         reconcileBeforeSave: Boolean = true
     ): Job? {
-        if(!context.isDirectBootUnlocked) return null
+        if(backupImportInProgress || !context.isDirectBootUnlocked) return null
         if(!clipboardLoaded) {
             if(saveClipboardLoadJob?.isActive == true) return null
 
@@ -903,12 +935,14 @@ class ClipboardHistoryManager private constructor(
         }
 
     fun deleteClipboard() {
+        if(backupImportInProgress) return
         listOf(clipboardFile, clipboardFileSwap, clipboardFileBak).forEach {
             if(it.exists()) it.delete()
         }
     }
 
     fun refreshMissingLinkPreviews(forceArchiveBackfill: Boolean = false) {
+        if(backupImportInProgress) return
         if(context.getSetting(ClipboardIncognitoMode)) return
         if(!currentPreviewState().shouldArchivePreviews) return
         if(!canRunAutomaticClipboardNetworkDownloads()) return
@@ -1854,6 +1888,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     }
 
     private suspend fun loadClipboardLocked() = withContext(ClipboardIOContext) {
+        if(backupImportInProgress) return@withContext
         if(!context.isDirectBootUnlocked) {
             publishClipboardLoadFailure("Direct Boot not unlocked")
             return@withContext
@@ -2616,6 +2651,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         entry.previewMetadata?.archiveKey()?.let { linkArchives[it] }
 
     private fun saveArchive(archive: ClipboardLinkArchive) {
+        if(backupImportInProgress) return
         if(!context.isDirectBootUnlocked) return
         synchronized(archiveSaveLock) {
             try {
@@ -2662,6 +2698,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     }
 
     private fun saveArchiveTombstones(tombstones: Collection<ClipboardArchiveTombstone>) {
+        if(backupImportInProgress) return
         if(!context.isDirectBootUnlocked) return
         synchronized(archiveSaveLock) {
             try {
@@ -2675,10 +2712,12 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     }
 
     private fun deleteArchiveMetadataFile(archiveKey: String) {
+        if(backupImportInProgress) return
         archiveStore.deleteArchiveMetadata(archiveKey)
     }
 
     private fun deleteStaleArchiveMetadataFiles(retainedArchiveKeys: Set<String>) {
+        if(backupImportInProgress) return
         archiveStore.deleteStaleArchiveMetadata(retainedArchiveKeys)
     }
 

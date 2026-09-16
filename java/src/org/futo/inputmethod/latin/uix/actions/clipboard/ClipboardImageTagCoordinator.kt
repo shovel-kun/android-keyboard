@@ -6,6 +6,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -48,6 +50,14 @@ internal class ClipboardImageTagCoordinator(
         }
     }
 
+    suspend fun cancelAll() {
+        pending.clear()
+        drainJob?.cancelAndJoin()
+        activeRequest = null
+        drainJob = null
+        publishState()
+    }
+
     private suspend fun drain() {
         val tagger = try {
             withContext(workerDispatcher) { taggerFactory() }
@@ -81,7 +91,7 @@ internal class ClipboardImageTagCoordinator(
                 publishState()
             }
         } finally {
-            withContext(workerDispatcher) { tagger.close() }
+            withContext(NonCancellable + workerDispatcher) { tagger.close() }
             activeRequest = null
             drainJob = null
             publishState()

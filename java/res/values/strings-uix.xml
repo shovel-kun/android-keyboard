@@ -171,6 +171,17 @@
     <string name="clipboard_history_copy_text">Copy text</string>
     <string name="clipboard_history_copied_text">Copied to clipboard</string>
     <string name="clipboard_history_open_settings">Open Clipboard Settings</string>
+    <string name="backup_import_title">Backup import</string>
+    <string name="backup_import_leave">Continue in background</string>
+    <string name="backup_import_close">Close</string>
+    <string name="backup_import_preparing">Preparing backup · %1$s read</string>
+    <string name="backup_import_applying">Applying backup. Please wait until this finishes before updating or stopping the app.</string>
+    <string name="backup_import_complete">Backup imported.</string>
+    <string name="backup_import_cancelled">Import cancelled. Your existing data was kept.</string>
+    <string name="backup_import_failed">Import failed: %1$s</string>
+    <string name="backup_import_timeout">Android stopped the import because its time limit was reached.</string>
+    <string name="backup_import_idle">No import is running. If an import was interrupted, start it again from your backup.</string>
+    <string name="backup_import_background">You can leave this screen. The import will continue in the background.</string>
     <string name="clipboard_history_loading">Loading clipboard history…</string>
     <string name="clipboard_history_empty">Saved text and media clips will appear here.</string>
     <string name="clipboard_history_no_results_title">No Matching Clips</string>

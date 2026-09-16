@@ -7,11 +7,52 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import kotlinx.coroutines.launch
 import org.junit.Test
 import java.io.File
 import kotlin.io.path.createTempDirectory
 
 class ClipboardImageTagCoordinatorTest {
+    @Test
+    fun cancelAll_closesSessionAndDiscardsResultsBeforeStorageReplacement() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val directory = createTempDirectory().toFile()
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            val file = File(directory, "image.jpg").apply { writeText("image") }
+            var closed = 0
+            var published = 0
+            val coordinator = ClipboardImageTagCoordinator(
+                scope,
+                taggerFactory = {
+                    object : ClipboardImageTagger {
+                        override fun tag(file: File, attemptedAtEpochMs: Long): ClipboardImageTaggingResult {
+                            started.countDown()
+                            check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                            return ClipboardImageTaggingResult(ClipboardImageTagModelRevision, attemptedAtEpochMs)
+                        }
+                        override fun close() { closed++ }
+                    }
+                },
+                onResult = { _, _ -> published++ }
+            )
+            coordinator.enqueue(ClipboardImageTagRequest("archive", 0, file))
+            assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            val cancelling = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { coordinator.cancelAll() }
+            release.countDown()
+            cancelling.join()
+            assertEquals(1, closed)
+            assertEquals(0, published)
+            assertEquals(0, coordinator.state.value.remainingCount)
+        } finally {
+            release.countDown()
+            scope.cancel()
+            directory.deleteRecursively()
+        }
+    }
+
     @Test
     fun drainsOneSessionInFifoOrderAndDeduplicatesRequests() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
