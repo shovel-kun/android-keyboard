@@ -1,5 +1,6 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
+import org.futo.inputmethod.latin.uix.SettingsExporter
 import org.futo.inputmethod.latin.uix.backupCompressionLevel
 import org.futo.inputmethod.latin.uix.clipboardBackupMediaFiles
 import org.junit.Assert.assertEquals
@@ -99,6 +100,50 @@ class ClipboardBackupTest {
         } finally {
             root.deleteRecursively()
         }
+    }
+
+    @Test
+    fun clipboardBackupDetection_readsOnlyHeader() {
+        val input = backupProbeInput(
+            ClipboardBackupManifestFileName,
+            "{\"version\":1,\"createdAtEpochMs\":0}".toByteArray()
+        )
+        val size = input.available()
+
+        assertEquals(0L, SettingsExporter.getClipboardBackupMetadata(input)?.dateExported?.time)
+        assertTrue("Detection must not scan the media payload", size - input.available() < 1024)
+        input.reset()
+        assertNull(SettingsExporter.getCfgFileMetadata(input))
+        assertTrue("Detection must not scan the media payload", size - input.available() < 1024)
+    }
+
+    @Test
+    fun settingsBackupDetection_readsOnlyHeader() {
+        val input = backupProbeInput(
+            "FUTOKeyboardSettings_CfgExportVersion",
+            ByteArray(9).apply { this[0] = 1 }
+        )
+        val size = input.available()
+
+        assertEquals(0L, SettingsExporter.getCfgFileMetadata(input)?.dateExported?.time)
+        assertTrue("Detection must not scan the media payload", size - input.available() < 1024)
+        input.reset()
+        assertNull(SettingsExporter.getClipboardBackupMetadata(input))
+        assertTrue("Detection must not scan the media payload", size - input.available() < 1024)
+    }
+
+    private fun backupProbeInput(headerName: String, header: ByteArray): ByteArrayInputStream {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            zip.setLevel(Deflater.NO_COMPRESSION)
+            zip.putNextEntry(ZipEntry(headerName))
+            zip.write(header)
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("clipboard/image.jpg"))
+            zip.write(ByteArray(64 * 1024))
+            zip.closeEntry()
+        }
+        return output.toByteArray().inputStream()
     }
 
     @Test

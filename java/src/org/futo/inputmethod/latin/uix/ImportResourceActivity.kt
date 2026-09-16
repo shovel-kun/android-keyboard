@@ -713,6 +713,7 @@ class ImportResourceActivity : ComponentActivity() {
     private val themeOption: MutableState<ThemeOption?> = mutableStateOf(null)
     private val itemBeingImported: MutableState<ItemBeingImported?> = mutableStateOf(null)
     private var uri: Uri? = null
+    private val detectingImport = mutableStateOf(true)
 
     private fun normalizeFilename(name: String) = name.replace("/", "_").replace(":", "_").replace(" ", "_")
 
@@ -984,7 +985,13 @@ class ImportResourceActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.background
                     ) {
                         Box(Modifier.safeDrawingPadding()) {
-                            InnerScreen()
+                            if(detectingImport.value) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator()
+                                }
+                            } else {
+                                InnerScreen()
+                            }
                         }
                     }
                 }
@@ -1020,16 +1027,16 @@ class ImportResourceActivity : ComponentActivity() {
         val languageResource = getInputStream()?.use { determineFileKind(it) }
         if(languageResource != null && languageResource.kind != FileKind.Invalid) return ItemBeingImported.LanguageResource(languageResource)
 
-        val chineseDictionary = getInputStream()?.use { detectChineseDict(it) }
-        if(chineseDictionary != null) return ItemBeingImported.LanguageResource(FileKindAndInfo(
-            FileKind.Dictionary, name=chineseDictionary, locale="zh", forceLocale = "zh"
-        ))
-
         val clipboardBackup = getInputStream()?.use { SettingsExporter.getClipboardBackupMetadata(it) }
         if(clipboardBackup != null) return ItemBeingImported.ClipboardBackup(clipboardBackup)
 
         val settingsBackup = getInputStream()?.use { SettingsExporter.getCfgFileMetadata(it) }
         if(settingsBackup != null) return ItemBeingImported.SettingsBackup(settingsBackup)
+
+        val chineseDictionary = getInputStream()?.use { detectChineseDict(it) }
+        if(chineseDictionary != null) return ItemBeingImported.LanguageResource(FileKindAndInfo(
+            FileKind.Dictionary, name=chineseDictionary, locale="zh", forceLocale = "zh"
+        ))
 
         val userDictFile = getInputStream()?.use { detectJapaneseUserDict(it) }
         if(userDictFile != null) return ItemBeingImported.UserDictFile(userDictFile)
@@ -1045,25 +1052,6 @@ class ImportResourceActivity : ComponentActivity() {
 
         this.uri = intent?.data!!
 
-        itemBeingImported.value = detectItemBeingImported()
-
-        val item = itemBeingImported.value
-        if(item is ItemBeingImported.CustomTheme && DevAutoAcceptThemeImport) {
-            if(item.v.config == null) {
-                BugViewerState.pushBug(BugInfo(
-                    name = "your custom theme (invalid metadata json)",
-                    details = item.v.error ?: "Unknown error",
-                ))
-                BugViewerState.triggerOpen()
-            } else {
-                getInputStream()?.use {
-                    ZipThemes.importTheme(applicationContext, it, item.v)
-                }
-            }
-            finish()
-            return
-        }
-
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 updateContent()
@@ -1072,6 +1060,27 @@ class ImportResourceActivity : ComponentActivity() {
 
         val key = getSetting(THEME_KEY)
         this.themeOption.value = getThemeOption(this, key).orDefault(this)
+
+        lifecycleScope.launch {
+            val item = withContext(Dispatchers.IO) { detectItemBeingImported() }
+            itemBeingImported.value = item
+            detectingImport.value = false
+
+            if(item is ItemBeingImported.CustomTheme && DevAutoAcceptThemeImport) {
+                if(item.v.config == null) {
+                    BugViewerState.pushBug(BugInfo(
+                        name = "your custom theme (invalid metadata json)",
+                        details = item.v.error ?: "Unknown error",
+                    ))
+                    BugViewerState.triggerOpen()
+                } else {
+                    getInputStream()?.use {
+                        ZipThemes.importTheme(applicationContext, it, item.v)
+                    }
+                }
+                finish()
+            }
+        }
     }
 
     override fun onResume() {

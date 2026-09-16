@@ -750,6 +750,7 @@ object SettingsExporter {
             ZipInputStream(inputStream).use { zipIn ->
                 var entry = zipIn.nextEntry
                 while (entry != null) {
+                    if(entry.name == ClipboardBackupManifestFileName) return null
                     if (!entry.isDirectory && entry.name == versionFileName) {
                         val bytes = zipIn.readAllBytesCompat()
 
@@ -777,6 +778,7 @@ object SettingsExporter {
             ZipInputStream(inputStream).use { zipIn ->
                 var entry = zipIn.nextEntry
                 while (entry != null) {
+                    if(entry.name == versionFileName) return null
                     if (!entry.isDirectory && entry.name == ClipboardBackupManifestFileName) {
                         val manifest = Json.decodeFromString<ClipboardBackupManifest>(
                             zipIn.readAllBytesCompat().toByteString().utf8()

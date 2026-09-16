@@ -171,6 +171,7 @@
     <string name="clipboard_history_copy_text">Copy text</string>
     <string name="clipboard_history_copied_text">Copied to clipboard</string>
     <string name="clipboard_history_open_settings">Open Clipboard Settings</string>
+    <string name="clipboard_history_loading">Loading clipboard history…</string>
     <string name="clipboard_history_empty">Saved text and media clips will appear here.</string>
     <string name="clipboard_history_no_results_title">No Matching Clips</string>
     <string name="clipboard_history_no_results_text">Try a different search or filter.</string>
