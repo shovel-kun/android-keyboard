@@ -2,10 +2,12 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 
 import android.os.SystemClock
 import android.view.ContextThemeWrapper
+import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -110,6 +112,85 @@ private fun ClipboardTagTapRegression(change: ChangeDuringTagTap) {
         val expected = if(change == ChangeDuringTagTap.SearchText) "blue" else "tag:gotoh_hitori "
         check(editor.text.toString() == expected && text == expected) {
             "Tag tap with $change: expected '$expected', editor='${editor.text}', query='$text'"
+        }
+        passed = true
+    }
+}
+
+private enum class SearchRefresh { Highlight, SuggestionsAppear, SuggestionsDisappear }
+
+@Preview(widthDp = 360, heightDp = 192)
+@Composable
+private fun ClipboardHighlightedTagRefreshPreview() = ClipboardSearchRefreshRegression(SearchRefresh.Highlight)
+
+@Preview(widthDp = 360, heightDp = 192)
+@Composable
+private fun ClipboardSuggestionsAppearPreview() = ClipboardSearchRefreshRegression(SearchRefresh.SuggestionsAppear)
+
+@Preview(widthDp = 360, heightDp = 192)
+@Composable
+private fun ClipboardSuggestionsDisappearPreview() = ClipboardSearchRefreshRegression(SearchRefresh.SuggestionsDisappear)
+
+@Composable
+private fun ClipboardSearchRefreshRegression(refresh: SearchRefresh) {
+    val context = LocalContext.current
+    var text by remember { mutableStateOf("gotoh") }
+    var passed by remember { mutableStateOf(false) }
+    val controller = remember { ActionTextEditController() }
+    val editor = remember {
+        ActionEditText(ContextThemeWrapper(context, androidx.appcompat.R.style.Theme_AppCompat), inspection = true).apply {
+            setText(text)
+            setSelection(text.length)
+            setTextChangeCallback { text = it }
+            controller.attach(this)
+            controller.focused = true
+        }
+    }
+    DisposableEffect(editor) { onDispose { controller.detach() } }
+    val tags = remember {
+        buildMap {
+            put("gotoh_hitori", ClipboardImageTagCategory.Character)
+            if(refresh == SearchRefresh.Highlight) put("gotoh_ikuyo", ClipboardImageTagCategory.Character)
+        }
+    }
+    var index by remember {
+        mutableStateOf(ClipboardSearchIndex(if(refresh == SearchRefresh.SuggestionsAppear) emptyMap() else mapOf("a" to tags)))
+    }
+    val search = rememberClipboardTagSearch(text, controller, index, true) { listOf("a", "b") }
+    val currentSearch by rememberUpdatedState(search)
+    MaterialTheme {
+        Column(Modifier.background(MaterialTheme.colorScheme.background)) {
+            ClipboardTagSuggestions(search, controller, 120.dp)
+            Text("Query: $text")
+            Text(if(passed) "Refresh check passed" else "Waiting for refresh check")
+            // Keep preview frames advancing while the background lookup completes.
+            if(!passed) CircularProgressIndicator()
+        }
+    }
+    LaunchedEffect(Unit) {
+        snapshotFlow { currentSearch.canAccept }.first { it }
+        delay(50)
+        val initialQuery = currentSearch.queryText
+        check(initialQuery == if(refresh == SearchRefresh.SuggestionsAppear) "gotoh" else "")
+        if(refresh == SearchRefresh.Highlight) controller.onKey?.invoke(KeyEvent.KEYCODE_DPAD_DOWN)
+        index = ClipboardSearchIndex(when(refresh) {
+            SearchRefresh.Highlight -> mapOf("a" to tags, "b" to mapOf("gotoh_ikuyo" to ClipboardImageTagCategory.Character))
+            SearchRefresh.SuggestionsAppear -> mapOf("a" to tags)
+            SearchRefresh.SuggestionsDisappear -> emptyMap()
+        })
+        snapshotFlow {
+            when(refresh) {
+                SearchRefresh.Highlight -> currentSearch.suggestions.firstOrNull()?.count == 2
+                SearchRefresh.SuggestionsAppear -> currentSearch.suggestions.isNotEmpty()
+                SearchRefresh.SuggestionsDisappear -> currentSearch.suggestions.isEmpty()
+            }
+        }.first { it }
+        delay(50)
+        if(refresh == SearchRefresh.Highlight) controller.onKey?.invoke(KeyEvent.KEYCODE_ENTER)
+        delay(50)
+        val success = if(refresh == SearchRefresh.Highlight) text == "tag:gotoh_hitori " && editor.text.toString() == text else currentSearch.queryText == initialQuery
+        check(success) {
+            "Search refresh with $refresh: initial='$initialQuery', now='${currentSearch.queryText}', text='$text'"
         }
         passed = true
     }

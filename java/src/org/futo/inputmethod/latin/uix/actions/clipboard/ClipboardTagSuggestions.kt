@@ -21,7 +21,6 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -109,7 +108,14 @@ internal fun rememberClipboardTagSearch(
     val suggestions = result.rows
     val explicitTag = token?.let { text.substring(it.start, it.end).removePrefix("-").startsWith("tag:", true) } == true
     val visible = active && (suggestions.isNotEmpty() || explicitTag)
-    val queryText = clipboardEditingSearchText(text, token.takeIf { visible })
+    // The first lookup for an edit decides whether this token is a tag draft.
+    // Background catalogue updates must not change the applied search query.
+    var completingTag by remember(text, token) { mutableStateOf<Boolean?>(null) }
+    val draft = completingTag ?: (explicitTag || (canAccept && suggestions.isNotEmpty()))
+    SideEffect {
+        if(completingTag == null && canAccept) completingTag = draft
+    }
+    val queryText = clipboardEditingSearchText(text, token.takeIf { active && draft })
     return ClipboardTagSearch(text, token, suggestions, canAccept, visible, queryText) { dismissedText = it }
 }
 
@@ -124,7 +130,11 @@ internal fun ClipboardTagSuggestions(
     val suggestions = search.suggestions
     val visible = search.visible
     val canAccept = search.canAccept
-    var highlighted by remember(search.text, token, suggestions) { mutableIntStateOf(-1) }
+    var highlightedTag by remember(search.text, token) { mutableStateOf<String?>(null) }
+    val highlighted = suggestions.indexOfFirst { it.name == highlightedTag }
+    SideEffect {
+        if(highlighted < 0) highlightedTag = null
+    }
     // A new completion context starts at the best match; index refreshes keep the position.
     val listState = key(search.text, token) { rememberLazyListState() }
     fun finish() {
@@ -141,9 +151,11 @@ internal fun ClipboardTagSuggestions(
     }
     SideEffect {
         controller.onSubmit = {
+            val highlighted = suggestions.indexOfFirst { it.name == highlightedTag }
             if(visible && canAccept && highlighted >= 0) accept(suggestions[highlighted]) else finish()
         }
         controller.onKey = { key ->
+            val highlighted = suggestions.indexOfFirst { it.name == highlightedTag }
             when {
                 !visible -> false
                 key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_ESCAPE -> {
@@ -156,11 +168,11 @@ internal fun ClipboardTagSuggestions(
                 }
                 !canAccept || suggestions.isEmpty() -> false
                 key == KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    highlighted = (highlighted + 1).coerceAtMost(suggestions.lastIndex)
+                    highlightedTag = suggestions[(highlighted + 1).coerceAtMost(suggestions.lastIndex)].name
                     true
                 }
                 key == KeyEvent.KEYCODE_DPAD_UP -> {
-                    highlighted = (highlighted - 1).coerceAtLeast(0)
+                    highlightedTag = suggestions[(highlighted - 1).coerceAtLeast(0)].name
                     true
                 }
                 (key == KeyEvent.KEYCODE_ENTER || key == KeyEvent.KEYCODE_TAB) && highlighted >= 0 -> {
