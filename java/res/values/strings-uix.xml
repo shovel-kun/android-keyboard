@@ -101,6 +101,8 @@
     <!-- This message is shown when we're typing in a text field does not support rich media insertion ("app" refers to the external app that is providing the text field) -->
     <string name="action_clipboard_manager_error_app_image_insertion_unsupported">App does not support media insertion</string>
     <string name="action_clipboard_manager_settings_title">Clipboard Manager Settings</string>
+    <string name="action_clipboard_manager_settings_clean_links">Remove tracking from copied links</string>
+    <string name="action_clipboard_manager_settings_clean_links_subtitle">Clean known tracking parameters automatically, even when clipboard history is off</string>
     <string name="action_clipboard_manager_settings_incognito_mode">Incognito clipboard mode</string>
     <string name="action_clipboard_manager_settings_incognito_mode_subtitle">Hide saved history and stop saving new clipboard items until disabled</string>
     <string name="action_clipboard_manager_settings_save_images">Save copied media</string>

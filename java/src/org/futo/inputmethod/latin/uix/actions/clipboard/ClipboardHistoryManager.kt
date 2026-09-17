@@ -1,5 +1,6 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
+import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
@@ -566,12 +567,30 @@ class ClipboardHistoryManager private constructor(
         loadClipboard()
     }
 
+    private var clipboardChangeJob: Job? = null
+
     private val primaryClipChangedListener = object : ClipboardManager.OnPrimaryClipChangedListener {
         override fun onPrimaryClipChanged() {
-            if(!shouldImportClipboardChanges()) return
+            clipboardChangeJob?.cancel()
+            if(backupImportInProgress) return
+            val cleanLinks = context.getSettingBlocking(ClipboardCleanLinks)
+            if(!cleanLinks && !shouldImportClipboardChanges()) return
 
-            coroutineScope.launch {
-                val clipboardImport = readPrimaryClipboardImport() ?: return@launch
+            clipboardChangeJob = coroutineScope.launch {
+                val clip = readPrimaryClip() ?: return@launch
+                if(cleanLinks) {
+                    val cleaned = withContext(Dispatchers.Default) { cleanClipboardClip(clip) }
+                    if(backupImportInProgress) return@launch
+                    if(!sameClipboardContents(clip, readPrimaryClip())) return@launch
+                    if(cleaned != null && context.getSettingBlocking(ClipboardCleanLinks)) {
+                        clipboardManager.setPrimaryClip(cleaned)
+                        // The resulting notification imports the cleaned clip once.
+                        return@launch
+                    }
+                }
+                if(!shouldImportClipboardChanges()) return@launch
+                val clipboardImport = readPrimaryClipboardImport(clip) ?: return@launch
+                if(!shouldImportClipboardChanges()) return@launch
                 if(clipboardImport.isSensitive && !context.getSetting(ClipboardHistorySaveSensitive)) {
                     return@launch
                 }
@@ -642,13 +661,14 @@ class ClipboardHistoryManager private constructor(
         !backupImportInProgress && context.getSettingBlocking(ClipboardHistoryEnabled) &&
             !context.getSettingBlocking(ClipboardIncognitoMode)
 
-    private suspend fun readPrimaryClipboardImport(): PrimaryClipboardImport? =
+    private fun readPrimaryClip(): ClipData? = try {
+        clipboardManager.primaryClip
+    } catch(_: SecurityException) {
+        null
+    }
+
+    private suspend fun readPrimaryClipboardImport(clip: ClipData): PrimaryClipboardImport? =
         withContext(Dispatchers.IO) {
-            val clip = try {
-                clipboardManager.primaryClip
-            } catch(_: Exception) {
-                null
-            } ?: return@withContext null
             val item = clip.getItemAt(0) ?: return@withContext null
             val uri = item.uri
             val mimeTypes = List(clip.description.mimeTypeCount) { index ->

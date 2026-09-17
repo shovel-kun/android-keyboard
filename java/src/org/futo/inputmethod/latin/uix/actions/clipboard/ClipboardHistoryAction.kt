@@ -48,6 +48,11 @@ val ClipboardHistoryEnabled = SettingsKey(
     true
 )
 
+val ClipboardCleanLinks = SettingsKey(
+    booleanPreferencesKey("clipboard_clean_links"),
+    true
+)
+
 val ClipboardHistorySaveSensitive = SettingsKey(
     booleanPreferencesKey("clipboard_history_save_sensitive"),
     false
@@ -235,6 +240,11 @@ val ClipboardHistoryAction = Action(
             userSettingToggleDataStore(
                 title = R.string.action_clipboard_manager_settings_show_quick_clips,
                 setting = ClipboardQuickClipsEnabled
+            ),
+            userSettingToggleDataStore(
+                title = R.string.action_clipboard_manager_settings_clean_links,
+                subtitle = R.string.action_clipboard_manager_settings_clean_links_subtitle,
+                setting = ClipboardCleanLinks
             ),
             userSettingToggleDataStore(
                 title = R.string.typing_settings_enable_clipboard_history,
