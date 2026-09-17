@@ -475,6 +475,19 @@ class UixActionKeyboardManager(val uixManager: UixManager, val latinIME: LatinIM
         uixManager.onActionActivated(action)
     }
 
+    override fun activateActionAlt(action: Action) {
+        uixManager.onActionAltActivated(action)
+    }
+
+    override fun requestAutofill() {
+        closeActionWindow()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            latinIME.getBaseInputConnection()?.performContextMenuAction(android.R.id.autofill) != true
+        ) {
+            Toast.makeText(getContext(), R.string.autofill_unavailable, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun showActionEditor() {
         uixManager.showActionEditor()
     }

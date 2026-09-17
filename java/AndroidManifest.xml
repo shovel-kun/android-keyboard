@@ -38,6 +38,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
 
+    <queries>
+        <package android:name="proton.android.pass" />
+        <package android:name="proton.android.pass.fdroid" />
+    </queries>
+
     <application android:label="@string/english_ime_name"
          android:icon="@mipmap/ic_launcher"
          android:roundIcon="@mipmap/ic_launcher_round"

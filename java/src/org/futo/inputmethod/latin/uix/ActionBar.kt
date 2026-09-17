@@ -553,6 +553,7 @@ fun LazyItemScope.ActionItem(idx: Int, action: Action, onSelect: (Action) -> Uni
     Box(modifier = modifier
         .clip(CircleShape)
         .combinedClickable(
+            onLongClickLabel = action.altPressLabel?.let { stringResource(it) },
             onLongClick = action.altPressImpl?.let { { onLongSelect(action) } },
             onClick = { onSelect(action) }), contentAlignment = Center) {
         Icon(
@@ -585,7 +586,10 @@ fun ActionItemSmall(action: Action, onSelect: (Action) -> Unit, onLongSelect: (A
             )
         }
         .clip(CircleShape)
-        .combinedClickable(onLongClick = action.altPressImpl?.let { { onLongSelect(action) } }) {
+        .combinedClickable(
+            onLongClickLabel = action.altPressLabel?.let { stringResource(it) },
+            onLongClick = action.altPressImpl?.let { { onLongSelect(action) } }
+        ) {
             onSelect(
                 action
             )

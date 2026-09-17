@@ -15,6 +15,10 @@
     <string name="action_copy_title">Copy to Clipboard</string>
     <string name="action_paste_title">Paste from Clipboard</string>
     <string name="action_wrap_selection_title">Wrap Selection</string>
+    <string name="action_passwords_title">Passwords</string>
+    <string name="action_open_proton_pass">Open Proton Pass</string>
+    <string name="autofill_unavailable">Autofill unavailable. Hold Passwords to open Proton Pass.</string>
+    <string name="proton_pass_unavailable">Proton Pass is not available on this device.</string>
     <string name="action_undo_title">Undo</string>
     <string name="action_redo_title">Redo</string>
     <string name="action_text_editor_title">Text Editor</string>

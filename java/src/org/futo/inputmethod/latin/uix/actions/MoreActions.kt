@@ -2,7 +2,7 @@ package org.futo.inputmethod.latin.uix.actions
 
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -118,6 +118,7 @@ fun ActionItem(action: Action, modifier: Modifier = Modifier, dragIcon: Boolean 
 
 @Composable
 @Preview(showBackground = true)
+@OptIn(ExperimentalFoundationApi::class)
 fun MoreActionsView() {
     val manager = if(LocalInspectionMode.current) { null } else { LocalManager.current }
     val context = LocalContext.current
@@ -151,10 +152,12 @@ fun MoreActionsView() {
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        items(actions, key = { it.name }) {
-            ActionItem(it, Modifier.clickable {
-                manager!!.activateAction(it)
-            })
+        items(actions, key = { it.name }) { action ->
+            ActionItem(action, Modifier.combinedClickable(
+                onClick = { manager!!.activateAction(action) },
+                onLongClickLabel = action.altPressLabel?.let { stringResource(it) },
+                onLongClick = action.altPressImpl?.let { { manager!!.activateActionAlt(action) } }
+            ))
         }
     }
 }

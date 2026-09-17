@@ -89,6 +89,8 @@ interface KeyboardManagerForAction {
     fun requestDialog(text: String, options: List<DialogRequestItem>, onCancel: () -> Unit)
     fun openInputMethodPicker()
     fun activateAction(action: Action)
+    fun activateActionAlt(action: Action)
+    fun requestAutofill()
     fun showActionEditor()
 
     fun getLatinIMEForDebug(): LatinIME
@@ -192,6 +194,7 @@ data class Action(
     val persistentState: ((KeyboardManagerForAction) -> PersistentActionState)? = null,
     val persistentStateInitialization: PersistentStateInitialization = PersistentStateInitialization.OnActionTrigger,
     val altPressImpl: ((KeyboardManagerForAction, PersistentActionState?) -> Unit)? = null,
+    @StringRes val altPressLabel: Int? = null,
 
     val shownInEditor: Boolean = true,
 
