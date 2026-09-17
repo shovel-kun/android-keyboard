@@ -202,7 +202,8 @@ internal fun ClipboardTagSuggestions(
         listState = listState,
         height = height,
         enabled = canAccept,
-        onAccept = ::accept
+        // A local function reference compares equal across edits and retains stale captures in clickable.
+        onAccept = { accept(it) }
     )
 }
 
