@@ -323,6 +323,9 @@ android {
 
         stable {
             dimension "buildType"
+            ndk {
+                abiFilters 'arm64-v8a'
+            }
             buildConfigField "boolean", "IS_PLAYSTORE_BUILD", "false"
             buildConfigField "boolean", "UPDATE_CHECKING", "true"
             buildConfigField "boolean", "UPDATE_CHECKING_NETWORK", "false"

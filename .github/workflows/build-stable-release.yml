@@ -82,17 +82,16 @@ jobs:
         run: |
           ./gradlew testStableReleaseUnitTest --tests 'org.futo.inputmethod.latin.uix.actions.clipboard.*' --stacktrace
 
-      - name: Build stable release APKs
+      - name: Build stable release APK
         run: |
           ./gradlew assembleStableRelease --stacktrace
 
-      - name: Upload stable release artifacts
+      - name: Upload stable release APK
         id: upload_artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: keyboard-stable-apks
-          path: |
-            build/outputs/apk/stable/release/*.apk
+          path: build/outputs/apk/stable/release/*.apk
+          archive: false
           if-no-files-found: error
           retention-days: 14
 
@@ -102,5 +101,5 @@ jobs:
           {
             echo "## Stable APK"
             echo
-            echo "[Download artifact](${{ steps.upload_artifact.outputs.artifact-url }})"
+            echo "[Download APK](${{ steps.upload_artifact.outputs.artifact-url }})"
           } >> "$GITHUB_STEP_SUMMARY"
