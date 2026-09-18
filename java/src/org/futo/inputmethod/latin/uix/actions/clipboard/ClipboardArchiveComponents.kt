@@ -1379,11 +1379,14 @@ internal fun ClipboardArchiveGalleryDialog(
     val galleryActions = buildList {
         currentItem?.takeIf { it.media.canExtractText() }?.let { item ->
             add(ClipboardPreviewFabAction(
-                label = stringResource(R.string.clipboard_ocr_extract),
+                label = stringResource(
+                    if(item.media.ocr?.failed == false) R.string.clipboard_ocr_retry
+                    else R.string.clipboard_ocr_extract
+                ),
                 iconRes = R.drawable.file_text,
                 onClick = {
                     showOcr = true
-                    if(item.media.ocr == null && item.media.sourceIndex !in extractingIndices) onExtractText(item)
+                    if(item.media.sourceIndex !in extractingIndices) onExtractText(item)
                 }
             ))
         }
