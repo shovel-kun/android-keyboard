@@ -300,8 +300,9 @@
     <string name="clipboard_history_downloads_progress_unknown_percent">%1$s/%2$s</string>
     <string name="clipboard_history_downloads_progress_bytes">%1$s downloaded</string>
     <string name="clipboard_history_archive_delete_title">Delete archive?</string>
-    <string name="clipboard_history_archive_delete_text">This removes saved media for %1$s without deleting the clipboard item.</string>
-    <string name="clipboard_history_archive_delete_text_with_size">This removes %1$s of saved media for %2$s without deleting the clipboard item.</string>
+    <string name="clipboard_history_archive_delete_text">This removes saved media for %1$s.</string>
+    <string name="clipboard_history_archive_delete_text_with_size">This removes %1$s of saved media for %2$s.</string>
+    <string name="clipboard_history_archive_delete_clip">Also delete matching clips</string>
     <string name="clipboard_history_archive_delete_action">Delete</string>
     <string name="clipboard_history_storage_open">Archive storage</string>
     <string name="clipboard_history_storage_title">Archive storage</string>

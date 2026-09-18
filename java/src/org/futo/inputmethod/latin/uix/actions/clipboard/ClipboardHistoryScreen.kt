@@ -825,9 +825,10 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         ClipboardArchiveDeleteConfirmationDialog(
             request = request,
             storedBytes = storageInventory.archiveBytesByKey[request.archive.key] ?: 0L,
+            hasClip = manager.clipboardHistory.any { it.matchesDeletedArchiveKey(request.archive.key) },
             onDismiss = { archiveDeleteRequest = null },
-            onConfirm = {
-                manager.deleteArchive(request.archive)
+            onConfirm = { deleteClips ->
+                manager.deleteArchive(request.archive, deleteClips = deleteClips)
                 if(previewArchiveKey == request.archive.key) {
                     previewArchiveKey = null
                 }

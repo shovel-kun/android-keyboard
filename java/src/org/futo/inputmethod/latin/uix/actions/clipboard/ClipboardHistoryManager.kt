@@ -1613,8 +1613,8 @@ class ClipboardHistoryManager private constructor(
         }
     }
 
-    internal fun deleteArchive(archive: ClipboardLinkArchive) {
-        deleteArchiveByKey(archive.key)
+    internal fun deleteArchive(archive: ClipboardLinkArchive, deleteClips: Boolean = false) {
+        deleteArchiveByKey(archive.key, deleteClips = deleteClips)
     }
 
     internal fun deleteArchiveDownload(item: ClipboardArchiveDownloadListItem) {
@@ -1628,7 +1628,8 @@ class ClipboardHistoryManager private constructor(
     private fun deleteArchiveByKey(
         archiveKey: String,
         existingMediaNames: Set<String> = currentArchiveFileNames(),
-        updateEntries: Boolean = true
+        updateEntries: Boolean = true,
+        deleteClips: Boolean = false
     ) {
         coroutineScope.launch {
             val resolvedEntries = if(updateEntries) resolveClipboardEntryArchiveKeys() else null
@@ -1644,7 +1645,11 @@ class ClipboardHistoryManager private constructor(
             } else {
                 emptySet()
             }
-            if(matchingEntryKeys.isNotEmpty()) {
+            if(deleteClips) {
+                val entriesToRemove = clipboardHistory.filter { it.selectionKey() in matchingEntryKeys }
+                replaceEntries(clipboardHistory.filterNot { it.selectionKey() in matchingEntryKeys })
+                clearPrimaryClipIfNeeded(entriesToRemove)
+            } else if(matchingEntryKeys.isNotEmpty()) {
                 clearArchiveFromEntries(matchingEntryKeys, archivedFileNames, existingMediaNames)
             }
             val tombstones = archiveTombstonesByKey.values.toList()

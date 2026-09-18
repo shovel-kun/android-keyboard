@@ -15,6 +15,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +49,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -76,6 +78,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -1241,30 +1244,48 @@ private fun ClipboardArchiveSingleImageCardMedia(bitmap: ImageBitmap) {
 internal fun ClipboardArchiveDeleteConfirmationDialog(
     request: ArchiveDeleteRequest,
     storedBytes: Long,
+    hasClip: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: (Boolean) -> Unit
 ) {
+    var deleteClips by remember(request.archive.key, hasClip) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.clipboard_history_archive_delete_title)) },
         text = {
-            Text(
-                if(storedBytes > 0L) {
-                    stringResource(
-                        R.string.clipboard_history_archive_delete_text_with_size,
-                        formatClipboardStorageBytes(storedBytes),
-                        request.archive.displayTitle()
-                    )
-                } else {
-                    stringResource(
-                        R.string.clipboard_history_archive_delete_text,
-                        request.archive.displayTitle()
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if(storedBytes > 0L) {
+                        stringResource(
+                            R.string.clipboard_history_archive_delete_text_with_size,
+                            formatClipboardStorageBytes(storedBytes),
+                            request.archive.displayTitle()
+                        )
+                    } else {
+                        stringResource(
+                            R.string.clipboard_history_archive_delete_text,
+                            request.archive.displayTitle()
+                        )
+                    }
+                )
+                if(hasClip) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().toggleable(
+                            value = deleteClips,
+                            role = Role.Checkbox,
+                            onValueChange = { deleteClips = it }
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Checkbox(checked = deleteClips, onCheckedChange = null)
+                        Text(stringResource(R.string.clipboard_history_archive_delete_clip))
+                    }
                 }
-            )
+            }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) {
+            TextButton(onClick = { onConfirm(hasClip && deleteClips) }) {
                 Text(stringResource(R.string.clipboard_history_archive_delete_action))
             }
         },
@@ -1274,6 +1295,39 @@ internal fun ClipboardArchiveDeleteConfirmationDialog(
             }
         }
     )
+}
+
+@Preview(widthDp = 390)
+@Composable
+private fun ClipboardArchiveDeleteWithClipPreview() {
+    ClipboardArchiveDeletePreview(hasClip = true)
+}
+
+@Preview(widthDp = 390)
+@Composable
+private fun ClipboardArchiveDeleteWithoutClipPreview() {
+    ClipboardArchiveDeletePreview(hasClip = false)
+}
+
+@Composable
+private fun ClipboardArchiveDeletePreview(hasClip: Boolean) {
+    MaterialTheme {
+        ClipboardArchiveDeleteConfirmationDialog(
+            request = ArchiveDeleteRequest(
+                ClipboardLinkArchive(
+                    key = "pixiv:123",
+                    provider = ClipboardPreviewProvider.PIXIV,
+                    sourceUrl = "https://www.pixiv.net/artworks/123",
+                    createdAtEpochMs = 0L,
+                    updatedAtEpochMs = 0L
+                )
+            ),
+            storedBytes = 2_500_000L,
+            hasClip = hasClip,
+            onDismiss = {},
+            onConfirm = {}
+        )
+    }
 }
 
 @Composable
