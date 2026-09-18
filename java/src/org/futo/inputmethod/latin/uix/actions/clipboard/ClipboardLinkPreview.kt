@@ -1411,7 +1411,7 @@ object ClipboardLinkPreviewFetcher {
         }
     }
 
-    private fun cachePreviewMediaThumbnail(thumbnailUrl: String?, mediaFile: File) {
+    internal fun cachePreviewMediaThumbnail(thumbnailUrl: String?, mediaFile: File) {
         val thumbFile = ClipboardUtil.thumbnailFor(mediaFile)
         if(thumbnailUrl == null || thumbFile.isFile) return
 

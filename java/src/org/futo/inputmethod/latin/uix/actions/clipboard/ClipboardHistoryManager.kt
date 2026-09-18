@@ -997,6 +997,23 @@ class ClipboardHistoryManager private constructor(
         resumeProviderArchiveDownloads()
     }
 
+    internal suspend fun recoverMediaThumbnail(mediaFile: File) {
+        val thumbnailUrl = withContext(Dispatchers.Main) {
+            if(backupImportInProgress || context.getSetting(ClipboardIncognitoMode) ||
+                !currentPreviewState().shouldArchivePreviews || !canRunAutomaticClipboardNetworkDownloads()
+            ) return@withContext null
+
+            linkArchives.values.asSequence()
+                .filter { providerCooldown(it.provider) == null }
+                .flatMap { it.media.asSequence() }
+                .firstOrNull { it.fileName == mediaFile.name }
+                ?.thumbnailUrl
+        } ?: return
+        withContext(ClipboardPreviewFetchContext) {
+            ClipboardLinkPreviewFetcher.cachePreviewMediaThumbnail(thumbnailUrl, mediaFile)
+        }
+    }
+
     fun retryPreviewForEntry(entry: ClipboardEntry) {
         val text = entry.text ?: return
         fetchPreviewForEntry(text, manualRetry = true)

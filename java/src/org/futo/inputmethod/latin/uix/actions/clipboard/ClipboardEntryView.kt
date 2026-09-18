@@ -1,5 +1,6 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
+import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -143,7 +144,7 @@ private fun decodeClipboardBitmapSource(
         return it.asImageBitmap()
     }
 
-    val thumbnail = generatedClipboardThumbnailFallback(originalFile) ?: return null
+    val thumbnail = generatedClipboardThumbnailFallback(originalFile, source.file) ?: return null
     return BitmapFactory.decodeFile(thumbnail.absolutePath)?.asImageBitmap()
 }
 
@@ -155,12 +156,35 @@ internal fun clipboardCardBitmapSampleSize(width: Int, height: Int): Int {
     return sample
 }
 
-private fun generatedClipboardThumbnailFallback(originalFile: File): File? =
+private fun generatedClipboardThumbnailFallback(originalFile: File, failedSource: File): File? =
     if(originalFile.isClipboardGifFile() || originalFile.isClipboardVideoFile()) {
+        // Otherwise generateThumbnail would reuse the thumbnail that just failed to decode.
+        if(failedSource != originalFile) failedSource.delete()
         ClipboardUtil.generateThumbnail(originalFile)
     } else {
         null
     }
+
+internal suspend fun loadClipboardBitmap(
+    imageFile: File,
+    preferThumbnail: Boolean = true,
+    recoverThumbnail: suspend (File) -> Unit
+): ImageBitmap? {
+    decodeClipboardBitmap(imageFile, preferThumbnail)?.let { return it }
+    if(!imageFile.isClipboardVideoFile() && !imageFile.isClipboardGifFile()) return null
+    recoverThumbnail(imageFile)
+    if(!ClipboardUtil.thumbnailFor(imageFile).isFile) return null
+    return decodeClipboardBitmap(imageFile, preferThumbnail)
+}
+
+private suspend fun loadClipboardBitmap(
+    context: Context,
+    imageFile: File,
+    preferThumbnail: Boolean
+): ImageBitmap? = loadClipboardBitmap(imageFile, preferThumbnail) {
+    withContext(Dispatchers.Main) { ClipboardHistoryManager.getInstance(context) }
+        .recoverMediaThumbnail(it)
+}
 
 private fun cachedClipboardBitmap(
     imageFile: File,
@@ -197,6 +221,7 @@ internal fun rememberClipboardBitmap(
     preferThumbnail: Boolean = true
 ): ImageBitmap? {
     if(bitmapOverride != null || imageFile == null) return bitmapOverride
+    val context = LocalContext.current
     val requestKey = clipboardBitmapRequestKey(imageFile, preferThumbnail)
 
     return produceState<ImageBitmap?>(
@@ -204,7 +229,7 @@ internal fun rememberClipboardBitmap(
         requestKey
     ) {
         value = withContext(Dispatchers.IO) {
-            decodeClipboardBitmap(imageFile, preferThumbnail)
+            loadClipboardBitmap(context, imageFile, preferThumbnail)
         }
     }.value
 }
@@ -217,6 +242,7 @@ internal fun rememberClipboardBitmapLoadState(
 ): ClipboardBitmapLoadState {
     bitmapOverride?.let { return ClipboardBitmapLoadState.Loaded(it) }
     if(imageFile == null) return ClipboardBitmapLoadState.Unavailable
+    val context = LocalContext.current
 
     val cachedBitmap = cachedClipboardBitmap(imageFile, preferThumbnail)
     val requestKey = clipboardBitmapRequestKey(imageFile, preferThumbnail)
@@ -230,7 +256,7 @@ internal fun rememberClipboardBitmapLoadState(
         requestKey
     ) {
         value = withContext(Dispatchers.IO) {
-            decodeClipboardBitmap(imageFile, preferThumbnail)
+            loadClipboardBitmap(context, imageFile, preferThumbnail)
         }?.let(ClipboardBitmapLoadState::Loaded)
             ?: ClipboardBitmapLoadState.Unavailable
     }.value
@@ -245,6 +271,7 @@ internal fun rememberClipboardBitmaps(
     requestVersion: Any? = null
 ): List<ImageBitmap> {
     if(bitmapOverrides != null) return bitmapOverrides
+    val context = LocalContext.current
     val requestKeys = clipboardBitmapRequestKeys(imageFiles, preferThumbnail, maxCount)
 
     return produceState<List<ImageBitmap>>(
@@ -254,7 +281,7 @@ internal fun rememberClipboardBitmaps(
     ) {
         value = withContext(Dispatchers.IO) {
             requestedClipboardBitmapFiles(imageFiles, maxCount)
-                .mapNotNull { decodeClipboardBitmap(it, preferThumbnail) }
+                .mapNotNull { loadClipboardBitmap(context, it, preferThumbnail) }
         }
     }.value
 }
