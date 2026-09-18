@@ -143,8 +143,15 @@ internal fun ClipboardHistoryActionWindowContents(
         MastodonLinkPasteSession(mastodonLinkPasteDomain.value)
     }
 
+    fun pixivTextForPaste(text: String): String {
+        val entry = clipboardHistoryManager.clipboardHistory.firstOrNull { it.text == text }
+        val imageCount = entry?.previewMetadata?.imageCount
+            ?: entry?.let(clipboardHistoryManager::expectedPreviewMediaCount)
+        return phixivPasteSession.textForPaste(text, imageCount)
+    }
+
     fun textForPaste(text: String): String = xLinkPasteSession.textForPaste(
-        mastodonLinkPasteSession.textForPaste(phixivPasteSession.textForPaste(text))
+        mastodonLinkPasteSession.textForPaste(pixivTextForPaste(text))
     )
 
     LaunchedEffect(unlocked, uiState) {
@@ -411,7 +418,7 @@ internal fun ClipboardHistoryActionWindowContents(
                                         clipEntry.text != null -> manager.typeText(
                                             xLinkPasteSession.wrappedTextForPaste(
                                                 mastodonLinkPasteSession.textForPaste(
-                                                    phixivPasteSession.textForPaste(clipEntry.text)
+                                                    pixivTextForPaste(clipEntry.text)
                                                 )
                                             )
                                         )

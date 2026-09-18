@@ -86,47 +86,36 @@ internal data class ClipboardPreviewCandidate(
 
 internal data class PhixivArtworkPasteUrl(
     val baseUrl: String,
-    val pageIndex: Int?
+    val selection: String?
 )
 
-internal class PhixivArtworkPasteSession(private val targetDomain: String = "www.phixiv.net") {
+internal class PhixivArtworkPasteSession(targetDomain: String = "www.phixiv.net") {
     private val normalizedTargetDomain = targetDomain
         .trim()
         .removePrefix("https://")
         .removePrefix("http://")
         .trimEnd('/')
 
-    private val lastPageByBaseUrl = mutableMapOf<String, Int>()
-
-    fun textForPaste(rawText: String): String {
+    fun textForPaste(rawText: String, imageCount: Int? = null): String {
         val trimmed = rawText.trim()
         val spoilerWrapped = trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4
         val text = if(spoilerWrapped) trimmed.substring(2, trimmed.length - 2).trim() else rawText
         val artworkUrl = ClipboardLinkPreviewFetcher.phixivArtworkPasteUrl(text, normalizedTargetDomain)
             ?: return ClipboardLinkPreviewFetcher.normalizedTextForClipboardImport(rawText)
-        val startingPage = artworkUrl.pageIndex ?: 1
-        val lastPage = lastPageByBaseUrl[artworkUrl.baseUrl]
-        val page = lastPage
-            ?.let { maxOf(it + 1, startingPage) }
-            ?: startingPage
-
-        lastPageByBaseUrl[artworkUrl.baseUrl] = page
-        val pasteText = if(page <= 1) artworkUrl.baseUrl else "${artworkUrl.baseUrl}/$page"
-        val wrappedPasteText = if(spoilerWrapped) "||$pasteText||" else pasteText
-        return if(lastPage != null) "\n$wrappedPasteText" else wrappedPasteText
-    }
-
-    fun wrappedTextForPaste(rawText: String): String {
-        val text = textForPaste(rawText)
-        val prefix = if(text.startsWith("\n")) "\n" else ""
-        val body = text.removePrefix("\n")
-        val trimmed = body.trim()
-        return if(trimmed.startsWith("||") && trimmed.endsWith("||") && trimmed.length > 4) {
-            text
-        } else {
-            "$prefix||$body||"
+        val urls = when {
+            artworkUrl.selection != null -> listOf("${artworkUrl.baseUrl}/${artworkUrl.selection}")
+            imageCount != null && imageCount > 4 -> (1..imageCount step 4).map { start ->
+                "${artworkUrl.baseUrl}/$start-${minOf(start + 3, imageCount)}"
+            }
+            else -> listOf(artworkUrl.baseUrl)
         }
+        return urls.joinToString("\n") { if(spoilerWrapped) "||$it||" else it }
     }
+
+    fun wrappedTextForPaste(rawText: String, imageCount: Int? = null): String =
+        textForPaste(rawText, imageCount).lines().joinToString("\n") { line ->
+            if(line.startsWith("||") && line.endsWith("||")) line else "||$line||"
+        }
 }
 
 internal class XLinkPasteSession(private val targetDomain: String) {
@@ -296,8 +285,9 @@ object ClipboardLinkPreviewFetcher {
         val artworkUrl = parsePixivArtworkUrl(trimmed) ?: return null
         if(targetDomain.isBlank()) return null
         return PhixivArtworkPasteUrl(
-            baseUrl = artworkUrl.pasteUrl(targetDomain),
-            pageIndex = artworkUrl.pageIndex
+            baseUrl = "https://$targetDomain/en/artworks/${artworkUrl.id}",
+            selection = URL(trimmed).path.trimEnd('/').substringAfter("/artworks/${artworkUrl.id}/", "")
+                .takeIf { it.matches(Regex("[1-9][0-9]*(?:-[1-9][0-9]*)?")) }
         )
     }
 
@@ -2347,7 +2337,6 @@ private data class PixivArtworkUrl(
     val language: String
 ) : PreviewRequest {
     fun canonicalUrl(): String = "https://www.phixiv.net/$language/artworks/$id"
-    fun pasteUrl(targetDomain: String): String = "https://$targetDomain/$language/artworks/$id"
 }
 
 private data class PixivPreviewResponse(

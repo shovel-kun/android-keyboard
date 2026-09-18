@@ -550,43 +550,41 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
-    fun phixivArtworkPasteSession_incrementsRepeatedUrlOnlyArtworkPastes() {
+    fun phixivArtworkPasteSession_groupsAllImagesWithoutOverlapOnEveryPaste() {
         val session = PhixivArtworkPasteSession()
         val url = "https://www.phixiv.net/en/artworks/39832455"
 
-        assertEquals(url, session.textForPaste(url))
-        assertEquals("\n$url/2", session.textForPaste(url))
-        assertEquals("\n$url/3", session.textForPaste(url))
+        repeat(2) {
+            assertEquals("$url/1-4\n$url/5-8", session.textForPaste(url, 8))
+        }
+        assertEquals("$url/1-4\n$url/5-5", session.textForPaste(url, 5))
+        assertEquals("$url/1-4\n$url/5-8\n$url/9-10", session.textForPaste(url, 10))
+        for(count in listOf(null, 0, 1, 4)) {
+            assertEquals(url, session.textForPaste(url, count))
+        }
     }
 
     @Test
-    fun phixivArtworkPasteSession_sharesCounterAcrossPlainAndWrappedPasteCalls() {
+    fun phixivArtworkPasteSession_preservesSpoilersForGroupedLinks() {
+        val session = PhixivArtworkPasteSession()
+        val url = "https://www.phixiv.net/en/artworks/39832455"
+        val expected = "||$url/1-4||\n||$url/5-8||"
+
+        assertEquals(expected, session.textForPaste("||$url||", 8))
+        assertEquals(expected, session.wrappedTextForPaste(url, 8))
+        assertEquals(expected, session.wrappedTextForPaste("||$url||", 8))
+    }
+
+    @Test
+    fun phixivArtworkPasteSession_preservesExplicitImageSelections() {
         val session = PhixivArtworkPasteSession()
         val url = "https://www.phixiv.net/en/artworks/39832455"
 
-        assertEquals(url, session.textForPaste(url))
-        assertEquals("\n||$url/2||", session.wrappedTextForPaste(url))
-        assertEquals("\n$url/3", session.textForPaste(url))
-    }
-
-    @Test
-    fun phixivArtworkPasteSession_incrementsStoredSpoilerWrappedUrls() {
-        val session = PhixivArtworkPasteSession()
-        val url = "https://www.phixiv.net/en/artworks/39832455"
-
-        assertEquals("||$url||", session.textForPaste("||$url||"))
-        assertEquals("\n$url/2", session.textForPaste(url))
-        assertEquals("\n||$url/3||", session.textForPaste("||$url||"))
-        assertEquals("\n||$url/4||", session.wrappedTextForPaste("||$url||"))
-    }
-
-    @Test
-    fun phixivArtworkPasteSession_usesExistingPageSuffixAsStart() {
-        val session = PhixivArtworkPasteSession()
-        val baseUrl = "https://www.phixiv.net/en/artworks/39832455"
-
-        assertEquals("$baseUrl/2", session.textForPaste("$baseUrl/2"))
-        assertEquals("\n$baseUrl/3", session.textForPaste("$baseUrl/2"))
+        for(selection in listOf("2", "5-8")) {
+            repeat(2) {
+                assertEquals("$url/$selection", session.textForPaste("$url/$selection", 10))
+            }
+        }
     }
 
     @Test
@@ -598,7 +596,7 @@ class ClipboardLinkPreviewTest {
             session.textForPaste("https://www.pixiv.net/artworks/39832455")
         )
         assertEquals(
-            "https://www.phixiv.net/ja/artworks/39832455",
+            "https://www.phixiv.net/en/artworks/39832455",
             session.textForPaste("https://www.pixiv.net/ja/artworks/39832455")
         )
     }
