@@ -582,6 +582,13 @@ private fun ClipboardLinkArchive.mediaDetailsRows(): List<ClipboardArchiveDetail
                     }
                 )
             },
+            media.ocr?.let {
+                ClipboardArchiveDetailRow("Extracted text", when {
+                    it.failed -> "Extraction failed - retry Extract text"
+                    it.text.isBlank() -> "No text found"
+                    else -> it.text
+                })
+            },
             media.imageTagging?.failure?.let {
                 ClipboardArchiveDetailRow("AI tagging", "Failed - tap Tag image to retry")
             }
@@ -676,7 +683,15 @@ internal fun ClipboardLinkArchive.matchesArchiveQuery(query: String): Boolean {
         }
     }
 
-    return haystacks.any { it.normalizeArchiveTagSearchText().contains(normalized) }
+    if(haystacks.any { it.normalizeArchiveTagSearchText().contains(normalized) }) return true
+
+    val ocrQuery = query.normalizeOcrSearchText()
+    return media.any { item ->
+        item.archiveMediaKey() !in deletedMediaKeys &&
+            "${item.sourceIndex}:${item.sourceUrl}" !in deletedMediaKeys &&
+            item.ocr?.takeUnless { it.failed }?.text
+                ?.normalizeOcrSearchText()?.contains(ocrQuery) == true
+    }
 }
 
 private fun String.normalizeArchiveTagSearchText(): String =

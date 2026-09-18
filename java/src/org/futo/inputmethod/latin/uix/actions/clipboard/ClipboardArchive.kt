@@ -77,7 +77,8 @@ data class ClipboardArchiveMedia(
     val lastAttemptAtEpochMs: Long? = null,
     val failureDetail: String? = null,
     val thumbnailUrl: String? = null,
-    val imageTagging: ClipboardImageTaggingResult? = null
+    val imageTagging: ClipboardImageTaggingResult? = null,
+    val ocr: ClipboardOcrResult? = null
 )
 
 @Serializable
@@ -133,6 +134,11 @@ sealed interface ClipboardArchiveEvent {
     data class MediaTagged(
         val sourceIndex: Int,
         val result: ClipboardImageTaggingResult
+    ) : ClipboardArchiveEvent
+
+    data class MediaTextExtracted(
+        val sourceIndex: Int,
+        val result: ClipboardOcrResult
     ) : ClipboardArchiveEvent
 
     data class DiskReconciled(
@@ -549,7 +555,8 @@ fun reduceArchive(
             status = ClipboardArchiveMediaStatus.Saved,
             lastAttemptAtEpochMs = event.now,
             failureDetail = null,
-            imageTagging = null
+            imageTagging = null,
+            ocr = null
         )
     }
     is ClipboardArchiveEvent.MediaDownloadFailed -> archive?.withUpdatedMedia(event.sourceUrl, event.now) {
@@ -573,6 +580,15 @@ fun reduceArchive(
             } else {
                 media
             }
+        }
+    )
+    is ClipboardArchiveEvent.MediaTextExtracted -> archive?.copy(
+        media = archive.media.map { media ->
+            if(media.sourceIndex == event.sourceIndex && media.ocrInput() == event.result.input &&
+                media.status == ClipboardArchiveMediaStatus.Saved &&
+                media.archiveMediaKey() !in archive.deletedMediaKeys &&
+                media.legacyArchiveMediaKey() !in archive.deletedMediaKeys
+            ) media.copy(ocr = event.result) else media
         }
     )
     is ClipboardArchiveEvent.DiskReconciled -> archive?.let {
@@ -749,7 +765,7 @@ private fun richerArchiveMedia(
     val incomingWins = archiveMediaStatusScore(incoming.status) > archiveMediaStatusScore(existing.status)
     val winner = if(incomingWins) incoming else existing
     val loser = if(incomingWins) existing else incoming
-    return winner.copy(
+    val merged = winner.copy(
         mimeType = winner.mimeType ?: loser.mimeType,
         fileName = winner.fileName ?: loser.fileName,
         failureDetail = winner.failureDetail ?: loser.failureDetail,
@@ -760,6 +776,9 @@ private fun richerArchiveMedia(
             loser.lastAttemptAtEpochMs
         )
     )
+    return merged.copy(ocr = listOfNotNull(winner.ocr, loser.ocr)
+        .filter { it.input == merged.ocrInput() }
+        .maxByOrNull { it.attemptedAtEpochMs })
 }
 
 private fun archiveMediaStatusScore(status: ClipboardArchiveMediaStatus): Int = when (status) {

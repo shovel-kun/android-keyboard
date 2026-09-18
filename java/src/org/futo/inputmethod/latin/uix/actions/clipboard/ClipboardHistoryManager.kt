@@ -475,10 +475,19 @@ class ClipboardHistoryManager private constructor(
     // service being destroyed and recreated on an input-method switch.
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val archiveDownloadCoordinator = ClipboardArchiveDownloadCoordinator(coroutineScope)
+    private val imageInferenceDispatcher = Dispatchers.Default.limitedParallelism(1)
+    private val ocrCoordinator = ClipboardOcrCoordinator(
+        scope = coroutineScope,
+        workerDispatcher = imageInferenceDispatcher,
+        factory = { PaddleClipboardOcr(context) },
+        onResult = ::applyOcrResult
+    )
+    internal val ocrRequests get() = ocrCoordinator.requests
     private val imageTagCoordinator = ClipboardImageTagCoordinator(
         scope = coroutineScope,
         taggerFactory = { OnnxClipboardImageTagger(context) },
-        onResult = ::applyImageTaggingResult
+        onResult = ::applyImageTaggingResult,
+        workerDispatcher = imageInferenceDispatcher
     )
 
     // Serializes clipboard loads so the initial load and an unlock-triggered load
@@ -642,6 +651,7 @@ class ClipboardHistoryManager private constructor(
                 saveClipboardLoadJob?.cancelAndJoin()
                 archiveDownloadCoordinator.cancelAll()
                 imageTagCoordinator.cancelAll()
+                ocrCoordinator.cancelAll()
                 pendingArchiveSaves.drain()
             }
             loadMutex.withLock {
@@ -1228,6 +1238,42 @@ class ClipboardHistoryManager private constructor(
 
     internal fun archiveGalleryItems(archive: ClipboardLinkArchive): List<ClipboardArchiveGalleryItem> =
         archive.galleryItems(context.clipboardDir, currentArchiveFileNames())
+
+    internal fun extractArchiveText(archiveKey: String, sourceIndex: Int) {
+        if(backupImportInProgress) return
+        val archive = linkArchives[archiveKey] ?: return
+        val media = archive.media.firstOrNull { it.sourceIndex == sourceIndex } ?: return
+        ocrRequest(archive, media)?.let { ocrCoordinator.enqueue(listOf(it)) }
+    }
+
+    internal fun extractExistingArchiveText() {
+        if(backupImportInProgress) return
+        ocrCoordinator.enqueue(linkArchives.values.flatMap { archive ->
+            archive.media.filter { media ->
+                media.ocr?.modelRevision != ClipboardOcrModelRevision || media.ocr.failed
+            }.mapNotNull { ocrRequest(archive, it) }
+        })
+    }
+
+    internal fun cancelTextExtraction() {
+        coroutineScope.launch { ocrCoordinator.cancelAll() }
+    }
+
+    private fun ocrRequest(archive: ClipboardLinkArchive, media: ClipboardArchiveMedia): ClipboardOcrRequest? {
+        if(!media.canExtractText() || media.archiveMediaKey() in archive.deletedMediaKeys ||
+            "${media.sourceIndex}:${media.sourceUrl}" in archive.deletedMediaKeys
+        ) return null
+        val input = media.ocrInput() ?: return null
+        return ClipboardOcrRequest(archive.key, media.sourceIndex, input, File(context.clipboardDir, input.fileName))
+    }
+
+    private fun applyOcrResult(request: ClipboardOcrRequest, result: ClipboardOcrResult) {
+        val archive = linkArchives[request.archiveKey] ?: return
+        val updated = reduceArchive(archive, ClipboardArchiveEvent.MediaTextExtracted(request.sourceIndex, result)) ?: return
+        if(updated == archive) return
+        linkArchives[updated.key] = updated
+        queueArchiveSave(updated)
+    }
 
     internal fun tagExistingArchiveImages() {
         if(!context.getSetting(ClipboardImageTaggingEnabled)) return

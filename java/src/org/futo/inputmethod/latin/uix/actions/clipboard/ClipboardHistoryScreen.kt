@@ -682,6 +682,13 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                                 onTagExisting = manager::tagExistingArchiveImages
                             )
                         }
+                        if(activeMode == ClipboardHistoryContentMode.Archives) {
+                            ClipboardOcrStatus(
+                                remaining = manager.ocrRequests.value.size,
+                                onExtract = manager::extractExistingArchiveText,
+                                onCancel = manager::cancelTextExtraction
+                            )
+                        }
                         if(activeMode == ClipboardHistoryContentMode.Clips) {
                             ClipboardHistoryFilterRow(
                                 activeFilter = activeFilter,
@@ -786,6 +793,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             onDismiss = { previewArchiveKey = null },
             onRetry = { manager.retryArchive(archive) },
             onTagImage = { manager.tagArchiveMedia(archive.key, it.media.sourceIndex) },
+            extractingIndices = manager.ocrRequests.value.filter { it.archiveKey == archive.key }
+                .map { it.sourceIndex }.toSet(),
+            onExtractText = { manager.extractArchiveText(archive.key, it.media.sourceIndex) },
             onDelete = { archiveDeleteRequest = ArchiveDeleteRequest(archive) },
             onShare = { shareArchiveMedia(context, it) }
         )

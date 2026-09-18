@@ -14,3 +14,7 @@ java/assets/image-tagger/model.quant.preproc.onnx
 java/src/org/futo/inputmethod/keyboard/internal/KeyboardTextsTable.java
 /CLAUDE.md
 /trace_processor
+
+java/assets/image-ocr/*.onnx
+java/assets/image-ocr/*.yml
+.kotlin/

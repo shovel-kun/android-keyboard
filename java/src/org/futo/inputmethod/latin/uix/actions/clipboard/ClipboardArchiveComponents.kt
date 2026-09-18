@@ -1285,9 +1285,12 @@ internal fun ClipboardArchiveGalleryDialog(
     onDismiss: () -> Unit,
     onRetry: () -> Unit,
     onTagImage: (ClipboardArchiveGalleryItem) -> Unit,
+    extractingIndices: Set<Int>,
+    onExtractText: (ClipboardArchiveGalleryItem) -> Unit,
     onDelete: () -> Unit,
     onShare: (ClipboardArchiveGalleryItem) -> Unit
 ) {
+    var showOcr by remember { mutableStateOf(false) }
     var currentPage by remember { mutableStateOf(0) }
     val currentItem = items.getOrNull(currentPage)
     var detailsTarget by remember { mutableStateOf<ClipboardArchiveDetailsTarget?>(null) }
@@ -1311,7 +1314,25 @@ internal fun ClipboardArchiveGalleryDialog(
             ?.let(ClipboardArchiveDetailsTarget::Failure)
             ?: ClipboardArchiveDetailsTarget.ArchiveMetadata(archive)
     }
+    if(showOcr && currentItem != null) {
+        ClipboardOcrDialog(
+            result = currentItem.media.ocr,
+            extracting = currentItem.media.sourceIndex in extractingIndices,
+            onExtract = { onExtractText(currentItem) },
+            onDismiss = { showOcr = false }
+        )
+    }
     val galleryActions = buildList {
+        currentItem?.takeIf { it.media.canExtractText() }?.let { item ->
+            add(ClipboardPreviewFabAction(
+                label = stringResource(R.string.clipboard_ocr_extract),
+                iconRes = R.drawable.file_text,
+                onClick = {
+                    showOcr = true
+                    if(item.media.ocr == null && item.media.sourceIndex !in extractingIndices) onExtractText(item)
+                }
+            ))
+        }
         if(showRetry) {
             add(
                 ClipboardPreviewFabAction(

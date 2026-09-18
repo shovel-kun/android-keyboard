@@ -1,0 +1,5 @@
+PP-OCRv6 small detection and recognition models
+Copyright PaddlePaddle Authors. Licensed under Apache License 2.0.
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+Exact model revisions and SHA-256 hashes are recorded in models.json.

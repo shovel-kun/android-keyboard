@@ -225,7 +225,37 @@ final def prepareImageTaggerModel = tasks.register('prepareImageTaggerModel') {
     }
 }
 
-preBuild.dependsOn updateLocales, prepareImageTaggerModel
+// Keep OCR weights and their dictionary pinned together; no runtime downloads.
+final def ocrModels = new groovy.json.JsonSlurper().parse(file('java/assets/image-ocr/models.json'))
+final def prepareOcrModels = tasks.register('prepareOcrModels') {
+    inputs.file('java/assets/image-ocr/models.json')
+    outputs.files(ocrModels.collect { file("java/assets/image-ocr/${it.file}") })
+    outputs.upToDateWhen {
+        ocrModels.every { model ->
+            def target = file("java/assets/image-ocr/${model.file}")
+            target.isFile() && fileSha256(target) == model.sha256
+        }
+    }
+    doLast {
+        ocrModels.each { model ->
+            def target = file("java/assets/image-ocr/${model.file}")
+            if (!target.isFile() || fileSha256(target) != model.sha256) {
+                def temporary = file("${target}.download")
+                new URI(model.url).toURL().withInputStream { input ->
+                    temporary.withOutputStream { output -> output << input }
+                }
+                if (fileSha256(temporary) != model.sha256) {
+                    temporary.delete()
+                    throw new GradleException("OCR model SHA-256 mismatch: ${model.file}")
+                }
+                java.nio.file.Files.move(temporary.toPath(), target.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
+}
+
+preBuild.dependsOn updateLocales, prepareImageTaggerModel, prepareOcrModels
 
 android {
     namespace 'org.futo.inputmethod.latin'
@@ -242,7 +272,7 @@ android {
     useLibrary 'android.test.mock'
 
     defaultConfig {
-        minSdk 24
+        minSdk 33
         targetSdk 35
         versionName getVersionName()
         versionCode getVersionCode()
@@ -401,6 +431,8 @@ android {
 
     packagingOptions {
         jniLibs {
+            // Swipe and OpenCV ship compatible libc++ copies with identical exported symbols.
+            pickFirsts += ['**/libc++_shared.so']
             useLegacyPackaging true
         }
     }
@@ -460,6 +492,7 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.7.1'
 
+    implementation project(':paddle-ocr')
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.23.2'
     implementation 'com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0'
 

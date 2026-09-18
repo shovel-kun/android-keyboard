@@ -5,6 +5,22 @@ import org.junit.Test
 
 class ClipboardSearchTest {
     @Test
+    fun archiveOcrMatchesEnglishAndJapaneseWithoutAddingTags() {
+        val media = media(0, "solo").copy(fileName = "one.png", status = ClipboardArchiveMediaStatus.Saved)
+        val result = ClipboardOcrResult(media.ocrInput()!!, "model1", 20L, regions = listOf(
+            ClipboardOcrRegion("ＨＥＬＬＯ 世界の猫 ｶﾀｶﾅ", 0.9f, emptyList())))
+        val archive = archive(listOf(media.copy(ocr = result)))
+        val index = buildClipboardSearchIndex(clipboardSearchSource(listOf(archive), emptyList()))
+        assertTrue(index.matches(archive, parseClipboardSearch("hello tag:solo")))
+        assertTrue(index.matches(archive, parseClipboardSearch("世界の猫")))
+        assertTrue(index.matches(archive, parseClipboardSearch("カタカナ")))
+        assertFalse(index.matches(archive, parseClipboardSearch("hello -tag:solo")))
+        assertEquals(setOf("solo"), index.tagsForArchive(archive.key))
+        assertFalse(index.matches(archive.copy(deletedMediaKeys = setOf(media.archiveMediaKey())), parseClipboardSearch("hello")))
+        assertFalse(index.matches(archive.copy(media = listOf(media.copy(ocr = result.copy(failed = true)))), parseClipboardSearch("hello")))
+    }
+
+    @Test
     fun query_preservesOrdinaryTextAndUrls() {
         val text = "  hello  world https://example.org/tag:solo  "
         assertEquals(text, parseClipboardSearch(text).text)

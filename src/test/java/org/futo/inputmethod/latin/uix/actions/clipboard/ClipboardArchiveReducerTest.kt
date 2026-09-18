@@ -6,6 +6,40 @@ import org.junit.Test
 
 class ClipboardArchiveReducerTest {
     @Test
+    fun extractedTextRoundTripsAndRejectsReplacedOrDeletedMedia() {
+        val media = savedMedia().copy(lastAttemptAtEpochMs = 10L)
+        val archive = sampleArchive(listOf(media))
+        val result = ClipboardOcrResult(media.ocrInput()!!, "model1", 20L, 400, 600,
+            listOf(ClipboardOcrRegion("Hello 世界", 0.95f, listOf(ClipboardOcrPoint(10f, 20f)))))
+        val event = ClipboardArchiveEvent.MediaTextExtracted(0, result)
+        val updated = reduceArchive(archive, event)!!
+        assertEquals(result, decodeClipboardArchive(encodeClipboardArchive(updated)).media.single().ocr)
+        assertEquals(archive.updatedAtEpochMs, updated.updatedAtEpochMs)
+        assertEquals(null, decodeClipboardArchive(encodeClipboardArchive(archive)).media.single().ocr)
+
+        val replaced = reduceArchive(updated, ClipboardArchiveEvent.MediaDownloadSaved(
+            media.sourceUrl, media.fileName!!, media.mimeType, 30L))!!
+        assertEquals(null, replaced.media.single().ocr)
+        assertEquals(replaced, reduceArchive(replaced, event))
+        val deleted = archive.copy(deletedMediaKeys = setOf(media.archiveMediaKey()))
+        assertEquals(deleted, reduceArchive(deleted, event))
+        val empty = result.copy(regions = emptyList())
+        assertEquals(empty, reduceArchive(archive, event.copy(result = empty))!!.media.single().ocr)
+    }
+
+    @Test
+    fun importedOcrOnlyMergesForTheSameSavedImage() {
+        val media = savedMedia().copy(lastAttemptAtEpochMs = 10L)
+        val archive = sampleArchive(listOf(media))
+        val result = ClipboardOcrResult(media.ocrInput()!!, "model1", 20L)
+        val incoming = archive.copy(media = listOf(media.copy(ocr = result)))
+        val merged = reduceArchive(archive, ClipboardArchiveEvent.ImportedArchive(incoming))!!
+        assertEquals(result, merged.media.single().ocr)
+        val otherFile = archive.copy(media = listOf(media.copy(fileName = "other.jpg")))
+        assertEquals(null, reduceArchive(otherFile, ClipboardArchiveEvent.ImportedArchive(incoming))!!.media.single().ocr)
+    }
+
+    @Test
     fun mediaTaggedStoresTagsWithoutChangingArchiveStatusOrTimestamps() {
         val archive = sampleArchive(media = listOf(savedMedia())).copy(
             createdAtEpochMs = 10L,

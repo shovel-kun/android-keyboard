@@ -277,4 +277,14 @@ mobile devices. [CHAR LIMIT=25] -->
          This resource is copied from packages/apps/Settings/res/values/strings.xml -->
     <!-- This resource is corresponding to msgid="5433275485499039199" -->
     <string name="user_dict_fast_scroll_alphabet">\u0020ABCDEFGHIJKLMNOPQRSTUVWXYZ</string>
+    <string name="clipboard_ocr_extract">Extract text</string>
+    <string name="clipboard_ocr_extract_existing">Extract text from saved images</string>
+    <string name="clipboard_ocr_extracting">Extracting text…</string>
+    <string name="clipboard_ocr_remaining">Extracting text: %1$d remaining</string>
+    <string name="clipboard_ocr_empty">No text found</string>
+    <string name="clipboard_ocr_failed">Could not extract text. Try again.</string>
+    <string name="clipboard_ocr_retry">Extract again</string>
+    <string name="clipboard_ocr_copy">Copy text</string>
+    <string name="clipboard_ocr_close">Close</string>
+    <string name="clipboard_ocr_cancel">Cancel extraction</string>
 </resources>
