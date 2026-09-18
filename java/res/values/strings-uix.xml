@@ -304,28 +304,57 @@
     <string name="clipboard_history_archive_delete_text_with_size">This removes %1$s of saved media for %2$s.</string>
     <string name="clipboard_history_archive_delete_clip">Also delete matching clips</string>
     <string name="clipboard_history_archive_delete_action">Delete</string>
-    <string name="clipboard_history_storage_open">Archive storage</string>
-    <string name="clipboard_history_storage_title">Archive storage</string>
-    <string name="clipboard_history_storage_close">Close archive storage</string>
-    <string name="clipboard_history_storage_total">Total clipboard storage</string>
-    <string name="clipboard_history_storage_media">Media</string>
-    <string name="clipboard_history_storage_data">Data</string>
-    <string name="clipboard_history_storage_media_references">Media references</string>
-    <string name="clipboard_history_storage_archive_media">Referenced by archives</string>
-    <string name="clipboard_history_storage_shared_media">Also referenced by clips</string>
-    <string name="clipboard_history_storage_shared_media_description">Shared files are counted in both places.</string>
-    <string name="clipboard_history_storage_unused">Unused files</string>
-    <string name="clipboard_history_storage_unused_description">Not referenced by any clip or archive.</string>
-    <string name="clipboard_history_storage_no_unused">No unused files</string>
-    <string name="clipboard_history_storage_delete_unused_size">Delete %1$s</string>
-    <string name="clipboard_history_storage_downloads_active">Finish active archive downloads before deleting unused files.</string>
-    <string name="clipboard_history_storage_cleanup_error">Unused files could not be deleted.</string>
-    <string name="clipboard_history_storage_delete_title">Delete unused files?</string>
-    <string name="clipboard_history_storage_delete_text">Delete %1$s of files that are not referenced by any clip or archive? Archive records and referenced media will not be changed.</string>
-    <string name="clipboard_history_storage_delete_action">Delete files</string>
-    <plurals name="clipboard_history_storage_file_count">
-        <item quantity="one">%1$d file</item>
-        <item quantity="other">%1$d files</item>
+    <string name="clipboard_cleanup_open">Clean up</string>
+    <string name="clipboard_cleanup_title">Clean up clipboard</string>
+    <string name="clipboard_cleanup_close">Close cleanup</string>
+    <string name="clipboard_cleanup_close_preview">Back to cleanup</string>
+    <string name="clipboard_cleanup_loading">Finding leftover files…</string>
+    <string name="clipboard_cleanup_explanation">These files are no longer in your clips or archives. Review them before choosing what to delete.</string>
+    <string name="clipboard_cleanup_preview_hint">Tap to preview · Largest first</string>
+    <string name="clipboard_cleanup_select_all">Select all</string>
+    <string name="clipboard_cleanup_deselect_all">Deselect all</string>
+    <string name="clipboard_cleanup_deselect">Deselect</string>
+    <string name="clipboard_cleanup_select_delete">Select for deletion</string>
+    <string name="clipboard_cleanup_select_hint">Choose the items you want to delete</string>
+    <string name="clipboard_cleanup_delete_selected">Delete selected</string>
+    <string name="clipboard_cleanup_delete_size">Delete selected · %1$s</string>
+    <string name="clipboard_cleanup_confirm_body">This will free up %1$s. Your current clips and archives will stay. Deleted files cannot be recovered.</string>
+    <string name="clipboard_cleanup_keep">Keep in clipboard</string>
+    <string name="clipboard_cleanup_kept">Added to your pinned clips.</string>
+    <string name="clipboard_cleanup_empty">All clear</string>
+    <string name="clipboard_cleanup_empty_body">No leftover files to clean up.</string>
+    <string name="clipboard_cleanup_working">Working…</string>
+    <string name="clipboard_cleanup_downloads">You can review files now. Wait for downloads to finish before deleting or keeping them.</string>
+    <string name="clipboard_cleanup_error">Some files could not be removed. Review the remaining items and try again.</string>
+    <string name="clipboard_cleanup_keep_error">Could not keep this item. Your original file is still here. Please try again.</string>
+    <string name="clipboard_cleanup_load_error">Could not load your leftover files. Please try again.</string>
+    <string name="clipboard_cleanup_changed">Your files have changed. Review the list and try again.</string>
+    <string name="clipboard_cleanup_refresh">Refresh</string>
+    <string name="clipboard_cleanup_video">Video</string>
+    <string name="clipboard_cleanup_gif">GIF</string>
+    <string name="clipboard_cleanup_video_number">Video %1$d</string>
+    <string name="clipboard_cleanup_gif_number">GIF %1$d</string>
+    <string name="clipboard_cleanup_image_number">Image %1$d</string>
+    <string name="clipboard_cleanup_file_number">File %1$d</string>
+    <plurals name="clipboard_cleanup_found">
+        <item quantity="one">in %1$d leftover item</item>
+        <item quantity="other">in %1$d leftover items</item>
+    </plurals>
+    <plurals name="clipboard_cleanup_selected">
+        <item quantity="one">%1$d item selected</item>
+        <item quantity="other">%1$d items selected</item>
+    </plurals>
+    <plurals name="clipboard_cleanup_confirm_title">
+        <item quantity="one">Delete %1$d item?</item>
+        <item quantity="other">Delete %1$d items?</item>
+    </plurals>
+    <plurals name="clipboard_cleanup_partial">
+        <item quantity="one">Freed %1$s. %2$d item could not be deleted. Please try again.</item>
+        <item quantity="other">Freed %1$s. %2$d items could not be deleted. Please try again.</item>
+    </plurals>
+    <plurals name="clipboard_cleanup_deleted">
+        <item quantity="one">Deleted %1$d item · Freed %2$s</item>
+        <item quantity="other">Deleted %1$d items · Freed %2$s</item>
     </plurals>
 
     <!-- For keyboard modes action -->

@@ -23,7 +23,17 @@ internal data class ClipboardArchiveStoreState(
 internal data class ClipboardStorageFile(
     val fileName: String,
     val relativePath: String,
-    val bytes: Long
+    val bytes: Long,
+    val companionPaths: List<String> = emptyList()
+) {
+    val relativePaths: List<String> get() = listOf(relativePath) + companionPaths
+}
+
+internal data class ClipboardCleanupResult(
+    val inventory: ClipboardStorageInventory,
+    val deletedCount: Int,
+    val deletedBytes: Long,
+    val failedCount: Int
 )
 
 internal data class ClipboardStorageInventory(
@@ -174,6 +184,11 @@ internal class ClipboardArchiveStore(
         val archiveFileNames = referencedClipboardArchiveFileNames(archives)
         val referencedFileNames = clipboardFileNames + archiveFileNames
         val unreferencedFiles = mediaFiles.filter { it.name !in referencedFileNames }
+        val unreferencedByPath = unreferencedFiles.associateBy { it.path }
+        val thumbnailsByOriginal = unreferencedFiles.associateWith { original ->
+            unreferencedByPath[ClipboardUtil.thumbnailFor(original).path]
+        }
+        val groupedThumbnails = thumbnailsByOriginal.values.filterNotNull().toSet()
 
         return ClipboardStorageInventory(
             totalBytes = clipboardStorageFiles().sumOf(File::length),
@@ -183,12 +198,13 @@ internal class ClipboardArchiveStore(
             sharedMediaBytes = mediaFiles
                 .filter { it.name in clipboardFileNames && it.name in archiveFileNames }
                 .sumOf(File::length),
-            unreferencedMediaFiles = unreferencedFiles
+            unreferencedMediaFiles = unreferencedFiles.filter { it !in groupedThumbnails }
                 .map { file ->
                     ClipboardStorageFile(
                         fileName = file.name,
                         relativePath = file.relativeTo(filesDir).invariantSeparatorsPath,
-                        bytes = file.length()
+                        bytes = file.length() + (thumbnailsByOriginal[file]?.length() ?: 0L),
+                        companionPaths = listOfNotNull(thumbnailsByOriginal[file]?.relativeTo(filesDir)?.invariantSeparatorsPath)
                     )
                 }
                 .sortedWith(
@@ -206,18 +222,51 @@ internal class ClipboardArchiveStore(
     fun deleteUnreferencedMedia(
         entries: List<ClipboardEntry>,
         archives: Collection<ClipboardLinkArchive>,
-        candidateFileNames: Set<String>
-    ): ClipboardStorageInventory {
-        val referencedFileNames = referencedClipboardFileNames(entries) +
-            referencedClipboardArchiveFileNames(archives)
-        listOf(mediaDir, legacyArchiveMediaDir)
-            .flatMap { it.listFiles()?.filter(File::isFile).orEmpty() }
-            .filter { it.name in candidateFileNames && it.name !in referencedFileNames }
-            .forEach { file ->
-                check(file.delete()) { "Could not delete unused clipboard media: ${file.name}" }
+        candidatePaths: Set<String>
+    ): ClipboardCleanupResult {
+        // Recheck ownership at execution time; only delete the exact items reviewed by the user.
+        val candidates = storageInventory(entries, archives).unreferencedMediaFiles
+            .filter { it.relativePath in candidatePaths }
+        var deletedCount = 0
+        var deletedBytes = 0L
+        var failedCount = 0
+        candidates.forEach { item ->
+            var failed = false
+            item.relativePaths.forEach { path ->
+                val file = File(filesDir, path)
+                val bytes = file.length()
+                if(file.delete()) deletedBytes += bytes else if(file.exists()) failed = true
             }
-        return storageInventory(entries, archives)
+            if(failed) failedCount++ else deletedCount++
+        }
+        return ClipboardCleanupResult(storageInventory(entries, archives), deletedCount, deletedBytes, failedCount)
     }
+
+    fun recoverUnreferencedMedia(
+        entries: List<ClipboardEntry>,
+        archives: Collection<ClipboardLinkArchive>,
+        candidatePaths: Set<String>,
+        timestamp: Long
+    ): List<Pair<String, ClipboardEntry>> = storageInventory(entries, archives).unreferencedMediaFiles
+        .filter { it.relativePath in candidatePaths }
+        .mapNotNull { item ->
+            val source = File(filesDir, item.relativePath)
+            val mimeType = source.guessedClipboardMimeType() ?: return@mapNotNull null
+            if(!mimeType.startsWith("image/") && !mimeType.startsWith("video/")) return@mapNotNull null
+            val target = if(source.parentFile == mediaDir) source else {
+                mediaDir.mkdirs()
+                File(mediaDir, "${java.util.UUID.randomUUID()}.${source.extension}").also { source.copyTo(it) }
+            }
+            item.relativePath to ClipboardEntry(
+                timestamp = timestamp,
+                pinned = true,
+                text = null,
+                uri = null,
+                backingFile = target.name,
+                mimeTypes = listOf(mimeType),
+                sizeMb = target.length() / (1024f * 1024f)
+            )
+        }
 
     fun stageAndPromote(
         state: ClipboardArchiveStoreState,

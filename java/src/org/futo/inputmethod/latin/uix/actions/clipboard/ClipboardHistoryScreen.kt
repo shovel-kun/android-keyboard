@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -36,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -113,6 +113,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     var archiveStorageVisible by remember { mutableStateOf(false) }
     var archiveStorageBusy by remember { mutableStateOf(false) }
     var archiveStorageCleanupError by remember { mutableStateOf(false) }
+    var archiveStorageLoading by remember { mutableStateOf(false) }
+    var archiveStorageMessage by remember { mutableStateOf<String?>(null) }
+    var archiveStorageRefresh by remember { mutableIntStateOf(0) }
     val selectedKeys = remember { mutableStateListOf<String>() }
     var selectionMode by remember { mutableStateOf(false) }
     var previewEntryKey by remember { mutableStateOf<String?>(null) }
@@ -144,13 +147,20 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         }
     }
 
-    LaunchedEffect(archiveStorageVisible) {
+    LaunchedEffect(archiveStorageVisible, archiveStorageRefresh) {
         if(archiveStorageVisible) {
-            archiveStorageBusy = true
+            archiveStorageLoading = true
+            archiveStorageCleanupError = false
+            archiveStorageMessage = null
             try {
                 manager.refreshClipboardStorageInventory()
+            } catch(e: CancellationException) {
+                throw e
+            } catch(e: Exception) {
+                archiveStorageCleanupError = true
+                archiveStorageMessage = context.getString(R.string.clipboard_cleanup_load_error)
             } finally {
-                archiveStorageBusy = false
+                archiveStorageLoading = false
             }
         }
     }
@@ -468,18 +478,14 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             badgeCount = archiveDownloadItems.size.takeIf { downloadsVisible },
             actions = {
                 if(!manager.backupImportInProgress && !selectionMode && !downloadsVisible && uiState.historyEnabled && uiState.historyVisible) {
-                    if(activeMode == ClipboardHistoryContentMode.Archives) {
-                        IconButton(
-                            onClick = {
-                                archiveStorageCleanupError = false
-                                archiveStorageVisible = true
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = stringResource(R.string.clipboard_history_storage_open)
-                            )
+                    TextButton(
+                        onClick = {
+                            archiveStorageMessage = null
+                            archiveStorageCleanupError = false
+                            archiveStorageVisible = true
                         }
+                    ) {
+                        Text(stringResource(R.string.clipboard_cleanup_open))
                     }
                     IconButton(onClick = { downloadsVisible = true }) {
                         BadgedBox(
@@ -868,23 +874,65 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
         ClipboardArchiveStorageSheet(
             inventory = storageInventory,
             downloadsActive = manager.hasActiveArchiveDownloads(),
-            cleanupInProgress = archiveStorageBusy,
-            cleanupError = archiveStorageCleanupError,
-            onDeleteUnused = {
+            loading = archiveStorageLoading,
+            busy = archiveStorageBusy,
+            message = archiveStorageMessage,
+            error = archiveStorageCleanupError,
+            onDelete = { paths ->
                 coroutineScope.launch {
                     archiveStorageBusy = true
                     archiveStorageCleanupError = false
+                    archiveStorageMessage = null
                     try {
-                        manager.deleteUnreferencedClipboardMedia()
+                        val result = manager.deleteUnreferencedClipboardMedia(paths)
+                        archiveStorageCleanupError = result == null || result.failedCount > 0
+                        archiveStorageMessage = when {
+                            result == null -> context.getString(R.string.clipboard_cleanup_changed)
+                            result.failedCount > 0 -> context.resources.getQuantityString(
+                                R.plurals.clipboard_cleanup_partial,
+                                result.failedCount,
+                                android.text.format.Formatter.formatShortFileSize(context, result.deletedBytes),
+                                result.failedCount
+                            )
+                            result.deletedCount == 0 -> context.getString(R.string.clipboard_cleanup_changed)
+                            else -> context.resources.getQuantityString(
+                                R.plurals.clipboard_cleanup_deleted,
+                                result.deletedCount,
+                                result.deletedCount,
+                                android.text.format.Formatter.formatShortFileSize(context, result.deletedBytes)
+                            )
+                        }
                     } catch(e: CancellationException) {
                         throw e
                     } catch(e: Exception) {
                         archiveStorageCleanupError = true
+                        archiveStorageMessage = context.getString(R.string.clipboard_cleanup_error)
                     } finally {
                         archiveStorageBusy = false
                     }
                 }
             },
+            onKeep = { path ->
+                coroutineScope.launch {
+                    archiveStorageBusy = true
+                    archiveStorageCleanupError = false
+                    archiveStorageMessage = null
+                    try {
+                        val kept = manager.recoverUnreferencedClipboardMedia(setOf(path))
+                        archiveStorageMessage = context.getString(
+                            if(kept > 0) R.string.clipboard_cleanup_kept else R.string.clipboard_cleanup_changed
+                        )
+                    } catch(e: CancellationException) {
+                        throw e
+                    } catch(e: Exception) {
+                        archiveStorageCleanupError = true
+                        archiveStorageMessage = context.getString(R.string.clipboard_cleanup_keep_error)
+                    } finally {
+                        archiveStorageBusy = false
+                    }
+                }
+            },
+            onRetry = { archiveStorageRefresh++ },
             onDismiss = { archiveStorageVisible = false }
         )
     }

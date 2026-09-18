@@ -1390,34 +1390,50 @@ class ClipboardHistoryManager private constructor(
         return inventory
     }
 
-    internal suspend fun deleteUnreferencedClipboardMedia(): Boolean {
-        val snapshots = withContext(Dispatchers.Main) {
-            if(storageCleanupInProgress || hasActiveArchiveDownloads()) {
-                null
-            } else {
-                storageCleanupInProgress = true
-                Triple(
-                    clipboardHistory.toList(),
-                    linkArchives.values.toList(),
-                    clipboardStorageSnapshot.value.inventory.unreferencedMediaFileNames
-                )
-            }
-        } ?: return false
+    internal suspend fun deleteUnreferencedClipboardMedia(candidatePaths: Set<String>): ClipboardCleanupResult? {
+        if(storageCleanupInProgress || hasActiveArchiveDownloads() || backupImportInProgress) return null
+        storageCleanupInProgress = true
         return try {
-            val inventory = withContext(ClipboardIOContext) {
-                archiveStore.deleteUnreferencedMedia(snapshots.first, snapshots.second, snapshots.third)
-            }
-            withContext(Dispatchers.Main) {
+            val entries = clipboardHistory.toList()
+            val archives = linkArchives.values.toList()
+            withContext(ClipboardIOContext) {
+                archiveStore.deleteUnreferencedMedia(entries, archives, candidatePaths)
+            }.also { result ->
                 clipboardStorageSnapshot.value = ClipboardStorageSnapshot(
-                    fileNames = inventory.mediaFileNames,
-                    inventory = inventory
+                    fileNames = result.inventory.mediaFileNames,
+                    inventory = result.inventory
                 )
             }
-            true
         } finally {
-            withContext(Dispatchers.Main) {
-                storageCleanupInProgress = false
+            storageCleanupInProgress = false
+        }
+    }
+
+    internal suspend fun recoverUnreferencedClipboardMedia(candidatePaths: Set<String>): Int {
+        if(!clipboardLoaded || storageCleanupInProgress || hasActiveArchiveDownloads() || backupImportInProgress) return 0
+        storageCleanupInProgress = true
+        return try {
+            val entries = clipboardHistory.toList()
+            val archives = linkArchives.values.toList()
+            val recovered = withContext(ClipboardIOContext) {
+                archiveStore.recoverUnreferencedMedia(entries, archives, candidatePaths, System.currentTimeMillis())
             }
+            recovered.forEach { (_, entry) ->
+                entry.backingFile?.let(::noteClipboardMediaFileSaved)
+                upsertClipboardMediaEntry(clipboardHistory, entry)
+            }
+            checkNotNull(saveClipboard(reconcileBeforeSave = false)).join()
+            check(!clipboardIOFailure.value) { "Could not save recovered clips" }
+            // Legacy originals can be removed only after their recovered copies have been saved.
+            val savedEntries = clipboardHistory.toList()
+            val savedArchives = linkArchives.values.toList()
+            withContext(ClipboardIOContext) {
+                archiveStore.deleteUnreferencedMedia(savedEntries, savedArchives, recovered.map { it.first }.toSet())
+            }
+            refreshClipboardStorageInventory()
+            recovered.size
+        } finally {
+            storageCleanupInProgress = false
         }
     }
 

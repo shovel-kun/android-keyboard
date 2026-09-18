@@ -584,14 +584,105 @@ class ClipboardBackupTest {
             val inventory = ClipboardArchiveStore(root).deleteUnreferencedMedia(
                 entries,
                 listOf(archive),
-                setOf(clip.name, archived.name, unused.name)
-            )
+                setOf(clip, archived, unused).map { it.relativeTo(root).invariantSeparatorsPath }.toSet()
+            ).inventory
 
             assertTrue(clip.isFile)
             assertTrue(archived.isFile)
             assertFalse(unused.exists())
             assertEquals(0L, inventory.unreferencedMediaBytes)
             assertEquals(0, inventory.unreferencedMediaFileCount)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_cleanupGroupsThumbnailsAndDeletesOnlySelectedLocations() {
+        val root = createTempDirectory().toFile()
+        try {
+            val mediaDir = File(root, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
+            val legacyDir = File(root, ClipboardArchiveFilesDirectoryName).apply { mkdirs() }
+            val selected = File(mediaDir, "photo.jpg").apply { writeBytes(ByteArray(6)) }
+            val thumbnail = ClipboardUtil.thumbnailFor(selected).apply { writeBytes(ByteArray(2)) }
+            val sameNameElsewhere = File(legacyDir, selected.name).apply { writeBytes(ByteArray(9)) }
+            val unselected = File(mediaDir, "other.jpg").apply { writeBytes(ByteArray(3)) }
+            val store = ClipboardArchiveStore(root)
+            val inventory = store.storageInventory(emptyList(), emptyList())
+            val item = inventory.unreferencedMediaFiles.single { it.relativePath.startsWith(ClipboardBackupFilesDirectoryName) && it.fileName == selected.name }
+            assertEquals(3, inventory.unreferencedMediaFileCount)
+            assertEquals(20L, inventory.unreferencedMediaBytes)
+            assertEquals(8L, item.bytes)
+            assertEquals(listOf(thumbnail.relativeTo(root).invariantSeparatorsPath), item.companionPaths)
+
+            val result = store.deleteUnreferencedMedia(emptyList(), emptyList(), setOf(item.relativePath))
+
+            assertEquals(1, result.deletedCount)
+            assertEquals(8L, result.deletedBytes)
+            assertEquals(0, result.failedCount)
+            assertFalse(selected.exists())
+            assertFalse(thumbnail.exists())
+            assertTrue(sameNameElsewhere.exists())
+            assertTrue(unselected.exists())
+            assertEquals(12L, result.inventory.unreferencedMediaBytes)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_cleanupRechecksOwnershipAndIgnoresUnselectedFiles() {
+        val root = createTempDirectory().toFile()
+        try {
+            val mediaDir = File(root, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
+            val photo = File(mediaDir, "photo.jpg").apply { writeText("photo") }
+            val thumbnail = ClipboardUtil.thumbnailFor(photo).apply { writeText("thumbnail") }
+            val store = ClipboardArchiveStore(root)
+            val reviewed = store.storageInventory(emptyList(), emptyList()).unreferencedMediaFiles.single()
+            val appearedLater = File(mediaDir, "new.jpg").apply { writeText("new") }
+            val recoveredEntry = sampleEntry("kept").copy(backingFile = photo.name)
+
+            val result = store.deleteUnreferencedMedia(listOf(recoveredEntry), emptyList(), setOf(reviewed.relativePath))
+
+            assertEquals(0, result.deletedCount)
+            assertEquals(0L, result.deletedBytes)
+            assertTrue(photo.exists())
+            assertTrue(thumbnail.exists())
+            assertTrue(appearedLater.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveStore_recoveredMediaIsPinnedAndLegacyFilesCannotOverwriteExistingClips() {
+        val root = createTempDirectory().toFile()
+        try {
+            val mediaDir = File(root, ClipboardBackupFilesDirectoryName).apply { mkdirs() }
+            val legacyDir = File(root, ClipboardArchiveFilesDirectoryName).apply { mkdirs() }
+            val photo = File(mediaDir, "photo.jpg").apply { writeText("current photo") }
+            val legacy = File(legacyDir, photo.name).apply { writeText("legacy photo") }
+            val video = File(legacyDir, "video.mp4").apply { writeText("legacy video") }
+            val unknown = File(mediaDir, "unknown.bin").apply { writeText("unknown") }
+            val store = ClipboardArchiveStore(root)
+            val paths = store.storageInventory(emptyList(), emptyList()).unreferencedMediaFiles.map { it.relativePath }.toSet()
+
+            val recovered = store.recoverUnreferencedMedia(emptyList(), emptyList(), paths, 123L)
+            val entries = decodeClipboardEntries(encodeClipboardEntries(recovered.map { it.second }))
+
+            assertEquals(3, entries.size)
+            assertTrue(entries.all { it.pinned && it.text == null })
+            assertEquals(setOf("image/jpeg", "video/mp4"), entries.flatMap { it.mimeTypes }.toSet())
+            assertEquals(setOf("current photo", "legacy photo", "legacy video"), entries.map { File(mediaDir, it.backingFile!!).readText() }.toSet())
+            assertTrue(legacy.exists()) // Recovery must retain the original until the entries are durably saved.
+            assertTrue(video.exists())
+            assertEquals("current photo", photo.readText())
+            val result = store.deleteUnreferencedMedia(entries, emptyList(), recovered.map { it.first }.toSet())
+            assertTrue(photo.exists())
+            assertTrue(legacy.exists()) // The same name is still used by a current clip.
+            assertFalse(video.exists())
+            assertTrue(unknown.exists())
+            assertEquals(listOf(unknown.name), result.inventory.unreferencedMediaFiles.map { it.fileName })
         } finally {
             root.deleteRecursively()
         }
