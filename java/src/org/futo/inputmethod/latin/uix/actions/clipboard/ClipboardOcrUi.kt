@@ -24,7 +24,13 @@ import androidx.compose.ui.unit.dp
 import org.futo.inputmethod.latin.R
 
 @Composable
-internal fun ClipboardOcrStatus(remaining: Int, onExtract: () -> Unit, onCancel: () -> Unit) {
+internal fun ClipboardOcrStatus(
+    hasEligibleImages: Boolean,
+    remaining: Int,
+    onExtract: () -> Unit,
+    onCancel: () -> Unit
+) {
+    if(remaining == 0 && !hasEligibleImages) return
     if(remaining == 0) {
         TextButton(onClick = onExtract) { Text(stringResource(R.string.clipboard_ocr_extract_existing)) }
     } else {

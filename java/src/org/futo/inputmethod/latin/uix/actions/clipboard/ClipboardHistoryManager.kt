@@ -1266,9 +1266,7 @@ class ClipboardHistoryManager private constructor(
     internal fun extractExistingArchiveText() {
         if(backupImportInProgress) return
         ocrCoordinator.enqueue(linkArchives.values.flatMap { archive ->
-            archive.media.filter { media ->
-                media.ocr?.modelRevision != ClipboardOcrModelRevision || media.ocr.failed
-            }.mapNotNull { ocrRequest(archive, it) }
+            archive.mediaNeedingOcr().mapNotNull { ocrRequest(archive, it) }
         })
     }
 

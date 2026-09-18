@@ -684,6 +684,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         }
                         if(activeMode == ClipboardHistoryContentMode.Archives) {
                             ClipboardOcrStatus(
+                                hasEligibleImages = allArchives.any { it.mediaNeedingOcr().isNotEmpty() },
                                 remaining = manager.ocrRequests.value.size,
                                 onExtract = manager::extractExistingArchiveText,
                                 onCancel = manager::cancelTextExtraction

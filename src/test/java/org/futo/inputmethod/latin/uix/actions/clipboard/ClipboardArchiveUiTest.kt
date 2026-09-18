@@ -13,6 +13,40 @@ import kotlin.io.path.createTempDirectory
 
 class ClipboardArchiveUiTest {
     @Test
+    fun batchOcrEligibilityExcludesCompletedImagesIncludingEmptyResults() {
+        val media = savedArchiveMedia()
+        val result = ClipboardOcrResult(media.ocrInput()!!, ClipboardOcrModelRevision, 10L)
+        assertEquals(listOf(media), sampleArchive(listOf(media)).mediaNeedingOcr())
+        assertTrue(sampleArchive(emptyList()).mediaNeedingOcr().isEmpty())
+        assertTrue(sampleArchive(listOf(media.copy(ocr = result))).mediaNeedingOcr().isEmpty())
+        assertTrue(sampleArchive(listOf(media.copy(ocr = result.copy(regions = listOf(
+            ClipboardOcrRegion("Hello 世界", 0.9f, emptyList())
+        ))))).mediaNeedingOcr().isEmpty())
+
+        val failed = media.copy(ocr = result.copy(failed = true))
+        val outdated = media.copy(ocr = result.copy(modelRevision = "old-model"))
+        assertEquals(listOf(failed), sampleArchive(listOf(failed)).mediaNeedingOcr())
+        assertEquals(listOf(outdated), sampleArchive(listOf(outdated)).mediaNeedingOcr())
+    }
+
+    @Test
+    fun batchOcrEligibilityExcludesDeletedUnsavedAndUnsupportedMedia() {
+        val media = savedArchiveMedia()
+        val archive = sampleArchive(listOf(media))
+        for(key in listOf(media.archiveMediaKey(), "${media.sourceIndex}:${media.sourceUrl}")) {
+            assertTrue(archive.copy(deletedMediaKeys = setOf(key)).mediaNeedingOcr().isEmpty())
+        }
+        val ineligible = listOf(
+            media.copy(status = ClipboardArchiveMediaStatus.Pending),
+            media.copy(status = ClipboardArchiveMediaStatus.Missing),
+            media.copy(fileName = null),
+            media.copy(mimeType = "video/mp4"),
+            media.copy(mimeType = "image/gif")
+        )
+        assertEquals(listOf(media), sampleArchive(ineligible + media).mediaNeedingOcr())
+    }
+
+    @Test
     fun keyboardSelection_tracksIdentityAndUsesVisibleOrder() {
         val first = sampleTwitterEntry("1", 1L)
         val second = sampleTwitterEntry("2", 2L)

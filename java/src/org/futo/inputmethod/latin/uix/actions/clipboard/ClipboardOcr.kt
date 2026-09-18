@@ -50,6 +50,14 @@ internal fun ClipboardArchiveMedia.canExtractText(): Boolean =
         ClipboardMediaFilter.Images.matches(mimeType, fileName) &&
         !ClipboardMediaFilter.Gifs.matches(mimeType, fileName)
 
+internal fun ClipboardLinkArchive.mediaNeedingOcr(): List<ClipboardArchiveMedia> =
+    media.filter { item ->
+        item.canExtractText() &&
+            item.archiveMediaKey() !in deletedMediaKeys &&
+            "${item.sourceIndex}:${item.sourceUrl}" !in deletedMediaKeys &&
+            (item.ocr?.modelRevision != ClipboardOcrModelRevision || item.ocr.failed)
+    }
+
 internal fun String.normalizeOcrSearchText(): String =
     Normalizer.normalize(this, Normalizer.Form.NFKC).lowercase(Locale.ROOT).trim()
 
