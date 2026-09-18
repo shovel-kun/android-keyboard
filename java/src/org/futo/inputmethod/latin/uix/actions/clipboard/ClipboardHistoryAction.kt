@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.uix.Action
 import org.futo.inputmethod.latin.uix.ActionTextEditController
+import org.futo.inputmethod.latin.uix.CloseResult
 import org.futo.inputmethod.latin.uix.ActionWindow
 import org.futo.inputmethod.latin.uix.PersistentStateInitialization
 import org.futo.inputmethod.latin.uix.SettingsExporter
@@ -176,12 +177,19 @@ val ClipboardHistoryAction = Action(
         val clipboardSearchActive = mutableStateOf(false)
         val clipboardSearchText = mutableStateOf("")
         val clipboardSearchEditor = ActionTextEditController()
+        val selection = ClipboardKeyboardSelection()
 
         manager.getLifecycleScope().launch {
             clipboardHistoryManager.reconcileClipboardStorage()
         }
 
         object : ActionWindow() {
+            override fun close(): CloseResult {
+                if(!selection.active) return CloseResult.Default
+                selection.clear()
+                return CloseResult.PreventClosing
+            }
+
             @Composable
             override fun windowName(): String {
                 return stringResource(R.string.action_clipboard_manager_title)
@@ -221,7 +229,8 @@ val ClipboardHistoryAction = Action(
                     unlocked = unlocked,
                     searchText = clipboardSearchText.value,
                     searchActive = clipboardSearchActive.value,
-                    searchEditor = clipboardSearchEditor
+                    searchEditor = clipboardSearchEditor,
+                    selection = selection
                 )
             }
         }

@@ -3,6 +3,7 @@ package org.futo.inputmethod.latin.uix.actions.clipboard
 import androidx.compose.ui.geometry.Offset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,6 +12,35 @@ import java.io.File
 import kotlin.io.path.createTempDirectory
 
 class ClipboardArchiveUiTest {
+    @Test
+    fun keyboardSelection_tracksIdentityAndUsesVisibleOrder() {
+        val first = sampleTwitterEntry("1", 1L)
+        val second = sampleTwitterEntry("2", 2L)
+        val selection = ClipboardKeyboardSelection()
+        selection.toggle(second)
+        selection.toggle(first)
+        val updatedFirst = first.copy(timestamp = 10L, pinned = true)
+        assertEquals(listOf(updatedFirst, second), selection.entries(listOf(updatedFirst, second)))
+        selection.retainVisible(listOf(second))
+        assertFalse(selection.contains(first))
+        assertTrue(selection.contains(second))
+        selection.toggle(second)
+        assertFalse(selection.active)
+        selection.toggle(first)
+        selection.clear()
+        assertFalse(selection.active)
+    }
+
+    @Test
+    fun keyboardBulkPaste_joinsTransformedTextAndRejectsMediaWithoutText() {
+        val first = sampleTwitterEntry("1", 1L).copy(text = "first\nline")
+        val second = first.copy(text = "second")
+        assertEquals("FIRST\nLINE\nSECOND", clipboardSelectionText(listOf(first, second)) { it.uppercase() })
+        assertNull(clipboardSelectionText(emptyList()))
+        assertNull(clipboardSelectionText(listOf(first, second.copy(text = null, backingFile = "photo.jpg"))))
+        assertEquals("first\nline", clipboardSelectionText(listOf(first.copy(previewImageFile = "preview.jpg"))))
+    }
+
     @Test
     fun clipMediaFilters_classifyFilesAndMixedEmbedsWithoutTreatingTextAsMedia() {
         val text = sampleTwitterEntry("1", 1L)

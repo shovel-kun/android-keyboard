@@ -32,6 +32,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import java.io.File
 import kotlinx.coroutines.delay
@@ -118,7 +120,8 @@ internal fun ClipboardHistoryActionWindowContents(
     unlocked: Boolean,
     searchText: String,
     searchActive: Boolean,
-    searchEditor: ActionTextEditController
+    searchEditor: ActionTextEditController,
+    selection: ClipboardKeyboardSelection
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -139,6 +142,10 @@ internal fun ClipboardHistoryActionWindowContents(
     val mastodonLinkPasteSession = remember(mastodonLinkPasteDomain.value) {
         MastodonLinkPasteSession(mastodonLinkPasteDomain.value)
     }
+
+    fun textForPaste(text: String): String = xLinkPasteSession.textForPaste(
+        mastodonLinkPasteSession.textForPaste(phixivPasteSession.textForPaste(text))
+    )
 
     LaunchedEffect(unlocked, uiState) {
         if(unlocked && uiState.shouldRefreshPreviews) {
@@ -259,9 +266,48 @@ internal fun ClipboardHistoryActionWindowContents(
             val displayedList by remember(clipboardHistoryManager) {
                 derivedStateOf { sortedList.filter { searchIndex.matches(it, parsedQuery) } }
             }
+            val selectedEntries = selection.entries(displayedList)
+            LaunchedEffect(displayedList) {
+                selection.retainVisible(displayedList)
+            }
             var contentHeight by remember { mutableIntStateOf(0) }
             val density = LocalDensity.current
             Column(Modifier.fillMaxSize().onSizeChanged { contentHeight = it.height }) {
+                if(selection.active) {
+                    ClipboardKeyboardSelectionBar(
+                        count = selectedEntries.size,
+                        canPaste = selectedEntries.isNotEmpty() && selectedEntries.all { it.text != null },
+                        onCancel = selection::clear,
+                        onPaste = {
+                            val text = clipboardSelectionText(selectedEntries, ::textForPaste)
+                            if(text != null) {
+                                manager.typeText(text)
+                                selectedEntries.forEach(clipboardHistoryManager::onPaste)
+                                selection.clear()
+                                manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
+                            }
+                        },
+                        onPin = {
+                            clipboardHistoryManager.setPinned(selectedEntries, true)
+                            selection.clear()
+                            manager.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
+                        },
+                        onDelete = {
+                            val entriesToDelete = selectedEntries
+                            manager.requestDialog(
+                                context.getString(R.string.clipboard_keyboard_delete_confirmation, entriesToDelete.size),
+                                listOf(
+                                    DialogRequestItem(context.getString(R.string.clipboard_history_cancel_selection)) {},
+                                    DialogRequestItem(context.getString(R.string.clipboard_history_action_delete)) {
+                                        clipboardHistoryManager.removeAll(entriesToDelete)
+                                        selection.clear()
+                                        manager.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
+                                    }
+                                )
+                            ) {}
+                        }
+                    )
+                }
                 ClipboardTagSuggestions(
                     search = tagSearch,
                     controller = searchEditor,
@@ -290,21 +336,27 @@ internal fun ClipboardHistoryActionWindowContents(
                     ) {
                         items(displayedList, key = { it.lazyListKey() }) { entry ->
                             ClipboardEntryView(
-                                modifier = Modifier,
+                                modifier = Modifier.semantics {
+                                    if(selection.active) selected = selection.contains(entry)
+                                },
                                 clipboardEntry = entry,
+                                selectionMode = selection.active,
+                                isSelected = selection.contains(entry),
+                                onLongClick = {
+                                    selection.toggle(it)
+                                    manager.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
+                                },
                                 previewMediaTotalCount = clipboardHistoryManager.expectedPreviewMediaCount(entry),
                                 previewLoading = uiState.previewState.showsEmbed &&
                                     entry.text?.let { clipboardHistoryManager.previewLoadingByText[it] == true } == true,
                                 embedDisplayMode = uiState.previewState.embedDisplayMode,
                                 onPaste = {
+                                    if(selection.active) {
+                                        selection.toggle(it)
+                                        return@ClipboardEntryView
+                                    }
                                     when {
-                                        it.text != null -> manager.typeText(
-                                            xLinkPasteSession.textForPaste(
-                                                mastodonLinkPasteSession.textForPaste(
-                                                    phixivPasteSession.textForPaste(it.text)
-                                                )
-                                            )
-                                        )
+                                        it.text != null -> manager.typeText(textForPaste(it.text))
                                         it.backingFile != null && it.mimeTypes.isNotEmpty() -> {
                                             val uri = createClipboardContentUri(
                                                 file = File(context.clipboardDir, it.backingFile),

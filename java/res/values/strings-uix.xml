@@ -179,6 +179,9 @@
     <string name="clipboard_history_action_pin">Pin</string>
     <string name="clipboard_history_action_unpin">Unpin</string>
     <string name="clipboard_history_action_delete">Delete</string>
+    <string name="clipboard_keyboard_paste">Paste</string>
+    <string name="clipboard_keyboard_text_only">Paste requires text in every selected clip.</string>
+    <string name="clipboard_keyboard_delete_confirmation">Delete %1$d selected clips?</string>
     <string name="clipboard_history_selected_count">%1$d selected</string>
     <string name="clipboard_history_selection_scope">%1$d selected of %2$d visible</string>
     <string name="clipboard_history_preview_title">Media Preview</string>
