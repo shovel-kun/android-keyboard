@@ -142,3 +142,5 @@ class ClipboardProvider: ContentProvider() {
         selectionArgs: Array<out String?>?
     ): Int = throw UnsupportedOperationException("Provider is read-only")
 }
+
+class ClipboardMediaFileProvider : androidx.core.content.FileProvider()

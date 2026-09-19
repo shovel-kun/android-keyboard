@@ -1,6 +1,7 @@
 package org.futo.inputmethod.latin.uix.actions.clipboard
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -88,8 +89,10 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import kotlinx.coroutines.launch
+import org.futo.inputmethod.latin.BuildConfig
 import org.futo.inputmethod.latin.R
 import java.io.File
 
@@ -511,6 +514,44 @@ internal fun copyTextClip(context: Context, entry: ClipboardEntry) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Clipboard", text))
     Toast.makeText(context, context.getString(R.string.clipboard_history_copied_text), Toast.LENGTH_SHORT).show()
+}
+
+@Composable
+internal fun ClipboardPreviewCopyButtons(
+    media: ClipboardPreviewShareTarget?,
+    link: String?
+) {
+    val context = LocalContext.current
+    IconButton(
+        enabled = media != null,
+        onClick = { media?.let { copyMediaFile(context, it.file, it.mimeType) } }
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.copy),
+            contentDescription = stringResource(R.string.clipboard_history_copy_media),
+            tint = if(media != null) Color.White else Color.White.copy(alpha = 0.38f)
+        )
+    }
+    if(!link.isNullOrBlank()) {
+        IconButton(onClick = {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Link", link))
+            Toast.makeText(context, R.string.clipboard_history_copied_link, Toast.LENGTH_SHORT).show()
+        }) {
+            Icon(
+                painter = painterResource(R.drawable.link),
+                contentDescription = stringResource(R.string.clipboard_history_copy_link),
+                tint = Color.White
+            )
+        }
+    }
+}
+
+private fun copyMediaFile(context: Context, file: File, mimeType: String) {
+    val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.clipboard-media", file)
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData(ClipDescription(file.name, arrayOf(mimeType)), ClipData.Item(uri)))
+    Toast.makeText(context, R.string.clipboard_history_copied_media, Toast.LENGTH_SHORT).show()
 }
 
 internal fun shareClipboardMedia(
@@ -966,7 +1007,14 @@ internal fun ClipboardHistoryImagePreviewDialog(
                 text = stringResource(R.string.clipboard_history_preview_title),
                 color = Color.White,
                 style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
+            )
+
+            ClipboardPreviewCopyButtons(
+                media = currentShareTarget,
+                link = entry.previewMetadata?.sourceUrl ?: entry.text
             )
 
             currentVideoFile?.let { videoFile ->

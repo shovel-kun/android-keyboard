@@ -239,6 +239,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/crash_report_paths" />
         </provider>
+        <provider
+            android:name=".uix.actions.clipboard.ClipboardMediaFileProvider"
+            android:authorities="${applicationId}.clipboard-media"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/clipboard_media_paths" />
+        </provider>
     </application>
 
     <!-- To query enabled input methods for voice IME detection -->

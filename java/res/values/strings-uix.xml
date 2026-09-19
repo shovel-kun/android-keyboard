@@ -190,6 +190,10 @@
     <string name="clipboard_history_share_image">Share media</string>
     <string name="clipboard_history_copy_text">Copy text</string>
     <string name="clipboard_history_copied_text">Copied to clipboard</string>
+    <string name="clipboard_history_copy_media">Copy media</string>
+    <string name="clipboard_history_copy_link">Copy link</string>
+    <string name="clipboard_history_copied_media">Media copied</string>
+    <string name="clipboard_history_copied_link">Link copied</string>
     <string name="clipboard_history_open_settings">Open Clipboard Settings</string>
     <string name="backup_import_title">Backup import</string>
     <string name="backup_import_leave">Continue in background</string>

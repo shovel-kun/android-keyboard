@@ -1494,6 +1494,13 @@ internal fun ClipboardArchiveGalleryDialog(
                 )
             }
 
+            ClipboardPreviewCopyButtons(
+                media = currentItem?.file?.takeIf { it.isFile }?.let { file ->
+                    ClipboardPreviewShareTarget(file, archiveMediaShareMimeType(currentItem.media, file))
+                },
+                link = archive.sourceUrl
+            )
+
             currentVideoFile?.let { videoFile ->
                 IconButton(onClick = { showFullscreen(videoFile) }) {
                     Icon(
