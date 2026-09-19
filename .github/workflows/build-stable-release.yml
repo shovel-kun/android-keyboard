@@ -27,6 +27,13 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           submodules: recursive
+          lfs: true
+
+      - name: Fetch and verify swipe models
+        run: |
+          git -C java/assets/futo-swipe lfs pull
+          python3 -m unittest discover -s tools -p test_verify_swipe_models.py
+          python3 tools/verify_swipe_models.py
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -85,6 +92,9 @@ jobs:
       - name: Build stable release APK
         run: |
           ./gradlew assembleStableRelease --stacktrace
+
+      - name: Verify packaged swipe models
+        run: python3 tools/verify_swipe_models.py --apk build/outputs/apk/stable/release/*.apk
 
       - name: Upload stable release APK
         id: upload_artifact
