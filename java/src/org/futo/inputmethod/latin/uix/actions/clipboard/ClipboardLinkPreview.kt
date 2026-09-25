@@ -217,7 +217,21 @@ private val XLinkPasteHosts = SupportedTwitterHosts + setOf(
     "mpregx.com",
     "www.mpregx.com",
     "furryfeetx.com",
-    "www.furryfeetx.com"
+    "www.furryfeetx.com",
+    "skibidix.com",
+    "www.skibidix.com",
+    "cunnyx.com",
+    "www.cunnyx.com",
+    "boypussyx.com",
+    "www.boypussyx.com",
+    "catgirlsex.com",
+    "www.catgirlsex.com",
+    "yaoisex.com",
+    "www.yaoisex.com",
+    "gockx.com",
+    "www.gockx.com",
+    "girlcockx.com",
+    "www.girlcockx.com"
 )
 
 private val SupportedPixivHosts = setOf(

@@ -649,7 +649,11 @@ class ClipboardLinkPreviewTest {
             "https://vxtwitter.com/futo/status/1234567890?foo=bar#reply",
             session.textForPaste("https://fixupx.com/futo/status/1234567890?foo=bar#reply")
         )
-        listOf("hotyurisex.com", "stupidpenisx.com", "mpregx.com", "furryfeetx.com")
+        listOf(
+            "hotyurisex.com", "stupidpenisx.com", "mpregx.com", "furryfeetx.com",
+            "skibidix.com", "cunnyx.com", "boypussyx.com", "catgirlsex.com",
+            "yaoisex.com", "gockx.com", "girlcockx.com"
+        )
             .forEach { host ->
                 assertEquals(
                     "https://vxtwitter.com/futo/status/1234567890",
