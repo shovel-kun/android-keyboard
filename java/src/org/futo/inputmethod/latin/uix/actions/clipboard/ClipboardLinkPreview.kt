@@ -209,13 +209,15 @@ private val SupportedTwitterHosts = setOf(
     "www.fixvx.com"
 )
 
-private val XLinkPasteHosts = setOf(
-    "x.com",
-    "www.x.com",
-    "mobile.x.com",
-    "twitter.com",
-    "www.twitter.com",
-    "mobile.twitter.com"
+private val XLinkPasteHosts = SupportedTwitterHosts + setOf(
+    "hotyurisex.com",
+    "www.hotyurisex.com",
+    "stupidpenisx.com",
+    "www.stupidpenisx.com",
+    "mpregx.com",
+    "www.mpregx.com",
+    "furryfeetx.com",
+    "www.furryfeetx.com"
 )
 
 private val SupportedPixivHosts = setOf(

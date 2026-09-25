@@ -642,6 +642,27 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun xLinkPasteSession_rewritesExistingEmbedDomainToSelectedDomain() {
+        val session = XLinkPasteSession("vxtwitter.com")
+
+        assertEquals(
+            "https://vxtwitter.com/futo/status/1234567890?foo=bar#reply",
+            session.textForPaste("https://fixupx.com/futo/status/1234567890?foo=bar#reply")
+        )
+        listOf("hotyurisex.com", "stupidpenisx.com", "mpregx.com", "furryfeetx.com")
+            .forEach { host ->
+                assertEquals(
+                    "https://vxtwitter.com/futo/status/1234567890",
+                    session.textForPaste("https://$host/futo/status/1234567890")
+                )
+            }
+        assertEquals(
+            "https://example.com/futo/status/1234567890",
+            session.textForPaste("https://example.com/futo/status/1234567890")
+        )
+    }
+
+    @Test
     fun xLinkPasteSession_rewritesSpoilerWrappedUrlAndLeavesOtherTextUnchanged() {
         val session = XLinkPasteSession("fixupx.com")
         val embedded = "saved https://x.com/futo/status/1234567890"
