@@ -812,6 +812,78 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun metadataForSupportedUrl_recognizesNhentaiGalleryUrls() {
+        val gallery = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://nhentai.net/g/177013/"
+        )
+        val www = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://www.nhentai.net/g/177013"
+        )
+        val page = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://nhentai.net/g/177013/3/?ref=foo"
+        )
+
+        assertEquals(ClipboardPreviewProvider.NHENTAI, gallery?.provider)
+        assertEquals("https://nhentai.net/g/177013/", gallery?.sourceUrl)
+        assertEquals("177013", gallery?.sourceId)
+        assertEquals("nhentai:177013", gallery?.archiveKey())
+        assertEquals(gallery, www)
+        assertEquals(gallery, page)
+    }
+
+    @Test
+    fun metadataForSupportedUrl_ignoresNonGalleryNhentaiUrls() {
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://nhentai.net/tags/lolicon")
+        )
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://nhentai.net/g/not-a-gallery")
+        )
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://nhentai.net/")
+        )
+    }
+
+    @Test
+    fun metadataForSupportedUrl_recognizesHitomiGalleryUrls() {
+        val gallery = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://hitomi.la/galleries/3840444.html"
+        )
+        val reader = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://hitomi.la/reader/3840444.html#5"
+        )
+        val www = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://www.hitomi.la/galleries/3840444.html"
+        )
+
+        assertEquals(ClipboardPreviewProvider.HITOMI, gallery?.provider)
+        assertEquals("https://hitomi.la/galleries/3840444.html", gallery?.sourceUrl)
+        assertEquals("3840444", gallery?.sourceId)
+        assertEquals("hitomi:3840444", gallery?.archiveKey())
+        assertEquals(gallery, reader)
+        assertEquals(gallery, www)
+    }
+
+    @Test
+    fun metadataForSupportedUrl_ignoresNonGalleryHitomiUrls() {
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://hitomi.la/tag/female:vampire-all.html")
+        )
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://hitomi.la/artist/niyasuke-all.html")
+        )
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://hitomi.la/galleries/not-a-gallery.html")
+        )
+    }
+
+    @Test
     fun metadataForSupportedUrl_ignoresRedditListingUrls() {
         assertEquals(
             null,
@@ -1092,6 +1164,182 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun parseNhentaiHtmlPreview_archivesOnlyTheCover() {
+        val manifest = parseNhentaiHtmlPreviewForTest(
+            """
+            <html>
+              <head>
+                <meta property="og:image" content="//t4.nhentai.net/galleries/9/cover.jpg" />
+                <meta property="og:type" content="article" />
+                <meta property="og:title" content="Eat The Rich!" />
+                <meta name="twitter:card" content="summary_large_image" />
+                <meta name="twitter:title" content="Eat The Rich!" />
+                <meta name="twitter:description" content="lolicon, catgirl, gymshorts" />
+                <meta name="twitter:image" content="//t4.nhentai.net/galleries/9/cover.jpg" />
+                <meta name="description" content="Read and download Eat The Rich!, a hentai doujinshi by koari for free on nhentai." />
+                <meta property="article:published_time" content="2014-06-28T14:12:16Z" />
+              </head>
+            </html>
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf("https://t4.nhentai.net/galleries/9/cover.jpg"),
+            manifest?.mediaItems?.map { it.url }
+        )
+        assertEquals("image/jpeg", manifest?.mediaItems?.firstOrNull()?.mimeType)
+        assertEquals("Eat The Rich!", manifest?.snippet)
+        assertEquals(ClipboardPreviewProvider.NHENTAI, manifest?.metadata?.provider)
+        assertEquals("https://nhentai.net/g/177013/", manifest?.metadata?.sourceUrl)
+        assertEquals("177013", manifest?.metadata?.sourceId)
+        assertEquals("Eat The Rich!", manifest?.metadata?.title)
+        assertEquals("koari", manifest?.metadata?.authorName)
+        assertEquals("2014-06-28T14:12:16Z", manifest?.metadata?.createdAt)
+        assertEquals(1, manifest?.metadata?.imageCount)
+        assertEquals(0, manifest?.metadata?.selectedImageIndex)
+        assertEquals(listOf("lolicon", "catgirl", "gymshorts"), manifest?.metadata?.tags)
+    }
+
+    @Test
+    fun parseNhentaiHtmlPreview_requiresCoverMedia() {
+        assertEquals(
+            null,
+            parseNhentaiHtmlPreviewForTest(
+                """
+                <html>
+                  <head>
+                    <meta property="og:title" content="Eat The Rich!" />
+                    <meta property="og:image" content="//t4.nhentai.net/galleries/9/1.jpg" />
+                  </head>
+                </html>
+                """.trimIndent()
+            )
+        )
+        assertEquals(
+            null,
+            parseNhentaiHtmlPreviewForTest(
+                """
+                <html>
+                  <head>
+                    <meta property="og:title" content="Page not found" />
+                  </head>
+                </html>
+                """.trimIndent()
+            )
+        )
+    }
+
+    @Test
+    fun parseHitomiGalleryInfo_archivesOnlyTheCover() {
+        val manifest = parseHitomiGalleryInfoForTest(
+            """
+            var galleryinfo = {"galleryurl":"/galleries/3840444.html","id":3840444,
+            "title":"Koumi-jima 2 & 3","japanese_title":"小見島2&3",
+            "artists":[{"artist":"niyasuke","url":"/artist/niyasuke-all.html"}],
+            "groups":[{"group":"aomizuan","url":"/group/aomizuan-all.html"}],
+            "tags":[{"tag":"big breasts","female":"1","male":""},{"tag":"big penis","female":"","male":"1"},{"tag":"full color","female":"","male":""}],
+            "language":"japanese","type":"doujinshi","date":"2026-03-15 01:33:00-05","blocked":0,
+            "files":[{"name":"0001_HDYdpYib0AAMvs8.jpg","hasavif":1,"width":1120,"height":840,
+            "hash":"7286a8b5e803b35c9a5b310bb4f807fcc6f09a01c7dd5aa902d69681661539eb"},
+            {"name":"0002_HDYdpYib0AAMvs9.jpg","hash":"0000000000000000000000000000000000000000000000000000000000000abc"}]};
+            """.trimIndent(),
+            subdomainTable = setOf(2974)
+        )
+
+        assertEquals(
+            listOf(
+                "https://btn.gold-usergeneratedcontent.net/webpbigtn/b/9e/" +
+                    "7286a8b5e803b35c9a5b310bb4f807fcc6f09a01c7dd5aa902d69681661539eb.webp"
+            ),
+            manifest?.mediaItems?.map { it.url }
+        )
+        assertEquals("image/webp", manifest?.mediaItems?.firstOrNull()?.mimeType)
+        assertEquals("小見島2&3", manifest?.snippet)
+        assertEquals(ClipboardPreviewProvider.HITOMI, manifest?.metadata?.provider)
+        assertEquals("https://hitomi.la/galleries/3840444.html", manifest?.metadata?.sourceUrl)
+        assertEquals("3840444", manifest?.metadata?.sourceId)
+        assertEquals("小見島2&3", manifest?.metadata?.title)
+        assertEquals("Koumi-jima 2 & 3", manifest?.metadata?.bodyText)
+        assertEquals("niyasuke", manifest?.metadata?.authorName)
+        assertEquals("2026-03-15 01:33:00-05", manifest?.metadata?.createdAt)
+        assertEquals(1, manifest?.metadata?.imageCount)
+        assertEquals(0, manifest?.metadata?.selectedImageIndex)
+        assertEquals(
+            listOf("female:big breasts", "male:big penis", "full color"),
+            manifest?.metadata?.tags
+        )
+    }
+
+    @Test
+    fun parseHitomiGalleryInfo_defaultsToASubdomainAndKeepsRomajiTitleWhenNoJapanese() {
+        val manifest = parseHitomiGalleryInfoForTest(
+            """
+            var galleryinfo = {"id":123,"title":"English Only Title",
+            "artists":[],"tags":[],"language":"english","type":"manga","date":"2020-01-01 00:00:00-05",
+            "files":[{"name":"1.jpg","hash":"5c363202b3227c196eb8fe4ee5e53d71a7740124f3fa70d83d6759c02c75b359"}]};
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf(
+                "https://atn.gold-usergeneratedcontent.net/webpbigtn/9/35/" +
+                    "5c363202b3227c196eb8fe4ee5e53d71a7740124f3fa70d83d6759c02c75b359.webp"
+            ),
+            manifest?.mediaItems?.map { it.url }
+        )
+        assertEquals("English Only Title", manifest?.metadata?.title)
+        assertEquals(null, manifest?.metadata?.bodyText)
+        assertEquals(null, manifest?.metadata?.authorName)
+    }
+
+    @Test
+    fun parseHitomiGalleryInfo_ignoresBlockedAndUnusableGalleries() {
+        assertEquals(
+            null,
+            parseHitomiGalleryInfoForTest(
+                """
+                var galleryinfo = {"id":1,"title":"Removed","blocked":1,
+                "files":[{"name":"1.jpg","hash":"7286a8b5e803b35c9a5b310bb4f807fcc6f09a01c7dd5aa902d69681661539eb"}]};
+                """.trimIndent()
+            )
+        )
+        assertEquals(
+            null,
+            parseHitomiGalleryInfoForTest(
+                """
+                var galleryinfo = {"id":2,"title":"No Files","files":[]};
+                """.trimIndent()
+            )
+        )
+        assertEquals(null, parseHitomiGalleryInfoForTest("takedown"))
+    }
+
+    @Test
+    fun parseHitomiSubdomainTable_readsGgJsSwitchCases() {
+        val table = parseHitomiSubdomainTableForTest(
+            """
+            'use strict';
+            gg = { m: function(g) {
+            var o = 0;
+            switch (g) {
+            case 774:
+            case 185:
+            case 2974:
+            o = 1; break;
+            }
+            return o;
+            },
+            s: function(h) { return h; },
+            b: '1790427602/'
+            };
+            """.trimIndent()
+        )
+
+        assertEquals(setOf(774, 185, 2974), table)
+        assertEquals(emptySet<Int>(), parseHitomiSubdomainTableForTest("gg = {};"))
+    }
+
+    @Test
     fun previewRequestCatching_preservesRateLimitFailure() {
         assertEquals(
             null,
@@ -1137,6 +1385,8 @@ class ClipboardLinkPreviewTest {
         val reddit = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.reddit.com/r/futo/comments/abc123/title/")
         val mastodon = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://mastodon.social/@futo/1234567890")
         val youtube = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://www.youtube.com/embed/dQw4w9WgXcQ")
+        val nhentai = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://nhentai.net/g/177013/")
+        val hitomi = ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://hitomi.la/galleries/3840444.html")
 
         assertEquals(ClipboardPreviewProvider.TWITTER, twitter?.provider)
         assertEquals("1234567890", twitter?.sourceId)
@@ -1154,6 +1404,10 @@ class ClipboardLinkPreviewTest {
         assertEquals("mastodon.social:1234567890", mastodon?.sourceId)
         assertEquals(ClipboardPreviewProvider.YOUTUBE, youtube?.provider)
         assertEquals("dQw4w9WgXcQ", youtube?.sourceId)
+        assertEquals(ClipboardPreviewProvider.NHENTAI, nhentai?.provider)
+        assertEquals("177013", nhentai?.sourceId)
+        assertEquals(ClipboardPreviewProvider.HITOMI, hitomi?.provider)
+        assertEquals("3840444", hitomi?.sourceId)
     }
 
     @Test

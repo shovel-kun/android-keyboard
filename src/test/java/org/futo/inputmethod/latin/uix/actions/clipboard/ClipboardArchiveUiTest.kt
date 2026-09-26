@@ -463,6 +463,18 @@ class ClipboardArchiveUiTest {
             R.string.clipboard_history_archive_filter_fanbox,
             ClipboardArchiveProviderFilter.Fanbox.labelRes()
         )
+        assertEquals("nhentai", ClipboardPreviewProvider.NHENTAI.providerLabel())
+        assertEquals(R.drawable.provider_nhentai, ClipboardPreviewProvider.NHENTAI.providerIconRes())
+        assertEquals(
+            R.string.clipboard_history_archive_filter_nhentai,
+            ClipboardArchiveProviderFilter.Nhentai.labelRes()
+        )
+        assertEquals("hitomi.la", ClipboardPreviewProvider.HITOMI.providerLabel())
+        assertEquals(R.drawable.provider_hitomi, ClipboardPreviewProvider.HITOMI.providerIconRes())
+        assertEquals(
+            R.string.clipboard_history_archive_filter_hitomi,
+            ClipboardArchiveProviderFilter.Hitomi.labelRes()
+        )
     }
 
     @Test

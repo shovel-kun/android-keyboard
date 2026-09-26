@@ -18,7 +18,9 @@ internal enum class ClipboardArchiveProviderFilter(val provider: ClipboardPrevie
     Twitter(ClipboardPreviewProvider.TWITTER),
     Reddit(ClipboardPreviewProvider.REDDIT),
     YouTube(ClipboardPreviewProvider.YOUTUBE),
-    Mastodon(ClipboardPreviewProvider.MASTODON)
+    Mastodon(ClipboardPreviewProvider.MASTODON),
+    Nhentai(ClipboardPreviewProvider.NHENTAI),
+    Hitomi(ClipboardPreviewProvider.HITOMI)
 }
 
 internal enum class ClipboardArchiveStatusFilter {
@@ -423,6 +425,8 @@ internal fun ClipboardPreviewProvider.providerLabel(): String = when (this) {
     ClipboardPreviewProvider.REDDIT -> "Reddit"
     ClipboardPreviewProvider.YOUTUBE -> "YouTube"
     ClipboardPreviewProvider.MASTODON -> "Mastodon"
+    ClipboardPreviewProvider.NHENTAI -> "nhentai"
+    ClipboardPreviewProvider.HITOMI -> "hitomi.la"
 }
 
 internal fun ClipboardPreviewProvider.providerIconRes(): Int = when (this) {
@@ -432,6 +436,8 @@ internal fun ClipboardPreviewProvider.providerIconRes(): Int = when (this) {
     ClipboardPreviewProvider.REDDIT -> R.drawable.link
     ClipboardPreviewProvider.YOUTUBE -> R.drawable.provider_youtube
     ClipboardPreviewProvider.MASTODON -> R.drawable.link
+    ClipboardPreviewProvider.NHENTAI -> R.drawable.provider_nhentai
+    ClipboardPreviewProvider.HITOMI -> R.drawable.provider_hitomi
 }
 
 internal fun ClipboardArchiveProviderFilter.labelRes(): Int =
@@ -447,6 +453,8 @@ private fun ClipboardPreviewProvider.providerFilterLabelRes(): Int = when (this)
     ClipboardPreviewProvider.REDDIT -> R.string.clipboard_history_archive_filter_reddit
     ClipboardPreviewProvider.YOUTUBE -> R.string.clipboard_history_archive_filter_youtube
     ClipboardPreviewProvider.MASTODON -> R.string.clipboard_history_archive_filter_mastodon
+    ClipboardPreviewProvider.NHENTAI -> R.string.clipboard_history_archive_filter_nhentai
+    ClipboardPreviewProvider.HITOMI -> R.string.clipboard_history_archive_filter_hitomi
 }
 
 internal fun ClipboardLinkArchive.providerLabel(): String = provider.providerLabel()

@@ -190,6 +190,9 @@ private val LinkPreviewJson = Json {
 
 private val LinkPreviewUrlRegex = """https?://[^\s<>()]+""".toRegex()
 
+// nhentai gallery pages describe the gallery as "a hentai ... by <artist> for free on nhentai".
+private val NhentaiArtistRegex = Regex("""\bby\s+(.+?)\s+for free on nhentai""")
+
 private val SupportedTwitterHosts = setOf(
     "twitter.com",
     "www.twitter.com",
@@ -264,6 +267,19 @@ private val SupportedYouTubeHosts = setOf(
     "youtu.be",
     "www.youtu.be"
 )
+
+private val SupportedNhentaiHosts = setOf(
+    "nhentai.net",
+    "www.nhentai.net"
+)
+
+private val SupportedHitomiHosts = setOf(
+    "hitomi.la",
+    "www.hitomi.la"
+)
+
+private const val HitomiContentHost = "ltn.gold-usergeneratedcontent.net"
+private const val HitomiReferer = "https://hitomi.la/"
 
 private const val PreviewConnectTimeoutMillis = 5_000
 private const val PreviewReadTimeoutMillis = 10_000
@@ -566,6 +582,22 @@ object ClipboardLinkPreviewFetcher {
             )
         )?.toManifest()
 
+    internal fun parseNhentaiHtmlPreviewForTest(html: String): ClipboardLinkPreviewManifest? =
+        parseNhentaiHtmlPreview(
+            html = html,
+            galleryUrl = NhentaiGalleryUrl(id = "177013")
+        )?.toManifest()
+
+    internal fun parseHitomiGalleryInfoForTest(
+        responseText: String,
+        subdomainTable: Set<Int> = emptySet()
+    ): ClipboardLinkPreviewManifest? =
+        parseHitomiGalleryInfo(
+            responseText = responseText,
+            galleryUrl = HitomiGalleryUrl(id = "3840444"),
+            subdomainTable = subdomainTable
+        )?.toManifest()
+
     internal fun previewRateLimitedExceptionForTest(retryAfterEpochMs: Long, message: String): Exception =
         ClipboardPreviewRateLimitedException(retryAfterEpochMs, message)
 
@@ -609,7 +641,9 @@ object ClipboardLinkPreviewFetcher {
         FanboxPreviewProvider,
         RedditPreviewProvider,
         MastodonPreviewProvider,
-        YouTubePreviewProvider
+        YouTubePreviewProvider,
+        NhentaiPreviewProvider,
+        HitomiPreviewProvider
     )
 
     private object TwitterPreviewProvider : ClipboardPreviewProviderAdapter {
@@ -779,6 +813,63 @@ object ClipboardLinkPreviewFetcher {
             (request as MastodonStatusUrl).canonicalUrl()
 
         override fun ownsMediaHost(host: String): Boolean = false
+    }
+
+    private object NhentaiPreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.NHENTAI
+
+        override fun parse(url: String): PreviewRequest? =
+            parseNhentaiGalleryUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val galleryUrl = request as NhentaiGalleryUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = galleryUrl.canonicalUrl(),
+                sourceId = galleryUrl.id
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchNhentaiPreview(request as NhentaiGalleryUrl)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as NhentaiGalleryUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean =
+            SupportedNhentaiHosts.contains(host) ||
+                host.endsWith(".nhentai.net")
+
+        override fun prefersImagePreview(request: PreviewRequest): Boolean = true
+    }
+
+    private object HitomiPreviewProvider : ClipboardPreviewProviderAdapter {
+        override val provider = ClipboardPreviewProvider.HITOMI
+
+        override fun parse(url: String): PreviewRequest? =
+            parseHitomiGalleryUrl(url)
+
+        override fun seedMetadata(request: PreviewRequest): ClipboardPreviewMetadata {
+            val galleryUrl = request as HitomiGalleryUrl
+            return ClipboardPreviewMetadata(
+                provider = provider,
+                sourceUrl = galleryUrl.canonicalUrl(),
+                sourceId = galleryUrl.id
+            )
+        }
+
+        override fun fetch(request: PreviewRequest): RemotePreviewData? =
+            fetchHitomiPreview(request as HitomiGalleryUrl)
+
+        override fun canonicalSourceUrl(request: PreviewRequest): String =
+            (request as HitomiGalleryUrl).canonicalUrl()
+
+        override fun ownsMediaHost(host: String): Boolean =
+            SupportedHitomiHosts.contains(host) ||
+                host.endsWith(".hitomi.la") ||
+                host.endsWith(".gold-usergeneratedcontent.net")
+
+        override fun prefersImagePreview(request: PreviewRequest): Boolean = true
     }
 
     private fun fetchTwitterPreview(statusUrl: TwitterStatusUrl): RemotePreviewData? {
@@ -1219,6 +1310,136 @@ object ClipboardLinkPreviewFetcher {
         return parseYouTubeOEmbedPreview(response, videoUrl)
     }
 
+    private fun fetchNhentaiPreview(galleryUrl: NhentaiGalleryUrl): RemotePreviewData? {
+        val html = runPreviewRequestCatching {
+            requestText(galleryUrl.canonicalUrl(), MaxPreviewJsonBytes)
+        } ?: return null
+
+        return parseNhentaiHtmlPreview(html, galleryUrl)
+    }
+
+    private fun parseNhentaiHtmlPreview(
+        html: String,
+        galleryUrl: NhentaiGalleryUrl
+    ): RemotePreviewData? {
+        val document = html.htmlPreviewDocument()
+        val title = document.htmlMetaContent("og:title")
+            ?.stripSimpleHtml()
+            ?.takeIf { it.isNotBlank() }
+        val tags = document.htmlMetaContent("twitter:description")
+            ?.split(',')
+            ?.map(String::trim)
+            ?.filter(String::isNotBlank)
+            .orEmpty()
+        val artist = document.htmlMetaContent("description")
+            ?.let { NhentaiArtistRegex.find(it)?.groupValues?.get(1)?.trim() }
+            ?.takeIf { it.isNotBlank() }
+        // nhentai exposes only the cover through OpenGraph (protocol-relative
+        // //t{1-7}.nhentai.net/galleries/<media id>/cover.jpg); only that cover is archived.
+        val coverUrl = document.htmlPreviewMediaUrls()
+            .map(String::toAbsoluteHttpsUrl)
+            .firstOrNull { url ->
+                url.startsWith("https://") &&
+                    url.substringBefore('?').substringAfterLast('/').startsWith("cover.")
+            } ?: return null
+
+        val metadata = ClipboardPreviewMetadata(
+            provider = ClipboardPreviewProvider.NHENTAI,
+            sourceUrl = galleryUrl.canonicalUrl(),
+            sourceId = galleryUrl.id,
+            title = title,
+            authorName = artist,
+            createdAt = document.htmlMetaContent("article:published_time"),
+            imageCount = 1,
+            selectedImageIndex = 0,
+            tags = tags
+        ).nullIfEmpty()
+
+        return RemotePreviewData(
+            snippet = title?.let { sanitizeClipboardText(it, 160) },
+            mediaItems = listOf(
+                ClipboardLinkPreviewMedia(
+                    url = coverUrl,
+                    sourceIndex = 0,
+                    mimeType = coverUrl.guessedClipboardMimeType()
+                )
+            ),
+            metadata = metadata
+        )
+    }
+
+    private fun fetchHitomiPreview(galleryUrl: HitomiGalleryUrl): RemotePreviewData? {
+        val infoText = runPreviewRequestCatching {
+            requestText("https://$HitomiContentHost/galleries/${galleryUrl.id}.js", MaxPreviewJsonBytes)
+        } ?: return null
+
+        val subdomainTable = runPreviewRequestCatching {
+            requestText("https://$HitomiContentHost/gg.js", MaxPreviewJsonBytes)
+        }?.let(::parseHitomiSubdomainTable).orEmpty()
+
+        return parseHitomiGalleryInfo(infoText, galleryUrl, subdomainTable)
+    }
+
+    private fun parseHitomiGalleryInfo(
+        responseText: String,
+        galleryUrl: HitomiGalleryUrl,
+        subdomainTable: Set<Int>
+    ): RemotePreviewData? {
+        val gallery = runCatching {
+            LinkPreviewJson.parseToJsonElement(
+                responseText.dropWhile { it != '{' }.trim().trimEnd(';')
+            ).jsonObject
+        }.getOrNull() ?: return null
+        if(gallery.booleanValue("blocked") == true) return null
+
+        val romajiTitle = gallery.stringValue("title")
+        val displayTitle = gallery.stringValue("japanese_title") ?: romajiTitle
+        val coverUrl = gallery.arrayValue("files")
+            ?.firstObject()
+            ?.stringValue("hash")
+            ?.let { hitomiCoverUrl(it, subdomainTable) }
+            ?: return null
+
+        val tags = gallery.arrayValue("tags").orEmpty().mapNotNull { element ->
+            val tag = (element as? JsonObject) ?: return@mapNotNull null
+            val name = tag.stringValue("tag") ?: return@mapNotNull null
+            when {
+                tag.stringValue("female") == "1" -> "female:$name"
+                tag.stringValue("male") == "1" -> "male:$name"
+                else -> name
+            }
+        }.distinct()
+
+        val artists = gallery.arrayValue("artists").orEmpty().mapNotNull { element ->
+            (element as? JsonObject)?.stringValue("artist")
+        }.distinct()
+
+        val metadata = ClipboardPreviewMetadata(
+            provider = ClipboardPreviewProvider.HITOMI,
+            sourceUrl = galleryUrl.canonicalUrl(),
+            sourceId = gallery.stringValue("id") ?: galleryUrl.id,
+            title = displayTitle,
+            bodyText = romajiTitle?.takeIf { it.isNotBlank() && it != displayTitle },
+            authorName = artists.joinToString(", ").takeIf { it.isNotBlank() },
+            createdAt = gallery.stringValue("date"),
+            imageCount = 1,
+            selectedImageIndex = 0,
+            tags = tags
+        ).nullIfEmpty()
+
+        return RemotePreviewData(
+            snippet = displayTitle?.let { sanitizeClipboardText(it, 160) },
+            mediaItems = listOf(
+                ClipboardLinkPreviewMedia(
+                    url = coverUrl,
+                    sourceIndex = 0,
+                    mimeType = "image/webp"
+                )
+            ),
+            metadata = metadata
+        )
+    }
+
     private fun fetchMastodonPreview(statusUrl: MastodonStatusUrl): RemotePreviewData? {
         val response = runPreviewRequestCatching {
             requestJsonObject(statusUrl.apiUrl(), MaxPreviewJsonBytes)
@@ -1516,6 +1737,9 @@ object ClipboardLinkPreviewFetcher {
         if(connection.url.host.endsWith(".pximg.net")) {
             connection.setRequestProperty("Referer", "https://www.pixiv.net/")
         }
+        if(connection.url.host.endsWith(".gold-usergeneratedcontent.net")) {
+            connection.setRequestProperty("Referer", HitomiReferer)
+        }
         return connection
     }
 
@@ -1526,6 +1750,8 @@ object ClipboardLinkPreviewFetcher {
         is RedditPostUrl -> RedditPreviewProvider.provider
         is MastodonStatusUrl -> MastodonPreviewProvider.provider
         is YouTubeVideoUrl -> YouTubePreviewProvider.provider
+        is NhentaiGalleryUrl -> NhentaiPreviewProvider.provider
+        is HitomiGalleryUrl -> HitomiPreviewProvider.provider
     }
 
     private fun PreviewRequest.seedMetadata(): ClipboardPreviewMetadata =
@@ -1807,6 +2033,32 @@ object ClipboardLinkPreviewFetcher {
         if(statusId.length < 2) return null
         return parsed.copy(statusId = statusId)
     }
+
+    private fun parseNhentaiGalleryUrl(url: String): NhentaiGalleryUrl? {
+        val uri = runCatching { URL(url).toURI() }.getOrNull() ?: return null
+        if (!SupportedNhentaiHosts.contains(uri.host?.lowercase())) return null
+
+        val segments = uri.path.split('/').filter { it.isNotBlank() }
+        if (segments.size < 2 || segments[0] != "g") return null
+
+        val id = segments[1].takeWhile { it.isDigit() }
+        if (id.isEmpty()) return null
+
+        return NhentaiGalleryUrl(id = id)
+    }
+
+    private fun parseHitomiGalleryUrl(url: String): HitomiGalleryUrl? {
+        val uri = runCatching { URL(url).toURI() }.getOrNull() ?: return null
+        if (!SupportedHitomiHosts.contains(uri.host?.lowercase())) return null
+
+        val segments = uri.path.split('/').filter { it.isNotBlank() }
+        if (segments.size < 2 || segments[0] !in setOf("galleries", "reader")) return null
+
+        val id = segments[1].substringBefore('.').takeWhile { it.isDigit() }
+        if (id.isEmpty()) return null
+
+        return HitomiGalleryUrl(id = id)
+    }
 }
 
 internal fun isUnavailablePreviewText(text: String?): Boolean {
@@ -1882,6 +2134,18 @@ internal fun parseYouTubeOEmbedPreviewForTest(responseText: String): ClipboardLi
 
 internal fun parseMastodonApiPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
     ClipboardLinkPreviewFetcher.parseMastodonApiPreviewForTest(responseText)
+
+internal fun parseNhentaiHtmlPreviewForTest(html: String): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseNhentaiHtmlPreviewForTest(html)
+
+internal fun parseHitomiGalleryInfoForTest(
+    responseText: String,
+    subdomainTable: Set<Int> = emptySet()
+): ClipboardLinkPreviewManifest? =
+    ClipboardLinkPreviewFetcher.parseHitomiGalleryInfoForTest(responseText, subdomainTable)
+
+internal fun parseHitomiSubdomainTableForTest(ggJs: String): Set<Int> =
+    parseHitomiSubdomainTable(ggJs)
 
 internal fun parseFanboxPreviewForTest(responseText: String): ClipboardLinkPreviewManifest? =
     ClipboardLinkPreviewFetcher.parseFanboxPreviewForTest(responseText)
@@ -2308,6 +2572,36 @@ private fun String.fileExtensionHint(): String = when {
 private fun String.normalizedMimeType(): String =
     substringBefore(';').trim().lowercase()
 
+private fun String.toAbsoluteHttpsUrl(): String = when {
+    startsWith("//") -> "https:$this"
+    else -> this
+}
+
+// hitomi.la rotates image hosts through gg.js: a giant switch listing gallery-hash groups
+// served by the "b" subdomain. Everything outside the table uses "a".
+private val HitomiSubdomainCaseRegex = Regex("""case (\d+):""")
+
+private fun parseHitomiSubdomainTable(ggJs: String): Set<Int> {
+    val switchBody = ggJs
+        .substringAfter("m: function(g) {", "")
+        .substringBefore("return o;")
+    return HitomiSubdomainCaseRegex.findAll(switchBody)
+        .mapNotNull { it.groupValues[1].toIntOrNull() }
+        .toSet()
+}
+
+// Mirrors hitomi.la's real_full_path_from_hash/subdomain_from_url for the cover thumbnail:
+// https://{a|b}tn.gold-usergeneratedcontent.net/webpbigtn/<last char>/<two chars before>/<hash>.webp
+private fun hitomiCoverUrl(hash: String, subdomainTable: Set<Int>): String? {
+    val normalized = hash.lowercase()
+    if (normalized.length < 3 || normalized.any { it !in "0123456789abcdef" }) return null
+    val lastChar = normalized.takeLast(1)
+    val middleChars = normalized.substring(normalized.length - 3, normalized.length - 1)
+    val group = "$lastChar$middleChars".toIntOrNull(16) ?: return null
+    val subdomain = if (group in subdomainTable) "btn" else "atn"
+    return "https://$subdomain.gold-usergeneratedcontent.net/webpbigtn/$lastChar/$middleChars/$normalized.webp"
+}
+
 private fun String.fileExtensionForMimeType(): String? = when (normalizedMimeType()) {
     "image/jpeg", "image/jpg" -> "jpg"
     "image/png" -> "png"
@@ -2398,6 +2692,18 @@ private data class MastodonStatusUrl(
     fun canonicalUrl(): String = "https://$authority$path"
     fun apiUrl(): String = "https://$authority/api/v1/statuses/$statusId"
     fun sourceId(): String = "$authority:$statusId"
+}
+
+private data class NhentaiGalleryUrl(
+    val id: String
+) : PreviewRequest {
+    fun canonicalUrl(): String = "https://nhentai.net/g/$id/"
+}
+
+private data class HitomiGalleryUrl(
+    val id: String
+) : PreviewRequest {
+    fun canonicalUrl(): String = "https://hitomi.la/galleries/$id.html"
 }
 
 private data class RemotePreviewData(

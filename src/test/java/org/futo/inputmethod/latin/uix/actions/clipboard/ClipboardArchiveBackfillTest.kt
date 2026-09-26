@@ -868,6 +868,29 @@ class ClipboardArchiveBackfillTest {
     }
 
     @Test
+    fun startupPreviewFetchTexts_includesExistingNhentaiAndHitomiLinks() {
+        val nhentaiUrl = "https://nhentai.net/g/177013/"
+        val hitomiUrl = "https://hitomi.la/reader/3840444.html"
+        val entries = listOf(nhentaiUrl, hitomiUrl).mapIndexed { index, url ->
+            samplePixivEntry().copy(
+                timestamp = index.toLong(),
+                text = url,
+                previewText = null,
+                previewMediaFiles = emptyList(),
+                previewMetadata = null,
+                previewFetchStatus = ClipboardPreviewFetchStatus.NeverAttempted
+            )
+        }
+
+        assertEquals(
+            listOf(hitomiUrl, nhentaiUrl),
+            startupPreviewFetchTexts(entries, limit = 3)
+        )
+        assertTrue(entries[0].matchesDeletedArchiveKey("nhentai:177013"))
+        assertTrue(entries[1].matchesDeletedArchiveKey("hitomi:3840444"))
+    }
+
+    @Test
     fun automaticPreviewAndArchiveBackfillRequestsAreBothBounded() {
         val ids = (101..110).toList()
         val entries = ids.mapIndexed { index, id ->

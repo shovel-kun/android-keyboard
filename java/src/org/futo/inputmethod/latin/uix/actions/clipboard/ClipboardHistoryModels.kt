@@ -32,7 +32,9 @@ enum class ClipboardPreviewProvider {
     FANBOX,
     REDDIT,
     YOUTUBE,
-    MASTODON
+    MASTODON,
+    NHENTAI,
+    HITOMI
 }
 
 @Serializable
