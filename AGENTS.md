@@ -85,6 +85,23 @@ The `native/jni/` directory contains performance-critical code bridged via JNI:
 - Dictionary files are built from `.combined.gz` wordlists in `dictionaries/` and loaded as binary `.dict` files at runtime
 - Keyboard layouts are loaded from `java/assets/layouts/` (git submodule with `futo-keyboard-layouts` repo) - `LayoutEngine.kt` parses XML layout specs
 
+## Adding a Clipboard Link Preview / Archive Provider
+
+Copied links from supported sites get a preview and can be archived (media downloaded locally). Each site is a provider; all live in `java/src/org/futo/inputmethod/latin/uix/actions/clipboard/`. Reference commits: `3ef9456205` (Mastodon, minimal) and `673fb0bbf0` (FANBOX, adds a user-supplied session credential).
+
+1. **`ClipboardHistoryModels.kt`**: add a constant to `enum class ClipboardPreviewProvider`. The enum is `@Serializable` and `provider.name.lowercase()` prefixes archive keys (`ClipboardArchive.kt` `archiveKey()`), so never rename existing constants - that orphans saved archives and backups.
+2. **`ClipboardLinkPreview.kt`**:
+   - a file-level `private data class XxxUrl(...) : PreviewRequest` next to the other `PreviewRequest` implementations; everything below goes inside `object ClipboardLinkPreviewFetcher`
+   - a `parseXxxUrl(url)` returning it or `null`
+   - a `fetchXxxPreview(...)` / `parseXxxPreview(...)` pair producing `RemotePreviewData`; reuse `requestJsonObject` and the size limits (`MaxPreviewJsonBytes`) rather than opening connections directly
+   - a `private object XxxPreviewProvider : ClipboardPreviewProviderAdapter`, registered in `PreviewProviders`. `seedMetadata` must set a stable `sourceId` (it becomes the archive/dedupe key); `ownsMediaHost` claims the site's CDN hosts; `prefersImagePreview = true` for image-first sites
+   - a branch in `PreviewRequest.provider()`
+   - if the site needs credentials: a `SettingsKey` plus settings UI in `ClipboardHistoryAction.kt`, pass it through `fetchManifestResult` / `PreviewRequest.fetchPreview(...)` and the call sites in `ClipboardHistoryManager.kt` (follow FANBOX's `fanboxSessionId`)
+3. **`ClipboardArchiveUi.kt`**: add a `ClipboardArchiveProviderFilter` entry and branches in `providerLabel()`, `providerIconRes()` (`java/res/drawable/provider_xxx.xml`, or `R.drawable.link`), and `providerFilterLabelRes()` with a `clipboard_history_archive_filter_xxx` string in `java/res/values/strings-uix.xml`.
+4. **Tests** in `src/test/.../uix/actions/clipboard/`: URL parsing and response parsing against captured JSON in `ClipboardLinkPreviewTest.kt` (via `internal ...ForTest` hooks on the fetcher), label/icon in `ClipboardArchiveUiTest.kt`, and startup backfill plus archive key in `ClipboardArchiveBackfillTest.kt`. Run `./gradlew testUnstableDebugUnitTest`.
+
+The exhaustive `when`s over `ClipboardPreviewProvider` and `PreviewRequest` make the compiler flag most missed spots; the filter enum and `PreviewProviders` list are not checked.
+
 ## Versioning
 
 Version code comes from `git rev-list --first-parent --count master`, version name from `git describe --tags`. Both can be overridden via `VERSION_CODE`/`VERSION_NAME` environment variables.
