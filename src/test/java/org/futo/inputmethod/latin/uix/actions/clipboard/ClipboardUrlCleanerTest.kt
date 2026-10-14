@@ -31,7 +31,12 @@ class ClipboardUrlCleanerTest {
             "https://www.instagram.com/p/123/?igsh=abc" to "https://www.instagram.com/p/123/",
             "https://www.reddit.com/r/a/comments/123/title/?share_id=x&sort=new" to "https://www.reddit.com/r/a/comments/123/title/?sort=new",
             "https://x.com/alice/status/123?s=20&t=abc" to "https://x.com/alice/status/123",
+            "https://mobile.twitter.com/alice/status/123?s=20&t=abc" to "https://mobile.twitter.com/alice/status/123",
+            "https://fixupx.com/alice/status/123?s=20&t=abc" to "https://fixupx.com/alice/status/123",
+            "https://www.skibidix.com/alice/status/123?s=20" to "https://www.skibidix.com/alice/status/123",
+            "https://fixvx.com/about?t=keep" to "https://fixvx.com/about?t=keep",
             "https://x.com/search?q=abc&t=video" to "https://x.com/search?q=abc&t=video",
+            "https://skibidix.com.example.org/status/123?s=20" to "https://skibidix.com.example.org/status/123?s=20",
             "https://notyoutube.com/?si=keep" to "https://notyoutube.com/?si=keep",
             "https://youtube.com.example.org/?si=keep" to "https://youtube.com.example.org/?si=keep"
         )

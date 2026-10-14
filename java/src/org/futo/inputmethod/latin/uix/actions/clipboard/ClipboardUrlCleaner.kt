@@ -82,7 +82,8 @@ internal fun cleanClipboardUrl(url: String): String {
         host.isDomain("youtube.com") || host == "youtu.be" || host == "open.spotify.com" -> setOf("si")
         host.isDomain("instagram.com") -> setOf("igshid", "igsh")
         host.isDomain("reddit.com") -> redditTrackingParameters
-        (host.isDomain("twitter.com") || host.isDomain("x.com")) &&
+        // Mirror frontends serve the same status pages as twitter.com/x.com.
+        host in SupportedTwitterHosts &&
             twitterStatusPath.matches(uri.path.orEmpty()) -> setOf("s", "t")
         else -> emptySet()
     }

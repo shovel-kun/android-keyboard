@@ -193,7 +193,7 @@ private val LinkPreviewUrlRegex = """https?://[^\s<>()]+""".toRegex()
 // nhentai gallery pages describe the gallery as "a hentai ... by <artist> for free on nhentai".
 private val NhentaiArtistRegex = Regex("""\bby\s+(.+?)\s+for free on nhentai""")
 
-private val SupportedTwitterHosts = setOf(
+internal val SupportedTwitterHosts = setOf(
     "twitter.com",
     "www.twitter.com",
     "mobile.twitter.com",
