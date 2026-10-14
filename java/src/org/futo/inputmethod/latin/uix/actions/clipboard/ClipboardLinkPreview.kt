@@ -209,10 +209,7 @@ private val SupportedTwitterHosts = setOf(
     "vxtwitter.com",
     "www.vxtwitter.com",
     "fixvx.com",
-    "www.fixvx.com"
-)
-
-private val XLinkPasteHosts = SupportedTwitterHosts + setOf(
+    "www.fixvx.com",
     "hotyurisex.com",
     "www.hotyurisex.com",
     "stupidpenisx.com",
@@ -329,7 +326,7 @@ object ClipboardLinkPreviewFetcher {
         if(targetDomain.isBlank()) return null
 
         val uri = runCatching { URL(trimmed).toURI() }.getOrNull() ?: return null
-        if(!XLinkPasteHosts.contains(uri.host?.lowercase())) return null
+        if(!SupportedTwitterHosts.contains(uri.host?.lowercase())) return null
 
         return buildString {
             append("https://").append(targetDomain)

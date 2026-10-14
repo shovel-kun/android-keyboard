@@ -697,6 +697,35 @@ class ClipboardLinkPreviewTest {
     }
 
     @Test
+    fun metadataForSupportedUrl_recognizesXMirrorDomainsAsTwitterProvider() {
+        val canonical = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+            "https://x.com/futo/status/1234567890"
+        )
+
+        listOf(
+            "hotyurisex.com", "stupidpenisx.com", "mpregx.com", "furryfeetx.com",
+            "skibidix.com", "cunnyx.com", "boypussyx.com", "catgirlsex.com",
+            "yaoisex.com", "gockx.com", "girlcockx.com"
+        )
+            .flatMap { listOf(it, "www.$it") }
+            .forEach { host ->
+                val metadata = ClipboardLinkPreviewFetcher.metadataForSupportedUrl(
+                    "https://$host/futo/status/1234567890"
+                )
+
+                assertEquals(ClipboardPreviewProvider.TWITTER, metadata?.provider)
+                assertEquals("https://x.com/futo/status/1234567890", metadata?.sourceUrl)
+                assertEquals("1234567890", metadata?.sourceId)
+                assertEquals("twitter:1234567890", metadata?.archiveKey())
+                assertEquals(canonical, metadata)
+            }
+        assertEquals(
+            null,
+            ClipboardLinkPreviewFetcher.metadataForSupportedUrl("https://skibidix.com/futo")
+        )
+    }
+
+    @Test
     fun mastodonLinkPasteSession_rewritesMastodonPostUrls() {
         val session = MastodonLinkPasteSession("fxmas.to")
 
