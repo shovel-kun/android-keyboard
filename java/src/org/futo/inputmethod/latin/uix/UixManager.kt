@@ -287,6 +287,10 @@ class UixActionKeyboardManager(val uixManager: UixManager, val latinIME: LatinIM
         }
     }
 
+    // Pasted text goes to the base connection even while an action overrides input.
+    override fun getTextBeforeCursor(length: Int): CharSequence? =
+        latinIME.getBaseInputConnection()?.getTextBeforeCursor(length, 0)
+
     override fun typeTextSurroundedByWhitespace(v: String) {
         if(latinIME.isInputConnectionOverridden) {
             latinIME.getBaseInputConnection()?.commitText(v, 1)

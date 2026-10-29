@@ -52,6 +52,9 @@ import org.futo.inputmethod.latin.uix.settings.pages.PaymentSurfaceHeading
 import org.futo.inputmethod.latin.uix.settings.useDataStore
 import org.futo.inputmethod.latin.uix.settings.useDataStoreValue
 
+// Enough to see the previous link before the cursor, including long query strings.
+private const val MaxLinkPasteContext = 2048
+
 @Composable
 internal fun RowScope.ClipboardHistoryActionToolbarControls(
     unlocked: Boolean,
@@ -143,16 +146,38 @@ internal fun ClipboardHistoryActionWindowContents(
         MastodonLinkPasteSession(mastodonLinkPasteDomain.value)
     }
 
-    fun pixivTextForPaste(text: String): String {
+    val cleanLinks = useDataStore(ClipboardCleanLinks)
+
+    fun linkTextForPaste(link: String, imageCount: Int?): String = xLinkPasteSession.textForPaste(
+        mastodonLinkPasteSession.textForPaste(phixivPasteSession.textForPaste(link, imageCount))
+    )
+
+    fun textForPaste(text: String): String {
         val entry = clipboardHistoryManager.clipboardHistory.firstOrNull { it.text == text }
         val imageCount = entry?.previewMetadata?.imageCount
             ?: entry?.let(clipboardHistoryManager::expectedPreviewMediaCount)
-        return phixivPasteSession.textForPaste(text, imageCount)
+        // Clips saved before a cleaning rule existed (or copied elsewhere) still carry tracking.
+        val cleaned = if(cleanLinks.value) cleanClipboardUrls(text) else text
+        val links = clipboardPasteLinks(cleaned)
+        return when {
+            links == null -> linkTextForPaste(cleaned, imageCount)
+            links.size == 1 -> linkTextForPaste(links.single(), imageCount)
+            else -> links.joinToString("\n") { linkTextForPaste(it, imageCount = null) }
+        }
     }
 
-    fun textForPaste(text: String): String = xLinkPasteSession.textForPaste(
-        mastodonLinkPasteSession.textForPaste(pixivTextForPaste(text))
-    )
+    fun wrappedTextForPaste(text: String): String {
+        val pasteText = textForPaste(text)
+        return if(clipboardPasteLinks(pasteText) != null) {
+            spoilerWrapPasteLinks(pasteText)
+        } else {
+            xLinkPasteSession.wrappedTextForPaste(pasteText)
+        }
+    }
+
+    fun typePasteText(text: String) {
+        manager.typeText(separatedLinkPaste(manager.getTextBeforeCursor(MaxLinkPasteContext), text))
+    }
 
     LaunchedEffect(unlocked, uiState) {
         if(unlocked && uiState.shouldRefreshPreviews) {
@@ -288,7 +313,7 @@ internal fun ClipboardHistoryActionWindowContents(
                         onPaste = {
                             val text = clipboardSelectionText(selectedEntries, ::textForPaste)
                             if(text != null) {
-                                manager.typeText(text)
+                                typePasteText(text)
                                 selectedEntries.forEach(clipboardHistoryManager::onPaste)
                                 selection.clear()
                                 manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)
@@ -363,7 +388,7 @@ internal fun ClipboardHistoryActionWindowContents(
                                         return@ClipboardEntryView
                                     }
                                     when {
-                                        it.text != null -> manager.typeText(textForPaste(it.text))
+                                        it.text != null -> typePasteText(textForPaste(it.text))
                                         it.backingFile != null && it.mimeTypes.isNotEmpty() -> {
                                             val uri = createClipboardContentUri(
                                                 file = File(context.clipboardDir, it.backingFile),
@@ -419,13 +444,7 @@ internal fun ClipboardHistoryActionWindowContents(
                                 onWrapAndPaste = { clipEntry ->
                                     when {
                                         clipEntry.uri != null -> manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
-                                        clipEntry.text != null -> manager.typeText(
-                                            xLinkPasteSession.wrappedTextForPaste(
-                                                mastodonLinkPasteSession.textForPaste(
-                                                    pixivTextForPaste(clipEntry.text)
-                                                )
-                                            )
-                                        )
+                                        clipEntry.text != null -> typePasteText(wrappedTextForPaste(clipEntry.text))
                                     }
                                     clipboardHistoryManager.onPaste(clipEntry)
                                     manager.performHapticAndAudioFeedback(Constants.CODE_OUTPUT_TEXT, view)

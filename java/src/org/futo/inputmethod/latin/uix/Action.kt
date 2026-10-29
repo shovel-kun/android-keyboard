@@ -60,6 +60,7 @@ interface KeyboardManagerForAction {
 
     fun typeText(v: String)
     fun typeTextSurroundedByWhitespace(v: String)
+    fun getTextBeforeCursor(length: Int): CharSequence?
     fun typeUri(uri: Uri, mimeTypes: List<String>, ignoreConnectionOverride: Boolean = false): Boolean
     fun appSupportsImageInsertion(schema: String, ignoreConnectionOverride: Boolean): Boolean
     fun backspace(amount: Int)

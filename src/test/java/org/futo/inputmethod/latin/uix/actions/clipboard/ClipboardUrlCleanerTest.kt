@@ -23,6 +23,14 @@ class ClipboardUrlCleanerTest {
     }
 
     @Test
+    fun keepsDiscordSpoilerMarkersOutsideCleanedLinks() {
+        assertEquals(
+            "||https://x.com/alice/status/123||\n||https://example.com/?id=42||",
+            cleanClipboardUrls("||https://x.com/alice/status/123?s=20&t=abc||\n||https://example.com/?id=42&utm_source=x||")
+        )
+    }
+
+    @Test
     fun siteSpecificRulesKeepFunctionalParametersAndRespectDomainBoundaries() {
         val cases = mapOf(
             "https://youtu.be/abc?si=tracking&t=30" to "https://youtu.be/abc?t=30",

@@ -106,7 +106,7 @@
     <string name="action_clipboard_manager_error_app_image_insertion_unsupported">App does not support media insertion</string>
     <string name="action_clipboard_manager_settings_title">Clipboard Manager Settings</string>
     <string name="action_clipboard_manager_settings_clean_links">Remove tracking from copied links</string>
-    <string name="action_clipboard_manager_settings_clean_links_subtitle">Clean known tracking parameters automatically, even when clipboard history is off</string>
+    <string name="action_clipboard_manager_settings_clean_links_subtitle">Clean known tracking parameters when copying and when pasting from clipboard history</string>
     <string name="action_clipboard_manager_settings_incognito_mode">Incognito clipboard mode</string>
     <string name="action_clipboard_manager_settings_incognito_mode_subtitle">Hide saved history and stop saving new clipboard items until disabled</string>
     <string name="action_clipboard_manager_settings_save_images">Save copied media</string>

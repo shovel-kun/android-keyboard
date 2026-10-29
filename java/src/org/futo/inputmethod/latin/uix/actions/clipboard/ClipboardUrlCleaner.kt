@@ -49,6 +49,8 @@ private fun String.trimUrlPunctuation(html: Boolean): String {
                 end--
             }
             last in ".,!?;:" && !(html && last == ';') -> end--
+            // A closing Discord spoiler marker (||); raw '|' is not valid in a URL.
+            last == '|' -> end--
             else -> break
         }
     }
