@@ -412,6 +412,10 @@ internal fun ClipboardHistoryActionWindowContents(
                                     clipboardHistoryManager.retryPreviewForEntry(it)
                                     manager.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
                                 },
+                                onRearchive = {
+                                    clipboardHistoryManager.rearchiveEntry(it)
+                                    manager.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
+                                },
                                 onWrapAndPaste = { clipEntry ->
                                     when {
                                         clipEntry.uri != null -> manager.typeUri(clipEntry.uri, clipEntry.mimeTypes)
@@ -429,7 +433,9 @@ internal fun ClipboardHistoryActionWindowContents(
                                 showRetryPreviewAction = uiState.previewState.linkPreviewsEnabled &&
                                     entry.shouldShowManualPreviewRetry() &&
                                     entry.text?.let { clipboardHistoryManager.previewLoadingByText[it] != true } == true,
-                                retryPreviewActionEnabled = clipboardHistoryManager.canRetryPreview(entry)
+                                retryPreviewActionEnabled = clipboardHistoryManager.canRetryPreview(entry),
+                                showRearchiveAction = uiState.previewState.linkPreviewsEnabled &&
+                                    clipboardHistoryManager.canRearchive(entry)
                             )
                         }
                     }

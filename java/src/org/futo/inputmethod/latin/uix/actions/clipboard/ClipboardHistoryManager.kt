@@ -60,7 +60,8 @@ private data class ClipboardPreviewFetchRequest(
     val text: String,
     val candidate: ClipboardPreviewCandidate,
     val maxAttempts: Int,
-    val manualRetry: Boolean
+    val manualRetry: Boolean,
+    val rearchive: Boolean = false
 )
 
 private data class PrimaryClipboardImport(
@@ -1017,6 +1018,19 @@ class ClipboardHistoryManager private constructor(
     fun retryPreviewForEntry(entry: ClipboardEntry) {
         val text = entry.text ?: return
         fetchPreviewForEntry(text, manualRetry = true)
+    }
+
+    /** Restores a deleted archive for [entry]: refetches the link, or rebuilds from the clip if the link is dead. */
+    fun rearchiveEntry(entry: ClipboardEntry) {
+        val text = entry.text ?: return
+        fetchPreviewForEntry(text, manualRetry = true, rearchive = true)
+    }
+
+    fun canRearchive(entry: ClipboardEntry): Boolean {
+        val text = entry.text ?: return false
+        if(previewLoadingByText[text] == true) return false
+        val archiveKey = ClipboardLinkPreviewFetcher.previewCandidateFor(text)?.archiveKey ?: return false
+        return archiveKey in deletedArchiveKeys && linkArchives[archiveKey] == null
     }
 
     fun canRetryPreview(entry: ClipboardEntry): Boolean =
@@ -2072,9 +2086,16 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     private fun decodeFile(file: File): List<ClipboardEntry> =
         decodeClipboardEntries(file.readText())
 
-    private fun fetchPreviewForEntry(text: String, manualRetry: Boolean = false): Boolean {
-        val request = previewFetchRequest(text, manualRetry) ?: return false
+    private fun fetchPreviewForEntry(
+        text: String,
+        manualRetry: Boolean = false,
+        rearchive: Boolean = false
+    ): Boolean {
+        val request = previewFetchRequest(text, manualRetry, rearchive) ?: return false
         if(providerCooldown(request.candidate.provider) != null) return false
+        if(rearchive) {
+            request.candidate.archiveKey?.let { reviveDeletedArchiveKeys(deletedArchiveKeys - it) }
+        }
 
         coroutineScope.launch {
             previewLoadingByText[request.text] = true
@@ -2164,9 +2185,20 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
                     return@launch
                 }
 
+                // The link is dead or unreachable: rebuild the archive from whatever the clip kept.
+                val fallbackArchive = if(request.rearchive) {
+                    withContext(Dispatchers.Main) {
+                        clipboardHistory.lastOrNull { it.text == request.text }
+                            ?.let { createFallbackArchiveFromEntry(it, attemptedAt) }
+                    }
+                } else {
+                    null
+                }
+
                 val updated = updateLatestTextEntry(request.text) { current ->
                     current.copy(
-                        previewMetadata = lastFetchedManifest?.metadata ?: current.previewMetadata,
+                        previewMetadata = lastFetchedManifest?.metadata ?: current.previewMetadata
+                            ?: fallbackArchive?.metadata,
                         previewFetchStatus = ClipboardPreviewFetchStatus.Failed,
                         previewFetchLastAttemptAt = attemptedAt,
                         previewFetchFailureDetail = lastFailureDetail
@@ -2185,7 +2217,8 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
 
     private fun previewFetchRequest(
         text: String,
-        manualRetry: Boolean
+        manualRetry: Boolean,
+        rearchive: Boolean = false
     ): ClipboardPreviewFetchRequest? {
         if(context.getSetting(ClipboardIncognitoMode)) return null
 
@@ -2197,8 +2230,11 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
 
         val entry = clipboardHistory.lastOrNull { it.text == text } ?: return null
         val archiveKey = candidate.archiveKey
-        if(archiveKey != null && archiveKey in deletedArchiveKeys) return null
-        if(manualRetry) {
+        if(rearchive) {
+            if(!canRearchive(entry)) return null
+        } else if(archiveKey != null && archiveKey in deletedArchiveKeys) {
+            return null
+        } else if(manualRetry) {
             if(!canRetryPreview(entry)) return null
         } else if(!entry.canAutoFetchPreview()) {
             return null
@@ -2208,7 +2244,8 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             text = text,
             candidate = candidate,
             maxAttempts = if(candidate.prefersImagePreview) 3 else 1,
-            manualRetry = manualRetry
+            manualRetry = manualRetry,
+            rearchive = rearchive
         )
     }
 

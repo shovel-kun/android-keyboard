@@ -297,11 +297,13 @@ fun ClipboardEntryView(
     onWrapAndPaste: (ClipboardEntry) -> Unit = {},
     onCopy: ((ClipboardEntry) -> Unit)? = null,
     onRetryPreview: ((ClipboardEntry) -> Unit)? = null,
+    onRearchive: ((ClipboardEntry) -> Unit)? = null,
     onLongClick: ((ClipboardEntry) -> Unit)? = null,
     showWrapAction: Boolean = clipboardEntry.text != null,
     showCopyAction: Boolean = false,
     showRetryPreviewAction: Boolean = false,
     retryPreviewActionEnabled: Boolean = true,
+    showRearchiveAction: Boolean = false,
     showPinAction: Boolean = true,
     showRemoveAction: Boolean = true,
     showPreviewAction: Boolean = false,
@@ -370,6 +372,7 @@ fun ClipboardEntryView(
                 showPreviewAction = showPreviewAction,
                 showRetryPreviewAction = showRetryPreviewAction,
                 retryPreviewActionEnabled = retryPreviewActionEnabled,
+                showRearchiveAction = showRearchiveAction,
                 showCopyAction = showCopyAction,
                 showWrapAction = showWrapAction,
                 showRemoveAction = showRemoveAction,
@@ -378,6 +381,7 @@ fun ClipboardEntryView(
                 onPin = onPin,
                 onPreview = onPreview,
                 onRetryPreview = onRetryPreview,
+                onRearchive = onRearchive,
                 onCopy = onCopy,
                 onWrapAndPaste = onWrapAndPaste,
                 onRemove = onRemove
@@ -427,6 +431,7 @@ private fun ClipboardEntryActionRow(
     showPreviewAction: Boolean,
     showRetryPreviewAction: Boolean,
     retryPreviewActionEnabled: Boolean,
+    showRearchiveAction: Boolean,
     showCopyAction: Boolean,
     showWrapAction: Boolean,
     showRemoveAction: Boolean,
@@ -435,6 +440,7 @@ private fun ClipboardEntryActionRow(
     onPin: (ClipboardEntry) -> Unit,
     onPreview: ((ClipboardEntry) -> Unit)?,
     onRetryPreview: ((ClipboardEntry) -> Unit)?,
+    onRearchive: ((ClipboardEntry) -> Unit)?,
     onCopy: ((ClipboardEntry) -> Unit)?,
     onWrapAndPaste: (ClipboardEntry) -> Unit,
     onRemove: (ClipboardEntry) -> Unit
@@ -504,6 +510,14 @@ private fun ClipboardEntryActionRow(
                 tint = contentColor
             ) {
                 onRetryPreview?.invoke(clipboardEntry)
+            }
+            ClipboardEntryOptionalAction(
+                visible = showRearchiveAction && onRearchive != null,
+                icon = R.drawable.undo,
+                contentDescription = R.string.action_clipboard_manager_rearchive,
+                tint = contentColor
+            ) {
+                onRearchive?.invoke(clipboardEntry)
             }
             ClipboardEntryOptionalAction(
                 visible = showCopyAction && onCopy != null,

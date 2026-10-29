@@ -1057,6 +1057,7 @@ private fun ClipboardClipsContent(
                 onPin = { manager.onTogglePin(entry) },
                 onCopy = { onCopy(entry) },
                 onRetryPreview = { manager.retryPreviewForEntry(entry) },
+                onRearchive = { manager.rearchiveEntry(entry) },
                 onLongClick = { onToggleSelection(entry) },
                 showWrapAction = false,
                 showCopyAction = !selectionMode && entry.text != null && canPreview,
@@ -1065,6 +1066,9 @@ private fun ClipboardClipsContent(
                     entry.shouldShowManualPreviewRetry() &&
                     entry.text?.let { manager.previewLoadingByText[it] != true } == true,
                 retryPreviewActionEnabled = manager.canRetryPreview(entry),
+                showRearchiveAction = !selectionMode &&
+                    previewState.linkPreviewsEnabled &&
+                    manager.canRearchive(entry),
                 showPinAction = !selectionMode,
                 showRemoveAction = !selectionMode,
                 showPreviewAction = false,

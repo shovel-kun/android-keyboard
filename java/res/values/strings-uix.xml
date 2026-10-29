@@ -154,6 +154,7 @@
 
     <string name="action_clipboard_manager_settings_show_quick_clips">Show recently copied text in suggestion bar</string>
     <string name="action_clipboard_manager_retry_preview">Retry preview</string>
+    <string name="action_clipboard_manager_rearchive">Re-archive</string>
     <string name="clipboard_history_filter_all">All</string>
     <string name="clipboard_history_filter_text">Text</string>
     <string name="clipboard_history_filter_images">Images</string>
