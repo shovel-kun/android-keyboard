@@ -134,46 +134,28 @@ internal fun ClipboardHistoryActionWindowContents(
     var debouncedSearchText by remember { mutableStateOf(searchText.trim().lowercase()) }
     var appliedCompletionVersion by remember { mutableIntStateOf(searchEditor.completionVersion) }
     val pixivPasteDomain = useDataStore(ClipboardPixivLinkPasteDomain)
-    val phixivPasteSession = remember(pixivPasteDomain.value) {
-        PhixivArtworkPasteSession(pixivPasteDomain.value)
-    }
     val xLinkPasteDomain = useDataStore(ClipboardXLinkPasteDomain)
-    val xLinkPasteSession = remember(xLinkPasteDomain.value) {
-        XLinkPasteSession(xLinkPasteDomain.value)
-    }
     val mastodonLinkPasteDomain = useDataStore(ClipboardMastodonLinkPasteDomain)
-    val mastodonLinkPasteSession = remember(mastodonLinkPasteDomain.value) {
-        MastodonLinkPasteSession(mastodonLinkPasteDomain.value)
-    }
-
     val cleanLinks = useDataStore(ClipboardCleanLinks)
-
-    fun linkTextForPaste(link: String, imageCount: Int?): String = xLinkPasteSession.textForPaste(
-        mastodonLinkPasteSession.textForPaste(phixivPasteSession.textForPaste(link, imageCount))
-    )
-
-    fun textForPaste(text: String): String {
-        val entry = clipboardHistoryManager.clipboardHistory.firstOrNull { it.text == text }
-        val imageCount = entry?.previewMetadata?.imageCount
-            ?: entry?.let(clipboardHistoryManager::expectedPreviewMediaCount)
-        // Clips saved before a cleaning rule existed (or copied elsewhere) still carry tracking.
-        val cleaned = if(cleanLinks.value) cleanClipboardUrls(text) else text
-        val links = clipboardPasteLinks(cleaned)
-        return when {
-            links == null -> linkTextForPaste(cleaned, imageCount)
-            links.size == 1 -> linkTextForPaste(links.single(), imageCount)
-            else -> links.joinToString("\n") { linkTextForPaste(it, imageCount = null) }
-        }
+    val pasteFormatter = remember(
+        pixivPasteDomain.value,
+        xLinkPasteDomain.value,
+        mastodonLinkPasteDomain.value,
+        cleanLinks.value
+    ) {
+        ClipboardLinkPasteFormatter(
+            pixivDomain = pixivPasteDomain.value,
+            xDomain = xLinkPasteDomain.value,
+            mastodonDomain = mastodonLinkPasteDomain.value,
+            cleanLinks = cleanLinks.value
+        )
     }
 
-    fun wrappedTextForPaste(text: String): String {
-        val pasteText = textForPaste(text)
-        return if(clipboardPasteLinks(pasteText) != null) {
-            spoilerWrapPasteLinks(pasteText)
-        } else {
-            xLinkPasteSession.wrappedTextForPaste(pasteText)
-        }
-    }
+    fun textForPaste(text: String): String =
+        pasteFormatter.textForPaste(text, clipboardHistoryManager.pasteImageCount(text))
+
+    fun wrappedTextForPaste(text: String): String =
+        pasteFormatter.wrappedTextForPaste(text, clipboardHistoryManager.pasteImageCount(text))
 
     fun typePasteText(text: String) {
         manager.typeText(separatedLinkPaste(manager.getTextBeforeCursor(MaxLinkPasteContext), text))

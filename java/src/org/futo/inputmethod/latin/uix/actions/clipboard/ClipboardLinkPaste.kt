@@ -33,9 +33,39 @@ internal fun separatedLinkPaste(textBeforeCursor: CharSequence?, pasteText: Stri
     return "\n" + pasteText.trimStart('\n')
 }
 
-/** Text a quick clip pastes: tracking removed (when enabled), several links one per line. */
-internal fun quickClipPasteText(text: String, cleanLinks: Boolean, textBeforeCursor: CharSequence?): String {
-    val cleaned = if(cleanLinks) cleanClipboardUrls(text) else text
-    val pasteText = clipboardPasteLinks(cleaned)?.takeIf { it.size > 1 }?.joinToString("\n") ?: cleaned
-    return separatedLinkPaste(textBeforeCursor, pasteText)
+/** Turns clipboard text into pasted text: tracking removed, links rewritten to the paste domains. */
+internal class ClipboardLinkPasteFormatter(
+    pixivDomain: String,
+    xDomain: String,
+    mastodonDomain: String,
+    private val cleanLinks: Boolean
+) {
+    private val phixivSession = PhixivArtworkPasteSession(pixivDomain)
+    private val xSession = XLinkPasteSession(xDomain)
+    private val mastodonSession = MastodonLinkPasteSession(mastodonDomain)
+
+    private fun linkText(link: String, imageCount: Int?): String = xSession.textForPaste(
+        mastodonSession.textForPaste(phixivSession.textForPaste(link, imageCount))
+    )
+
+    /** [imageCount] is the clip's pixiv image count; it only applies when the clip is a single link. */
+    fun textForPaste(text: String, imageCount: Int? = null): String {
+        // Clips saved before a cleaning rule existed (or copied elsewhere) still carry tracking.
+        val cleaned = if(cleanLinks) cleanClipboardUrls(text) else text
+        val links = clipboardPasteLinks(cleaned)
+        return when {
+            links == null -> linkText(cleaned, imageCount)
+            links.size == 1 -> linkText(links.single(), imageCount)
+            else -> links.joinToString("\n") { linkText(it, imageCount = null) }
+        }
+    }
+
+    fun wrappedTextForPaste(text: String, imageCount: Int? = null): String {
+        val pasteText = textForPaste(text, imageCount)
+        return if(clipboardPasteLinks(pasteText) != null) {
+            spoilerWrapPasteLinks(pasteText)
+        } else {
+            xSession.wrappedTextForPaste(pasteText)
+        }
+    }
 }

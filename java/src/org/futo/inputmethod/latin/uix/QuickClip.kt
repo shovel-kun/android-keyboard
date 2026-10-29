@@ -46,7 +46,12 @@ import org.futo.inputmethod.latin.common.Constants
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardCleanLinks
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardIncognitoMode
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardQuickClipsEnabled
-import org.futo.inputmethod.latin.uix.actions.clipboard.quickClipPasteText
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardHistoryManager
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardLinkPasteFormatter
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardMastodonLinkPasteDomain
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardPixivLinkPasteDomain
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardXLinkPasteDomain
+import org.futo.inputmethod.latin.uix.actions.clipboard.separatedLinkPaste
 import org.futo.inputmethod.latin.uix.theme.Typography
 
 // Enough to see the previous link before the cursor, including long query strings.
@@ -215,12 +220,17 @@ fun RowScope.QuickClipView(state: QuickClipState, dismiss: () -> Unit) {
                     uri = null
                 ) {
                     manager!!.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
+                    val pasteText = ClipboardLinkPasteFormatter(
+                        pixivDomain = context.getSetting(ClipboardPixivLinkPasteDomain),
+                        xDomain = context.getSetting(ClipboardXLinkPasteDomain),
+                        mastodonDomain = context.getSetting(ClipboardMastodonLinkPasteDomain),
+                        cleanLinks = context.getSetting(ClipboardCleanLinks)
+                    ).textForPaste(
+                        it.text,
+                        ClipboardHistoryManager.getInstance(context).pasteImageCount(it.text)
+                    )
                     manager!!.typeText(
-                        quickClipPasteText(
-                            text = it.text,
-                            cleanLinks = context.getSetting(ClipboardCleanLinks),
-                            textBeforeCursor = manager!!.getTextBeforeCursor(QuickClipPasteContext)
-                        )
+                        separatedLinkPaste(manager!!.getTextBeforeCursor(QuickClipPasteContext), pasteText)
                     )
                     QuickClip.markQuickClipDismissed()
                     dismiss()

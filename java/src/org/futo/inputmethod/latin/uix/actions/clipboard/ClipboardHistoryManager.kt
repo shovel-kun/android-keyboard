@@ -1041,6 +1041,12 @@ class ClipboardHistoryManager private constructor(
         entry.shouldShowManualPreviewRetry() &&
             entry.previewProviderCooldown() != null
 
+    /** The pixiv image count of the clip holding [text], used to split Phixiv pastes into ranges. */
+    fun pasteImageCount(text: String): Int? {
+        val entry = clipboardHistory.firstOrNull { it.text == text } ?: return null
+        return entry.previewMetadata?.imageCount ?: expectedPreviewMediaCount(entry)
+    }
+
     fun expectedPreviewMediaCount(entry: ClipboardEntry): Int? =
         archiveForEntry(entry)
             ?.let { currentArchive(it, currentArchiveFileNames()) }

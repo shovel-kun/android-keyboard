@@ -35,12 +35,21 @@ class ClipboardLinkPasteTest {
     }
 
     @Test
-    fun quickClipCleansSplitsAndSeparatesLinks() {
+    fun formatterCleansSplitsAndRewritesLinks() {
+        val formatter = ClipboardLinkPasteFormatter("www.phixiv.net", "fixupx.com", "fxmas.to", cleanLinks = true)
         assertEquals(
-            "\nhttps://x.com/a/status/1\nhttps://example.com/",
-            quickClipPasteText("https://x.com/a/status/1?s=20 https://example.com/?utm_source=x", true, "https://a.example/1")
+            "https://fixupx.com/a/status/1\nhttps://www.phixiv.net/en/artworks/39832455\nhttps://example.com/",
+            formatter.textForPaste("https://x.com/a/status/1?s=20 https://www.pixiv.net/artworks/39832455 https://example.com/?utm_source=x")
         )
-        assertEquals("https://example.com/?utm_source=x", quickClipPasteText("https://example.com/?utm_source=x", false, ""))
-        assertEquals("call me https://example.com/", quickClipPasteText("call me https://example.com/?fbclid=x", true, "https://a.example/1"))
+        assertEquals(
+            "||https://fixupx.com/a/status/1||\n||https://example.com/||",
+            formatter.wrappedTextForPaste("https://x.com/a/status/1?t=abc\nhttps://example.com/?fbclid=x")
+        )
+        assertEquals("call me https://example.com/", formatter.textForPaste("call me https://example.com/?fbclid=x"))
+        assertEquals(
+            "https://example.com/?utm_source=x",
+            ClipboardLinkPasteFormatter("www.phixiv.net", "fixupx.com", "fxmas.to", cleanLinks = false)
+                .textForPaste("https://example.com/?utm_source=x")
+        )
     }
 }
