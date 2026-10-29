@@ -33,4 +33,14 @@ class ClipboardLinkPasteTest {
         assertEquals(link, separatedLinkPaste(null, link))
         assertEquals("not a link", separatedLinkPaste("https://a.example/1", "not a link"))
     }
+
+    @Test
+    fun quickClipCleansSplitsAndSeparatesLinks() {
+        assertEquals(
+            "\nhttps://x.com/a/status/1\nhttps://example.com/",
+            quickClipPasteText("https://x.com/a/status/1?s=20 https://example.com/?utm_source=x", true, "https://a.example/1")
+        )
+        assertEquals("https://example.com/?utm_source=x", quickClipPasteText("https://example.com/?utm_source=x", false, ""))
+        assertEquals("call me https://example.com/", quickClipPasteText("call me https://example.com/?fbclid=x", true, "https://a.example/1"))
+    }
 }

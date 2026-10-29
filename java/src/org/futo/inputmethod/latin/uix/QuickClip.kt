@@ -43,9 +43,14 @@ import androidx.compose.ui.unit.dp
 import org.futo.inputmethod.accessibility.AccessibilityUtils
 import org.futo.inputmethod.latin.R
 import org.futo.inputmethod.latin.common.Constants
+import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardCleanLinks
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardIncognitoMode
 import org.futo.inputmethod.latin.uix.actions.clipboard.ClipboardQuickClipsEnabled
+import org.futo.inputmethod.latin.uix.actions.clipboard.quickClipPasteText
 import org.futo.inputmethod.latin.uix.theme.Typography
+
+// Enough to see the previous link before the cursor, including long query strings.
+private const val QuickClipPasteContext = 2048
 
 enum class QuickClipKind {
     FullString,
@@ -210,7 +215,13 @@ fun RowScope.QuickClipView(state: QuickClipState, dismiss: () -> Unit) {
                     uri = null
                 ) {
                     manager!!.performHapticAndAudioFeedback(Constants.CODE_TAB, view)
-                    manager!!.typeText(it.text)
+                    manager!!.typeText(
+                        quickClipPasteText(
+                            text = it.text,
+                            cleanLinks = context.getSetting(ClipboardCleanLinks),
+                            textBeforeCursor = manager!!.getTextBeforeCursor(QuickClipPasteContext)
+                        )
+                    )
                     QuickClip.markQuickClipDismissed()
                     dismiss()
                 }

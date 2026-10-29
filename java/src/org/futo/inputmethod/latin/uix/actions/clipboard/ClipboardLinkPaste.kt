@@ -32,3 +32,10 @@ internal fun separatedLinkPaste(textBeforeCursor: CharSequence?, pasteText: Stri
     if(previousToken.isNullOrEmpty() || !previousToken.isPasteLinkToken()) return pasteText
     return "\n" + pasteText.trimStart('\n')
 }
+
+/** Text a quick clip pastes: tracking removed (when enabled), several links one per line. */
+internal fun quickClipPasteText(text: String, cleanLinks: Boolean, textBeforeCursor: CharSequence?): String {
+    val cleaned = if(cleanLinks) cleanClipboardUrls(text) else text
+    val pasteText = clipboardPasteLinks(cleaned)?.takeIf { it.size > 1 }?.joinToString("\n") ?: cleaned
+    return separatedLinkPaste(textBeforeCursor, pasteText)
+}
