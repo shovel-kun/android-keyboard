@@ -102,9 +102,10 @@ internal fun ClipboardArchiveDownloadsScreen(
     providerFilter: ClipboardArchiveProviderFilter,
     modifier: Modifier = Modifier,
     onProviderFilterSelected: (ClipboardArchiveProviderFilter) -> Unit,
-    onRetry: (ClipboardArchiveDownloadListItem) -> Unit,
+    /** Null hides every retry button (offline mode). */
+    onRetry: ((ClipboardArchiveDownloadListItem) -> Unit)?,
     onDelete: (ClipboardArchiveDownloadListItem) -> Unit,
-    onRetryAll: (List<ClipboardArchiveDownloadListItem>) -> Unit,
+    onRetryAll: ((List<ClipboardArchiveDownloadListItem>) -> Unit)?,
     onStop: (ClipboardArchiveDownloadListItem) -> Unit,
     onStopAll: (List<ClipboardArchiveDownloadListItem>) -> Unit
 ) {
@@ -138,7 +139,7 @@ internal fun ClipboardArchiveDownloadsScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
+                if(onRetryAll != null) OutlinedButton(
                     onClick = { onRetryAll(presentation.retryableItems) },
                     enabled = presentation.retryableItems.isNotEmpty(),
                     modifier = Modifier.weight(1f)
@@ -279,7 +280,7 @@ private fun ClipboardArchiveDownloadProviderFilterRow(
 private fun androidx.compose.foundation.lazy.LazyListScope.archiveDownloadSection(
     title: String,
     items: List<ClipboardArchiveDownloadListItem>,
-    onRetry: (ClipboardArchiveDownloadListItem) -> Unit,
+    onRetry: ((ClipboardArchiveDownloadListItem) -> Unit)?,
     onDelete: (ClipboardArchiveDownloadListItem) -> Unit,
     onStop: (ClipboardArchiveDownloadListItem) -> Unit
 ) {
@@ -302,7 +303,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.archiveDownloadSectio
     ) {
         ClipboardArchiveDownloadRow(
             item = it,
-            onRetry = { onRetry(it) },
+            onRetry = onRetry?.let { retry -> { retry(it) } },
             onDelete = { onDelete(it) },
             onStop = { onStop(it) }
         )
@@ -384,7 +385,7 @@ private fun ClipboardArchiveDownloadSummaryDivider() {
 @Composable
 private fun ClipboardArchiveDownloadRow(
     item: ClipboardArchiveDownloadListItem,
-    onRetry: () -> Unit,
+    onRetry: (() -> Unit)?,
     onDelete: () -> Unit,
     onStop: () -> Unit
 ) {
@@ -542,7 +543,7 @@ private fun ClipboardArchiveDownloadProviderIcon(
 @Composable
 private fun ClipboardArchiveDownloadRowAction(
     item: ClipboardArchiveDownloadListItem,
-    onRetry: () -> Unit,
+    onRetry: (() -> Unit)?,
     onDelete: () -> Unit,
     onStop: () -> Unit
 ) {
@@ -551,7 +552,7 @@ private fun ClipboardArchiveDownloadRowAction(
     val color = if(isActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Surface(
+        if(isActive || onRetry != null) Surface(
             color = Color.Transparent,
             contentColor = color,
             border = BorderStroke(1.dp, color.copy(alpha = if(enabled) 0.7f else 0.3f)),
@@ -559,7 +560,7 @@ private fun ClipboardArchiveDownloadRowAction(
             modifier = Modifier.size(46.dp)
         ) {
             IconButton(
-                onClick = if(isActive) onStop else onRetry,
+                onClick = if(isActive) onStop else onRetry ?: {},
                 enabled = enabled,
                 modifier = Modifier.fillMaxSize()
             ) {
@@ -996,7 +997,8 @@ internal fun ClipboardArchiveCard(
     loading: Boolean,
     progress: ClipboardArchiveDownloadProgress?,
     onOpen: () -> Unit,
-    onRetry: () -> Unit,
+    /** Null hides the retry button (offline mode). */
+    onRetry: (() -> Unit)?,
     onDelete: () -> Unit
 ) {
     val bitmaps = rememberClipboardBitmaps(
@@ -1092,10 +1094,10 @@ internal fun ClipboardArchiveCard(
                 )
 
                 ClipboardArchiveIconAction(
-                    visible = archive.hasRetryableMedia() || archive.canRefetchManifest(),
+                    visible = onRetry != null && (archive.hasRetryableMedia() || archive.canRefetchManifest()),
                     icon = R.drawable.refresh_cw,
                     contentDescription = R.string.action_clipboard_manager_retry_preview,
-                    onClick = onRetry
+                    onClick = onRetry ?: {}
                 )
                 ClipboardArchiveIconAction(
                     visible = true,
@@ -1337,7 +1339,8 @@ internal fun ClipboardArchiveGalleryDialog(
     loading: Boolean,
     progress: ClipboardArchiveDownloadProgress?,
     onDismiss: () -> Unit,
-    onRetry: () -> Unit,
+    /** Null hides the retry action (offline mode). */
+    onRetry: (() -> Unit)?,
     onTagImage: (ClipboardArchiveGalleryItem) -> Unit,
     extractingIndices: Set<Int>,
     onExtractText: (ClipboardArchiveGalleryItem) -> Unit,
@@ -1359,7 +1362,7 @@ internal fun ClipboardArchiveGalleryDialog(
             )
         }
     }
-    val showRetry = archive.hasRetryableMedia() || archive.canRefetchManifest()
+    val showRetry = onRetry != null && (archive.hasRetryableMedia() || archive.canRefetchManifest())
     val showShare = currentItem?.isShareable == true
     val showTagImage = currentItem?.media?.status == ClipboardArchiveMediaStatus.Saved
     val showDetails = {
@@ -1396,7 +1399,7 @@ internal fun ClipboardArchiveGalleryDialog(
                     label = stringResource(R.string.action_clipboard_manager_retry_preview),
                     iconRes = R.drawable.refresh_cw,
                     enabled = !loading,
-                    onClick = onRetry
+                    onClick = onRetry ?: {}
                 )
             )
         }

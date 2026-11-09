@@ -92,6 +92,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val uiState = rememberClipboardUiState(manager)
     val showPinnedOnTop = useDataStoreValue(ClipboardShowPinnedOnTop)
     val useSingleColumn = useDataStoreValue(ClipboardSingleColumn)
+    val offlineMode = useDataStoreValue(ClipboardOfflineMode)
     val skipDeleteConfirmation = useDataStoreValue(ClipboardSkipDeleteConfirmation)
     val imageTaggingEnabled = useDataStoreValue(ClipboardImageTaggingEnabled)
     val archiveSortModeSetting = useDataStore(ClipboardArchiveSortModeSetting)
@@ -518,9 +519,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                     providerFilter = archiveDownloadProviderFilter,
                     modifier = Modifier.weight(1f),
                     onProviderFilterSelected = { archiveDownloadProviderFilter = it },
-                    onRetry = { manager.retryArchiveMedia(it) },
+                    onRetry = if(offlineMode) null else { item -> manager.retryArchiveMedia(item) },
                     onDelete = { manager.deleteArchiveDownload(it) },
-                    onRetryAll = { manager.retryAllArchiveDownloads(it) },
+                    onRetryAll = if(offlineMode) null else { items -> manager.retryAllArchiveDownloads(items) },
                     onStop = { manager.stopArchiveDownload(it) },
                     onStopAll = { items -> items.forEach { manager.stopArchiveDownload(it) } }
                 )
@@ -745,7 +746,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                             archiveSortDirectionSetting.setValue(ClipboardArchiveSortDirection.Descending.storedValue)
                         },
                         onOpen = { previewArchiveKey = it.key },
-                        onRetry = { manager.retryArchive(it) },
+                        onRetry = if(offlineMode) null else { archive -> manager.retryArchive(archive) },
                         onDelete = { archiveDeleteRequest = ArchiveDeleteRequest(it) }
                     )
                 }
@@ -798,7 +799,7 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
             loading = archive.key in archiveActivitySnapshot.loadingArchiveKeys,
             progress = archiveActivitySnapshot.progressByArchiveKey[archive.key],
             onDismiss = { previewArchiveKey = null },
-            onRetry = { manager.retryArchive(archive) },
+            onRetry = if(offlineMode) null else { { manager.retryArchive(archive) } },
             onTagImage = { manager.tagArchiveMedia(archive.key, it.media.sourceIndex) },
             extractingIndices = manager.ocrRequests.value.filter { it.archiveKey == archive.key }
                 .map { it.sourceIndex }.toSet(),
@@ -1094,7 +1095,7 @@ private fun ClipboardArchivesContent(
     progressByArchiveKey: Map<String, ClipboardArchiveDownloadProgress>,
     onResetFilters: () -> Unit,
     onOpen: (ClipboardLinkArchive) -> Unit,
-    onRetry: (ClipboardLinkArchive) -> Unit,
+    onRetry: ((ClipboardLinkArchive) -> Unit)?,
     onDelete: (ClipboardLinkArchive) -> Unit
 ) {
     if(colorAnalysisInProgress) {
@@ -1162,7 +1163,7 @@ private fun ClipboardArchivesContent(
                 loading = archive.key in loadingArchiveKeys,
                 progress = progressByArchiveKey[archive.key],
                 onOpen = { onOpen(archive) },
-                onRetry = { onRetry(archive) },
+                onRetry = onRetry?.let { retry -> { retry(archive) } },
                 onDelete = { onDelete(archive) }
             )
         }
