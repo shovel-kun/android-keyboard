@@ -52,7 +52,6 @@ private val ClipboardPreviewFetchContext = Dispatchers.IO.limitedParallelism(3)
 @OptIn(ExperimentalCoroutinesApi::class)
 private val ClipboardPinIOContext = Dispatchers.IO.limitedParallelism(1)
 private const val ClipboardStoredMediaMaxBytes = 50L * 1024L * 1024L
-private const val ClipboardStartupPreviewFetchLimit = 8
 private const val ClipboardArchiveBackfillConcurrency = 3
 private const val ClipboardArchiveResumeConcurrency = 3
 
@@ -61,7 +60,9 @@ private data class ClipboardPreviewFetchRequest(
     val candidate: ClipboardPreviewCandidate,
     val maxAttempts: Int,
     val manualRetry: Boolean,
-    val rearchive: Boolean = false
+    val rearchive: Boolean = false,
+    /** Pressed by the user (retry or "Fetch missing"), so the mobile-data limit does not apply. */
+    val allowMetered: Boolean = manualRetry
 )
 
 private data class PrimaryClipboardImport(
@@ -867,7 +868,7 @@ class ClipboardHistoryManager private constructor(
 
         loadClipboard()
         reconcileClipboardStorage()
-        refreshMissingLinkPreviews(forceArchiveBackfill = true)
+        // Imported clips show up in the "Fetch missing" count; nothing is fetched until pressed.
     }
 
     suspend fun reconcileClipboardStorage(): Boolean = withContext(ClipboardIOContext) {
@@ -981,21 +982,48 @@ class ClipboardHistoryManager private constructor(
         }
     }
 
-    fun refreshMissingLinkPreviews(forceArchiveBackfill: Boolean = false) {
-        if(backupImportInProgress) return
-        if(context.getSetting(ClipboardIncognitoMode)) return
-        if(!currentPreviewState().shouldArchivePreviews) return
-        if(!canRunAutomaticClipboardNetworkDownloads()) return
+    /**
+     * Catch-up behind the "Fetch missing" button: clips that never had a preview, archives for
+     * clips that only kept a preview, and unfinished archive downloads. Never runs on its own;
+     * fetches are queued and run three at a time through [ClipboardPreviewFetchContext].
+     */
+    fun fetchMissingLinkPreviews() {
+        if(!canFetchMissingLinkPreviews()) return
 
-        var scheduledPreviewFetches = 0
         for(text in startupPreviewFetchTextSequence(clipboardHistory.toList())) {
-            if(scheduledPreviewFetches >= ClipboardStartupPreviewFetchLimit) break
-            if(fetchPreviewForEntry(text)) {
-                scheduledPreviewFetches += 1
-            }
+            fetchPreviewForEntry(text, userRequested = true)
         }
-        runLegacyArchiveBackfillIfNeeded(forceCompletedVersion = forceArchiveBackfill)
-        resumeProviderArchiveDownloads()
+        runLegacyArchiveBackfillIfNeeded(forceCompletedVersion = true)
+        resumeProviderArchiveDownloads(userRequested = true)
+    }
+
+    private fun canFetchMissingLinkPreviews(): Boolean =
+        !backupImportInProgress &&
+            !context.getSetting(ClipboardIncognitoMode) &&
+            currentPreviewState().shouldArchivePreviews &&
+            !isOfflineModeEnabled()
+
+    /**
+     * How many clips and archives [fetchMissingLinkPreviews] would work on, skipping anything
+     * already loading. Reads snapshot state, so it is safe to observe from Compose.
+     */
+    internal fun missingLinkPreviewCount(): Int {
+        val entries = clipboardHistory.toList()
+        val loading = previewLoadingByText.filterValues { it }.keys
+        val neverFetched = entries.count { entry ->
+            val text = entry.text ?: return@count false
+            if(text in loading || !entry.canAutoFetchPreview()) return@count false
+            ClipboardLinkPreviewFetcher.previewCandidateFor(text)?.archiveKey !in deletedArchiveKeys
+        }
+        val missingArchives = archiveBackfillRequests(
+            entries = entries,
+            existingArchiveKeys = linkArchives.keys,
+            deletedArchiveKeys = deletedArchiveKeys
+        ).count { it.archiveKey !in loading && it.entry.text !in loading }
+        val unfinishedDownloads = linkArchives.values.count {
+            it.key !in loading && it.providerManifestAvailable && it.hasAutoDownloadableMedia()
+        }
+        return neverFetched + missingArchives + unfinishedDownloads
     }
 
     internal suspend fun recoverMediaThumbnail(mediaFile: File) {
@@ -1058,7 +1086,9 @@ class ClipboardHistoryManager private constructor(
 
     private fun runLegacyArchiveBackfillIfNeeded(forceCompletedVersion: Boolean = false) {
         if(archiveBackfillInProgress.value) return
-        if(!canRunAutomaticClipboardNetworkDownloads()) return
+        // Forced runs come from the "Fetch missing" button, so the mobile-data limit does not apply.
+        if(!forceCompletedVersion && !canRunAutomaticClipboardNetworkDownloads()) return
+        if(isOfflineModeEnabled()) return
         val incognito = context.getSetting(ClipboardIncognitoMode)
         val previewsEnabled = currentPreviewState().shouldArchivePreviews
         if(!shouldRunArchiveBackfill(
@@ -1093,7 +1123,7 @@ class ClipboardHistoryManager private constructor(
         archiveBackfillBlockedByCooldown = false
         var scheduledAny = false
         requests.forEach { request ->
-            if(fetchArchiveForEntry(request)) {
+            if(fetchArchiveForEntry(request, allowMetered = forceCompletedVersion)) {
                 scheduledAny = true
             } else if(request.entry.archiveBackfillMetadata()?.provider?.let { providerCooldown(it) } != null) {
                 archiveBackfillBlockedByCooldown = true
@@ -1112,10 +1142,14 @@ class ClipboardHistoryManager private constructor(
         }
     }
 
-    private fun fetchArchiveForEntry(request: ClipboardArchiveBackfillRequest): Boolean {
+    private fun fetchArchiveForEntry(
+        request: ClipboardArchiveBackfillRequest,
+        allowMetered: Boolean
+    ): Boolean {
         if(context.getSetting(ClipboardIncognitoMode)) return false
         if(!currentPreviewState().shouldArchivePreviews) return false
-        if(!canRunAutomaticClipboardNetworkDownloads()) return false
+        if(isOfflineModeEnabled()) return false
+        if(!allowMetered && !canRunAutomaticClipboardNetworkDownloads()) return false
         val text = request.entry.text ?: return false
         val archiveKey = request.archiveKey
         val candidate = ClipboardLinkPreviewFetcher.previewCandidateFor(text) ?: return false
@@ -1185,8 +1219,9 @@ class ClipboardHistoryManager private constructor(
         return true
     }
 
-    private fun resumeProviderArchiveDownloads() {
-        if(!canRunAutomaticClipboardNetworkDownloads()) return
+    private fun resumeProviderArchiveDownloads(userRequested: Boolean) {
+        if(isOfflineModeEnabled()) return
+        if(!userRequested && !canRunAutomaticClipboardNetworkDownloads()) return
         coroutineScope.launch {
             val existingArchiveFileNames = refreshArchiveFileNames()
             val archives = linkArchives.values.toList()
@@ -2098,9 +2133,10 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     private fun fetchPreviewForEntry(
         text: String,
         manualRetry: Boolean = false,
-        rearchive: Boolean = false
+        rearchive: Boolean = false,
+        userRequested: Boolean = false
     ): Boolean {
-        val request = previewFetchRequest(text, manualRetry, rearchive) ?: return false
+        val request = previewFetchRequest(text, manualRetry, rearchive, userRequested) ?: return false
         if(providerCooldown(request.candidate.provider) != null) return false
         if(rearchive) {
             request.candidate.archiveKey?.let { reviveDeletedArchiveKeys(deletedArchiveKeys - it) }
@@ -2116,13 +2152,19 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
 
                 while (attempt < request.maxAttempts) {
                     val manifestResult = withContext(ClipboardPreviewFetchContext) {
+                        // Queued "Fetch missing" work waits here for a slot; if the site rate-limited
+                        // an earlier fetch meanwhile, leave this clip untried rather than failed.
+                        val cooledDown = attempt == 0 && withContext(Dispatchers.Main) {
+                            providerCooldown(request.candidate.provider) != null
+                        }
+                        if(cooledDown) return@withContext null
                         ClipboardLinkPreviewFetcher.fetchManifestResult(
                             candidate = request.candidate,
                             pixivSessionId = context.pixivSessionIdForClipboardPreviews(),
                             redditAccessToken = context.redditAccessTokenForClipboardPreviews(),
                             fanboxSessionId = context.fanboxSessionIdForClipboardPreviews()
                         )
-                    }
+                    } ?: return@launch
                     setProviderCooldown(manifestResult.failure)
                     val manifest = manifestResult.manifest
                     lastFailureDetail = manifestResult.failureDetail ?: lastFailureDetail
@@ -2162,7 +2204,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
                         archive
                             ?.takeIf {
                                 it.hasAutoDownloadableMedia() &&
-                                    (request.manualRetry || canRunAutomaticClipboardNetworkDownloads())
+                                    (request.allowMetered || canRunAutomaticClipboardNetworkDownloads())
                             }
                             ?.let {
                             downloadArchiveMediaWithLoading(request.text, it.key)
@@ -2227,14 +2269,15 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
     private fun previewFetchRequest(
         text: String,
         manualRetry: Boolean,
-        rearchive: Boolean = false
+        rearchive: Boolean = false,
+        userRequested: Boolean = false
     ): ClipboardPreviewFetchRequest? {
         if(context.getSetting(ClipboardIncognitoMode)) return null
         if(isOfflineModeEnabled()) return null
 
         val previewState = currentPreviewState()
         if(!previewState.linkPreviewsEnabled) return null
-        if(!manualRetry && !canRunAutomaticClipboardNetworkDownloads()) return null
+        if(!manualRetry && !userRequested && !canRunAutomaticClipboardNetworkDownloads()) return null
         val candidate = ClipboardLinkPreviewFetcher.previewCandidateFor(text) ?: return null
         if(previewLoadingByText[text] == true) return null
 
@@ -2255,7 +2298,8 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
             candidate = candidate,
             maxAttempts = if(candidate.prefersImagePreview) 3 else 1,
             manualRetry = manualRetry,
-            rearchive = rearchive
+            rearchive = rearchive,
+            allowMetered = manualRetry || userRequested
         )
     }
 

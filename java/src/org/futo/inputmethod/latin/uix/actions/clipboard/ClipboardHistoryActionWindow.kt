@@ -161,12 +161,6 @@ internal fun ClipboardHistoryActionWindowContents(
         manager.typeText(separatedLinkPaste(manager.getTextBeforeCursor(MaxLinkPasteContext), text))
     }
 
-    LaunchedEffect(unlocked, uiState) {
-        if(unlocked && uiState.shouldRefreshPreviews) {
-            clipboardHistoryManager.refreshMissingLinkPreviews()
-        }
-    }
-
     when {
         !unlocked -> {
             ScrollableList {
@@ -321,6 +315,9 @@ internal fun ClipboardHistoryActionWindowContents(
                             ) {}
                         }
                     )
+                }
+                if(!selection.active && uiState.fetchMissingVisible) {
+                    ClipboardFetchMissingBar(manager = clipboardHistoryManager)
                 }
                 ClipboardTagSuggestions(
                     search = tagSearch,

@@ -65,8 +65,9 @@ internal data class ClipboardUiState(
     val previewControlsVisible: Boolean
         get() = historyVisible && previewState.linkPreviewsEnabled
 
-    val shouldRefreshPreviews: Boolean
-        get() = historyVisible && previewState.shouldFetchPreviews
+    /** Whether the "Fetch missing" bar may appear; it also hides itself in offline mode. */
+    val fetchMissingVisible: Boolean
+        get() = historyVisible && previewState.shouldArchivePreviews
 }
 
 internal fun previewState(

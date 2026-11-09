@@ -7,6 +7,11 @@
         <item quantity="one">%1$d match</item>
         <item quantity="other">%1$d matches</item>
     </plurals>
+    <plurals name="clipboard_history_missing_previews">
+        <item quantity="one">%1$d link missing a preview or archive</item>
+        <item quantity="other">%1$d links missing previews or archives</item>
+    </plurals>
+    <string name="clipboard_history_fetch_missing">Fetch</string>
     <string name="clipboard_tag_excluded_count">Excludes %1$d</string>
     <!-- Keyboard actions -->
     <string name="action_theme_switcher_title">Theme Switcher</string>

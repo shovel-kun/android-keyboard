@@ -142,12 +142,6 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
     val storageInventory by manager.clipboardStorageInventory
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(uiState.shouldRefreshPreviews) {
-        if(uiState.shouldRefreshPreviews) {
-            manager.refreshMissingLinkPreviews()
-        }
-    }
-
     LaunchedEffect(archiveStorageVisible, archiveStorageRefresh) {
         if(archiveStorageVisible) {
             archiveStorageLoading = true
@@ -681,6 +675,9 @@ fun ClipboardHistoryScreen(navController: NavHostController = rememberNavControl
                         if(archiveBackfillInProgress) {
                             ClipboardArchiveBackfillStatus(remainingCount = archiveBackfillRemainingCount)
                             Spacer(modifier = Modifier.height(8.dp))
+                        }
+                        if(uiState.fetchMissingVisible && !selectionMode) {
+                            ClipboardFetchMissingBar(manager = manager)
                         }
                         if(activeMode == ClipboardHistoryContentMode.Archives && imageTaggingEnabled) {
                             ClipboardImageTaggingStatus(
