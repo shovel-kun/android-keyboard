@@ -112,6 +112,8 @@
     <string name="action_clipboard_manager_settings_save_images">Save copied media</string>
     <string name="action_clipboard_manager_settings_save_screenshots">Save recent screenshots</string>
     <string name="action_clipboard_manager_settings_save_screenshots_subtitle">You\'ll need to grant permission to access your screenshots</string>
+    <string name="action_clipboard_manager_settings_offline_mode">Offline mode</string>
+    <string name="action_clipboard_manager_settings_offline_mode_subtitle">Block all internet access, including link previews and archive downloads. Previews and archives already saved stay visible</string>
     <string name="action_clipboard_manager_settings_link_previews">Fetch link previews</string>
     <string name="action_clipboard_manager_settings_link_previews_subtitle">When enabled, supported X, Reddit, Pixiv, FANBOX, Mastodon, and YouTube links may contact preview services</string>
     <string name="action_clipboard_manager_settings_image_tagging">AI image tagging</string>

@@ -99,6 +99,12 @@ val ClipboardLinkPreviewsEnabled = SettingsKey(
     true
 )
 
+/** Blocks every network request the keyboard makes; cached previews and archives stay visible. */
+val ClipboardOfflineMode = SettingsKey(
+    booleanPreferencesKey("offline_mode"),
+    false
+)
+
 val ClipboardLimitDownloadsOnMobileData = SettingsKey(
     booleanPreferencesKey("clipboard_limit_downloads_on_mobile_data"),
     true
@@ -300,6 +306,11 @@ val ClipboardHistoryAction = Action(
                 },
                 visibilityCheck = { useDataStoreValue(ClipboardHistoryEnabled) && SupportsAddingScreenshots },
                 appearInSearchIfVisibilityCheckFailed = SupportsAddingScreenshots
+            ),
+            userSettingToggleDataStore(
+                title = R.string.action_clipboard_manager_settings_offline_mode,
+                subtitle = R.string.action_clipboard_manager_settings_offline_mode_subtitle,
+                setting = ClipboardOfflineMode
             ),
             userSettingToggleDataStore(
                 title = R.string.action_clipboard_manager_settings_link_previews,

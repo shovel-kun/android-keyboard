@@ -1725,6 +1725,7 @@ object ClipboardLinkPreviewFetcher {
     }
 
     private fun openConnection(url: String): HttpURLConnection {
+        ensureNetworkAllowed()
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
         connection.connectTimeout = PreviewConnectTimeoutMillis
@@ -2378,6 +2379,7 @@ private fun requestRedditInstalledClientAccessToken(clientId: String): String {
     val body = "grant_type=${URLEncoder.encode("https://oauth.reddit.com/grants/installed_client", "UTF-8")}" +
         "&device_id=${URLEncoder.encode(RedditInstalledClientDeviceId, "UTF-8")}"
     val auth = Base64.encodeToString("$clientId:".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+    ensureNetworkAllowed()
     val connection = URL("https://www.reddit.com/api/v1/access_token").openConnection() as HttpURLConnection
     connection.instanceFollowRedirects = true
     connection.connectTimeout = PreviewConnectTimeoutMillis

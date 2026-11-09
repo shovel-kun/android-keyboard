@@ -1027,6 +1027,7 @@ class ClipboardHistoryManager private constructor(
     }
 
     fun canRearchive(entry: ClipboardEntry): Boolean {
+        if(isOfflineModeEnabled()) return false
         val text = entry.text ?: return false
         if(previewLoadingByText[text] == true) return false
         val archiveKey = ClipboardLinkPreviewFetcher.previewCandidateFor(text)?.archiveKey ?: return false
@@ -1034,7 +1035,8 @@ class ClipboardHistoryManager private constructor(
     }
 
     fun canRetryPreview(entry: ClipboardEntry): Boolean =
-        entry.shouldShowManualPreviewRetry() &&
+        !isOfflineModeEnabled() &&
+            entry.shouldShowManualPreviewRetry() &&
             entry.previewProviderCooldown() == null
 
     fun isPreviewRetryBlockedByCooldown(entry: ClipboardEntry): Boolean =
@@ -1514,6 +1516,7 @@ class ClipboardHistoryManager private constructor(
             return
         }
         if(isArchiveRetryBlockedByCooldown(archive)) return
+        if(isOfflineModeEnabled()) return
 
         launchArchiveDownload(archive.key) {
             if(archive.providerManifestAvailable && !forceRefetchManifest) {
@@ -1914,7 +1917,7 @@ class ClipboardHistoryManager private constructor(
         )
 
     private fun canRunAutomaticClipboardNetworkDownloads(): Boolean =
-        shouldAllowClipboardNetworkDownload(
+        !isOfflineModeEnabled() && shouldAllowClipboardNetworkDownload(
             limitMobileData = context.getSetting(ClipboardLimitDownloadsOnMobileData),
             networkState = context.currentClipboardNetworkState(),
             manualRetry = false
@@ -2227,6 +2230,7 @@ Swap: ${describeClipboardStorageFile("swap", clipboardFileSwap)}
         rearchive: Boolean = false
     ): ClipboardPreviewFetchRequest? {
         if(context.getSetting(ClipboardIncognitoMode)) return null
+        if(isOfflineModeEnabled()) return null
 
         val previewState = currentPreviewState()
         if(!previewState.linkPreviewsEnabled) return null
